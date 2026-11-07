@@ -1,0 +1,38 @@
+import Foundation
+
+public struct PageRecord: Codable, Identifiable, Equatable {
+    public var id: UUID
+    public var title: String
+    public var url: String
+    public var date: Date
+    public init(title: String, url: String, date: Date = Date()) { id = UUID(); self.title = title; self.url = url; self.date = date }
+}
+public struct BrowserLibrary: Codable {
+    public var bookmarks: [PageRecord] = []
+    public var history: [PageRecord] = []
+    public var closedTabs: [Tab] = []
+    public var archive: [Tab] = []
+    public init() {}
+    public mutating func record(title: String, url: String) {
+        guard let scheme = URL(string: url)?.scheme?.lowercased(), ["http", "https"].contains(scheme) else { return }
+        if history.first?.url == url { history.removeFirst() }
+        history.insert(PageRecord(title: title, url: url), at: 0)
+        history = Array(history.prefix(1000))
+    }
+    public mutating func bookmark(title: String, url: String) {
+        guard let scheme = URL(string: url)?.scheme?.lowercased(), ["http", "https"].contains(scheme) else { return }
+        bookmarks.removeAll { $0.url == url }
+        bookmarks.insert(PageRecord(title: title, url: url), at: 0)
+    }
+}
+public struct Preferences: Codable {
+    public var suspendTabs = false
+    public var archiveAfterDays = 0
+    public init() {}
+}
+public struct BrowserDocument: Codable {
+    public var session: Session
+    public var library: BrowserLibrary
+    public var preferences: Preferences
+    public init(session: Session = Session(), library: BrowserLibrary = BrowserLibrary(), preferences: Preferences = Preferences()) { self.session = session; self.library = library; self.preferences = preferences }
+}

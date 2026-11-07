@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import WebKit
 import BrowserCore
+import CryptoKit
 
 @MainActor
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
@@ -12,36 +13,69 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var splitID: UUID?
     @Published var message: String?
     @Published var revision = 0
-    private var views: [UUID: WKWebView] = [:]
-    private var accessOrder: [UUID] = []
-    private var observations: [UUID: [NSKeyValueObservation]] = [:]
+    @Published var library = BrowserLibrary()
+    @Published var preferences = Preferences()
+    @Published var libraryVisible = false
+    @Published var settingsVisible = false
+    @Published var findVisible = false
+    @Published var findText = ""
+    @Published var findResult = ""
+    @Published var downloads: [DownloadItem] = []
+    @Published var clearingData = false
+    let isPrivate: Bool
+    let privateDataStore: WKWebsiteDataStore?
+    var vault: MetadataStore?
+    var savingEnabled = true
+    var downloadIDs: [ObjectIdentifier: UUID] = [:]
+    var archiveTimer: Timer?
+    var views: [UUID: WKWebView] = [:]
+    var accessOrder: [UUID] = []
+    var observations: [UUID: [NSKeyValueObservation]] = [:]
     private var saveTask: Task<Void, Never>?
-    private let sessionURL: URL
+    let sessionURL: URL
     var spaceIndex: Int { session.spaces.firstIndex { $0.id == session.selectedSpace } ?? 0 }
     var space: Space { session.spaces[spaceIndex] }
     var selectedID: UUID? { space.selected }
     var selectedTab: BrowserCore.Tab? { space.tabs.first { $0.id == selectedID } }
     var currentView: WKWebView? { selectedID.flatMap { views[$0] } }
 
-    override init() {
-        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("OpenBrowser", isDirectory: true)
-        sessionURL = root.appendingPathComponent("session.json")
+    init(isPrivate: Bool = false, dataRoot: URL? = nil, keyProvider: (Bool) throws -> SymmetricKey = { try MetadataKey.load(createIfMissing: $0) }) {
+        self.isPrivate = isPrivate
+        privateDataStore = isPrivate ? .nonPersistent() : nil
+        let root = dataRoot ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("OpenBrowser", isDirectory: true)
+        sessionURL = root.appendingPathComponent("session.sealed")
         super.init()
+        guard !isPrivate else { return }
         do {
-            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            if FileManager.default.fileExists(atPath: sessionURL.path) {
-                let loaded = try JSONDecoder().decode(Session.self, from: Data(contentsOf: sessionURL))
-                if !loaded.spaces.isEmpty && loaded.spaces.allSatisfy({ !$0.tabs.isEmpty }) {
-                    session = loaded
-                    if !session.spaces.contains(where: { $0.id == session.selectedSpace }) { session.selectedSpace = session.spaces[0].id }
-                    for i in session.spaces.indices {
-                        if !session.spaces[i].tabs.contains(where: { $0.id == session.spaces[i].selected }) { session.spaces[i].selected = session.spaces[i].tabs.first?.id }
-                    }
+            let exists = FileManager.default.fileExists(atPath: sessionURL.path)
+            let key = try keyProvider(!exists)
+            let storage = MetadataStore(url: sessionURL, key: key)
+            vault = storage
+            if let document = try storage.load(BrowserDocument.self) {
+                session = document.session; library = document.library; preferences = document.preferences
+            } else {
+                let legacyURL = root.appendingPathComponent("session.json")
+                if FileManager.default.fileExists(atPath: legacyURL.path) {
+                    session = try JSONDecoder().decode(Session.self, from: Data(contentsOf: legacyURL))
+                    repairSession()
+                    try storage.save(BrowserDocument(session: session))
+                    try FileManager.default.removeItem(at: legacyURL)
                 }
             }
-        } catch { message = "Couldn’t restore the saved session: \(error.localizedDescription)" }
+            repairSession()
+            archiveTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in Task { @MainActor in self?.archiveOldTabs() } }
+        } catch { savingEnabled = false; message = "Local data is locked or unreadable. Saving is disabled to preserve it. \(error.localizedDescription)" }
+    }
+    func repairSession() {
+        if session.spaces.isEmpty { session = Session() }
+        if !session.spaces.contains(where: { $0.id == session.selectedSpace }) { session.selectedSpace = session.spaces[0].id }
+        for i in session.spaces.indices {
+            if session.spaces[i].tabs.isEmpty { session.spaces[i].tabs = [BrowserCore.Tab()] }
+            if !session.spaces[i].tabs.contains(where: { $0.id == session.spaces[i].selected }) { session.spaces[i].selected = session.spaces[i].tabs.first?.id }
+        }
     }
     func save() {
+        guard !isPrivate, savingEnabled else { return }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(350))
@@ -50,11 +84,14 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         }
     }
     func flush() {
-        do { try JSONEncoder().encode(session).write(to: sessionURL, options: .atomic) }
-        catch { message = "Couldn’t save your session: \(error.localizedDescription)" }
+        guard !isPrivate, savingEnabled else { return }
+        do { try vault?.save(BrowserDocument(session: session, library: library, preferences: preferences)) }
+        catch { savingEnabled = false; message = "Couldn’t save your data. Existing data is preserved. \(error.localizedDescription)" }
     }
     func select(_ id: UUID) {
+        guard session.spaces[spaceIndex].tabs.contains(where: { $0.id == id }) else { return }
         session.spaces[spaceIndex].selected = id
+        update(id) { $0.lastAccessed = Date() }
         if splitID == id { splitID = nil }
         save()
     }
@@ -76,10 +113,14 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return tab.id
     }
     func close(_ id: UUID) {
+        guard let owner = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) })?.id else { return }
+        if let tab = tab(id), !tab.url.isEmpty {
+            library.closedTabs.insert(tab, at: 0)
+            library.closedTabs = Array(library.closedTabs.prefix(30))
+        }
         if splitID == id { splitID = nil }
-        views[id]?.stopLoading(); views.removeValue(forKey: id); observations.removeValue(forKey: id)
-        accessOrder.removeAll { $0 == id }
-        session.close(id, in: space.id)
+        discardView(id)
+        session.close(id, in: owner)
         if splitID == selectedID { splitID = nil }
         save()
     }
@@ -116,9 +157,11 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         accessOrder.removeAll { $0 == id }; accessOrder.append(id)
         if let existing = views[id] { return existing }
         let config = configuration ?? WKWebViewConfiguration()
+        if let privateDataStore { config.websiteDataStore = privateDataStore }
+        config.preferences.javaScriptCanOpenWindowsAutomatically = false
         let web = WKWebView(frame: .zero, configuration: config)
         web.allowsBackForwardNavigationGestures = true
-        web.isInspectable = true
+        web.isInspectable = false
         web.navigationDelegate = self; web.uiDelegate = self
         views[id] = web
         observations[id] = [
@@ -133,9 +176,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         ]
         if let value = tab(id)?.url, !value.isEmpty, let url = URL(string: value) { web.load(URLRequest(url: url)) }
         // Keep active and split panes alive; suspended tabs retain their last URL, but lose in-memory page state.
-        while views.count > 6, let victim = accessOrder.first(where: { $0 != id && $0 != selectedID && $0 != splitID && views[$0]?.isLoading == false }) {
-            views[victim]?.stopLoading(); views.removeValue(forKey: victim); observations.removeValue(forKey: victim)
-            accessOrder.removeAll { $0 == victim }
+        while preferences.suspendTabs && views.count > 6, let victim = accessOrder.first(where: { $0 != id && $0 != selectedID && $0 != splitID && views[$0]?.isLoading == false }) {
+            discardView(victim)
         }
         return web
     }
@@ -157,11 +199,16 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-        let panel = NSSavePanel(); panel.nameFieldStringValue = suggestedFilename
-        panel.begin { result in completionHandler(result == .OK ? panel.url : nil) }
+        let panel = NSSavePanel(); panel.nameFieldStringValue = URL(fileURLWithPath: suggestedFilename).lastPathComponent
+        panel.begin { [weak self] result in
+            guard let self, result == .OK, let url = panel.url else { completionHandler(nil); return }
+            let item = DownloadItem(name: url.lastPathComponent, status: "Downloading…")
+            self.downloads.insert(item, at: 0); self.downloadIDs[ObjectIdentifier(download)] = item.id
+            completionHandler(url)
+        }
     }
-    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) { message = "Download failed: \(error.localizedDescription)" }
-    func downloadDidFinish(_ download: WKDownload) { message = "Download finished." }
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) { updateDownload(download, status: "Failed: \(error.localizedDescription)"); message = "Download failed: \(error.localizedDescription)" }
+    func downloadDidFinish(_ download: WKDownload) { updateDownload(download, status: "Finished"); message = "Download finished." }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code != NSURLErrorCancelled { message = error.localizedDescription }
     }

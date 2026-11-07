@@ -17,6 +17,8 @@ struct BrowserUI: View {
                 if store.sidebarVisible { sidebar.frame(width: 242) }
                 VStack(spacing: 0) {
                     toolbar
+                    if store.isPrivate { Text("PRIVATE WINDOW · Browsing history is not saved. Downloads remain on disk.").font(.system(size: 10, weight: .medium)).foregroundStyle(.white).frame(maxWidth: .infinity).padding(7).background(Color.indigo) }
+                    if store.findVisible { FindBar(store: store) }
                     if let web = store.currentView, web.isLoading {
                         ProgressView(value: web.estimatedProgress).progressViewStyle(.linear).tint(.teal).frame(height: 2)
                     }
@@ -44,12 +46,14 @@ struct BrowserUI: View {
         .foregroundStyle(ink)
         .frame(minWidth: 800, minHeight: 540)
         .preferredColorScheme(.light)
+        .sheet(isPresented: $store.libraryVisible) { LibraryPanel(store: store) }
+        .sheet(isPresented: $store.settingsVisible) { SettingsPanel(store: store) }
     }
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
                 Image(systemName: "circle.hexagongrid.fill").font(.system(size: 19))
-                Text("browser").font(.system(size: 19, weight: .semibold, design: .rounded))
+                Text("alcove").font(.system(size: 19, weight: .semibold, design: .rounded))
                 Spacer()
                 Text("PREVIEW").font(.system(size: 8, weight: .bold)).tracking(1).opacity(0.5)
             }.padding(.top, 13)
@@ -67,7 +71,10 @@ struct BrowserUI: View {
                 VStack(alignment: .leading, spacing: 5) {
                     if store.space.tabs.contains(where: \.pinned) {
                         label("PINNED")
-                        ForEach(store.space.tabs.filter(\.pinned)) { tab in row(tab) }
+                        ForEach(store.space.tabs.filter { $0.pinned && $0.folder == nil }) { tab in row(tab) }
+                        ForEach(Array(Set(store.space.tabs.compactMap { $0.pinned ? $0.folder : nil })).sorted(), id: \.self) { folder in
+                            DisclosureGroup { ForEach(store.space.tabs.filter { $0.pinned && $0.folder == folder }) { tab in row(tab) } } label: { Label(folder, systemImage: "folder").font(.system(size: 12, weight: .medium)) }.padding(.vertical, 4)
+                        }
                         Divider().padding(.vertical, 10)
                     }
                     ForEach(store.space.tabs.filter { !$0.pinned }) { tab in row(tab) }
@@ -84,6 +91,11 @@ struct BrowserUI: View {
                 }
                 Button { store.addSpace() } label: { Image(systemName: "plus").frame(width: 24, height: 28) }.buttonStyle(.plain).help("New Space")
             }
+            HStack {
+                Button { store.libraryVisible = true } label: { Label("Library", systemImage: "books.vertical") }.buttonStyle(.plain)
+                Spacer()
+                Button { store.settingsVisible = true } label: { Image(systemName: "gearshape") }.buttonStyle(.plain).help("Settings")
+            }.font(.system(size: 12)).padding(.vertical, 4)
             Text("A little more room for the web.").font(.system(size: 10)).opacity(0.45)
         }.padding(.horizontal, 18).padding(.bottom, 18)
     }
@@ -103,6 +115,7 @@ struct BrowserUI: View {
         .background(store.selectedID == tab.id ? .white.opacity(0.68) : .clear, in: RoundedRectangle(cornerRadius: 9))
         .contextMenu {
             Button(tab.pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id) }
+            Button("Move to Folder…") { store.setFolder(tab.id) }
             if tab.id != store.selectedID && !tab.url.isEmpty { Button("Open Beside Current Tab") { store.splitID = tab.id } }
             Menu("Move to Space") { ForEach(store.session.spaces.filter { $0.id != store.space.id }) { s in Button(s.name) { store.move(tab.id, to: s.id) } } }
             Divider(); Button("Close Tab") { store.close(tab.id) }
@@ -117,11 +130,12 @@ struct BrowserUI: View {
             Spacer()
             Button { store.showCommand() } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: store.selectedTab?.url.hasPrefix("https:") == true ? "lock" : "globe").font(.system(size: 9))
-                    Text(URL(string: store.selectedTab?.url ?? "")?.host ?? "Your next idea starts here").font(.system(size: 11, weight: .medium)).lineLimit(1)
+                    Image(systemName: store.currentView?.url?.scheme == "https" && store.currentView?.hasOnlySecureContent == true ? "lock" : "globe").font(.system(size: 9))
+                    Text(store.currentView?.url?.host ?? "Your next idea starts here").font(.system(size: 11, weight: .medium)).lineLimit(1)
                 }.opacity(0.65)
             }.buttonStyle(.plain)
             Spacer()
+            tool("bookmark", "Bookmark This Page") { store.addBookmark() }.disabled(store.isPrivate)
             tool("rectangle.split.2x1", "Split View") { store.toggleSplit() }
             tool("plus", "New Tab") { store.showCommand(new: true) }
         }.buttonStyle(.plain).padding(.horizontal, 18).frame(height: 48)
@@ -180,6 +194,6 @@ struct CommandPanel: View {
             }
             HStack { Text("SEARCH WITH DUCKDUCKGO"); Spacer(); Text("ESC TO CLOSE") }.font(.system(size: 8, weight: .medium)).tracking(1).opacity(0.4).padding(14).background(.black.opacity(0.025))
         }.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 17)).clipShape(RoundedRectangle(cornerRadius: 17)).shadow(color: .black.opacity(0.2), radius: 40, y: 16)
-        .onAppear { focused = true }.onExitCommand { store.commandVisible = false }
+        .task { await Task.yield(); focused = true }.onExitCommand { store.commandVisible = false }
     }
 }

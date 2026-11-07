@@ -1,23 +1,31 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# An explicit SDK override supports machines with a partially upgraded toolchain.
 SDK="${BROWSER_SDK:-$(xcrun --show-sdk-path)}"
 if [[ -d /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ]]; then
     SDK="${BROWSER_SDK:-/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk}"
 fi
-ARCH="$(uname -m)"
+ARCH="${BROWSER_ARCH:-$(uname -m)}"
+OUT="${BROWSER_OUTPUT:-build/Alcove.app}"
+MANUAL="$PWD/.build/manual/$ARCH"
 FLAGS=(-sdk "$SDK" -module-cache-path "$PWD/.build/cache" -target "$ARCH-apple-macosx14.0")
-mkdir -p .build/manual build/Browser.app/Contents/MacOS
-xcrun swiftc "${FLAGS[@]}" -emit-module -emit-library -enable-testing -module-name BrowserCore Sources/BrowserCore/Session.swift -o .build/manual/libBrowserCore.dylib -emit-module-path .build/manual/BrowserCore.swiftmodule
+mkdir -p "$MANUAL" "$OUT/Contents/MacOS"
+xcrun swiftc "${FLAGS[@]}" -emit-module -emit-library -enable-testing -module-name BrowserCore Sources/BrowserCore/*.swift -o "$MANUAL/libBrowserCore.dylib" -emit-module-path "$MANUAL/BrowserCore.swiftmodule"
 if [[ "${1:-}" == "test" ]]; then
-    xcrun swiftc "${FLAGS[@]}" -I .build/manual -L .build/manual -lBrowserCore -Xlinker -rpath -Xlinker "$PWD/.build/manual" scripts/CoreChecks.swift -o .build/manual/checks
-    .build/manual/checks
+    xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/CoreChecks.swift -o "$MANUAL/checks"
+    "$MANUAL/checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/BrowserStore.swift Sources/Browser/BrowserActions.swift Sources/Browser/MetadataKey.swift scripts/StoreChecks.swift -o "$MANUAL/store-checks"
+    "$MANUAL/store-checks"
     exit
 fi
-# Link the core statically so the app is self-contained.
-xcrun swiftc "${FLAGS[@]}" -O -parse-as-library -emit-object -module-name BrowserCore Sources/BrowserCore/Session.swift -o .build/manual/BrowserCore.o
-xcrun swiftc "${FLAGS[@]}" -O -I .build/manual Sources/Browser/*.swift .build/manual/BrowserCore.o -o build/Browser.app/Contents/MacOS/Browser
-cp scripts/Info.plist build/Browser.app/Contents/Info.plist
-codesign --force --sign - build/Browser.app
-printf 'Built %s/build/Browser.app\n' "$PWD"
+xcrun swiftc "${FLAGS[@]}" -O -parse-as-library -whole-module-optimization -emit-object -module-name BrowserCore Sources/BrowserCore/*.swift -o "$MANUAL/BrowserCore.o"
+xcrun swiftc "${FLAGS[@]}" -O -I "$MANUAL" Sources/Browser/*.swift "$MANUAL/BrowserCore.o" -o "$OUT/Contents/MacOS/Alcove"
+mkdir -p "$OUT/Contents/Resources" .build/resources
+if [[ ! -f .build/resources/Alcove.icns || scripts/Icon.swift -nt .build/resources/Alcove.icns ]]; then
+    xcrun swiftc -sdk "$SDK" -module-cache-path "$PWD/.build/cache" -target "$(uname -m)-apple-macosx14.0" scripts/Icon.swift -o .build/resources/make-icon
+    .build/resources/make-icon .build/resources/Alcove.iconset
+fi
+cp .build/resources/Alcove.icns "$OUT/Contents/Resources/Alcove.icns"
+cp scripts/Info.plist "$OUT/Contents/Info.plist"
+codesign --force --sign - --options runtime --entitlements scripts/Entitlements.plist "$OUT"
+printf 'Built %s/%s (%s, ad hoc signed, not notarized)\n' "$PWD" "$OUT" "$ARCH"

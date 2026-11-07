@@ -25,8 +25,10 @@ public struct Tab: Codable, Identifiable, Equatable {
     public var title: String
     public var url: String
     public var pinned: Bool
+    public var folder: String?
+    public var lastAccessed: Date?
     public init(title: String = "New Tab", url: String = "", pinned: Bool = false) {
-        self.title = title; self.url = url; self.pinned = pinned
+        self.title = title; self.url = url; self.pinned = pinned; self.lastAccessed = Date()
     }
 }
 public struct Space: Codable, Identifiable {
@@ -42,6 +44,17 @@ public struct Session: Codable {
     public var spaces: [Space]
     public var selectedSpace: UUID
     public init() { let first = Space(name: "Personal"); spaces = [first]; selectedSpace = first.id }
+    public mutating func archiveInactive(before cutoff: Date, excluding protected: Set<UUID>) -> [Tab] {
+        var archived: [Tab] = []
+        for s in spaces.indices {
+            let ids = spaces[s].tabs.filter { !$0.pinned && !protected.contains($0.id) && !$0.url.isEmpty && ($0.lastAccessed.map { $0 < cutoff } ?? false) }.map(\.id)
+            for id in ids {
+                if let tab = spaces[s].tabs.first(where: { $0.id == id }) { archived.append(tab) }
+                close(id, in: spaces[s].id)
+            }
+        }
+        return archived
+    }
     public mutating func close(_ id: UUID, in spaceID: UUID) {
         guard let s = spaces.firstIndex(where: { $0.id == spaceID }),
               let t = spaces[s].tabs.firstIndex(where: { $0.id == id }) else { return }
