@@ -118,7 +118,10 @@ struct BrowserUI: View {
             .clipShape(RoundedRectangle(cornerRadius: appearance.cornerRadius))
     }
     private func sidebar(width: Double, windowHeight: Double) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let columns = appearance.columns(for: width)
+        let favoriteRows = Double((store.favorites.count + columns - 1) / columns)
+        let favoritesHeight: Double = min(max(0, favoriteRows * 55.0 - 7.0), min(224.0, max(96.0, windowHeight * 0.28)))
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
                 Spacer().frame(width: 64)
                 mini("sidebar.left", "Hide Sidebar") { store.sidebarVisible = false }
@@ -135,14 +138,14 @@ struct BrowserUI: View {
             }.buttonStyle(.plain).padding(.horizontal, 8).padding(.bottom, 8)
             if !store.favorites.isEmpty {
                 ScrollView(.vertical, showsIndicators: false) {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: appearance.columns(for: width)), spacing: 7) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: columns), spacing: 7) {
                     ForEach(store.favorites) { tab in
                         Button { store.selectAny(tab.id) } label: {
                             SiteBadge(url: tab.homeURL ?? tab.url, large: true, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil).frame(maxWidth: .infinity).frame(height: 48).background(store.focusedID == tab.id ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: 10))
                         }.buttonStyle(.plain).help(tab.pinnedTitle ?? tab.title).onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }.contextMenu { Button("Remove from Favorites") { store.toggleFavorite(tab.id) }; Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) } }
                     }
                 }
-                }.frame(height: min(CGFloat((store.favorites.count + appearance.columns(for: width) - 1) / appearance.columns(for: width)) * 55 - 7, min(224, max(96, windowHeight * 0.28)))).padding(.horizontal, 8).padding(.bottom, 12).onDrop(of: [.text], delegate: TabDrop(store: store, section: .favorites))
+                }.frame(height: favoritesHeight).padding(.horizontal, 8).padding(.bottom, 12).onDrop(of: [.text], delegate: TabDrop(store: store, section: .favorites))
             }
             HStack {
                 Text(store.space.name.isEmpty ? "Space" : store.space.name).font(.system(size: 12, weight: .semibold)).opacity(0.5)
