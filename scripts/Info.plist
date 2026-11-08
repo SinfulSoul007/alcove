@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>AlcoveReleaseTag</key>
-	<string>v0.6.1-preview.1</string>
+	<string>v0.6.1-preview.2</string>
 	<key>CFBundleDisplayName</key>
 	<string>Alcove</string>
 	<key>CFBundleExecutable</key>
@@ -33,7 +33,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>7</string>
+	<string>8</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSAppTransportSecurity</key>
