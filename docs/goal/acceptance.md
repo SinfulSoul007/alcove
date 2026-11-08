@@ -20,12 +20,17 @@ Published 0.6 artifacts and public update selection have been verified. Releases
 | Air Traffic Control / site search | None | Implement routing rules and keyword site search |
 | Boosts / Easels / capture | None | Implement website customization and a local canvas/capture workflow |
 | Extensions / browser integrations | None | Investigate and implement supported WebKit extension path; don't claim Chrome parity without real compatibility evidence |
+| Sync between Macs | No sync service; encrypted local metadata only | Implement optional encrypted sync, device/recovery/conflict handling and real multi-device verification; local encryption is not sync |
+| Arc Max / assisted workflows | None | Independent equivalents of tab/download tidying, link previews and assisted command workflows need implementation, explicit data-use controls and actual behavior checks |
+| Media / Mini Player / picture in picture | WebKit pages and conservative playback/capture archive guards | Implement and verify tab audio controls and Mini Player/PiP workflow; archive signal checks do not establish media UI parity |
 | Everyday browser essentials | Basic bookmarks/history/find/downloads/zoom | Import/export, downloads manager, print/save, permissions, audio/media, reader and additional keyboard/accessibility work remain |
 | Privacy / security | Sandbox, encrypted metadata, private store, request-specific media prompt | Profile isolation and failure/recovery tests pass; independent audit, richer permissions and adversarial navigation tests remain |
 | Performance / reliability | Functional tests; no Safari benchmark | Measure startup, frame responsiveness, many-tab memory, site compatibility, crash/recovery and energy |
 | Updates/distribution trust | Ad hoc signing, no Developer membership | Trusted signing/notarization unavailable; retain accurate unsigned labeling and never weaken Gatekeeper |
 
 Full parity inventory reference: official Arc desktop feature resources and release notes, including Favorites, pins, Today/archive, folders, Spaces/profiles, Peek, Little Arc, Air Traffic Control, site search, Boosts, Easels/capture, extensions and media. The implementation will be independently written; Arc source/assets and private browsing data are not copied into this repository.
+
+The inventory also explicitly retains Sync and Arc Max workflows from [Arc's macOS release notes](https://resources.arc.net/hc/en-us/articles/20498293324823-Arc-for-macOS-2024-2026-Release-Notes) and Mini Audio Player/PiP behavior from its [2023 release notes](https://resources.arc.net/hc/en-us/articles/20498377604887-Arc-for-macOS-2023-Release-Notes). These are scope references, not implementation evidence or dependencies on Arc's services. The Mac-only target remains intact.
 
 ## Work records
 
