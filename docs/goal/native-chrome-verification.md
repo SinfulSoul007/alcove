@@ -19,10 +19,30 @@ Final owned renders show row widths of exactly 760pt and 480pt, a visible 25pt a
 
 Focused checks cover all three densities, text0.85/1.35, wide/minimum layouts, sidebar hide/reveal, theme change, actual top-of-web hit testing, native button ownership, noninteractive measurement views, unchanged native page identity, absence of store invalidations on resize, old-window release and unchanged-measurement coalescing.
 
-The final integrated `scripts/build.sh test` run at implementation commit `587b556` passed **457 checks, zero failures and zero compiler diagnostics**. Both optimized arm64 and x86_64 builds pass strict signature verification; the Intel bundle Info.plist matches source. The local isolated `Alcove Visual Four` bundle is refreshed as an arm64 test build and has not been launched through denied app access. Whole-branch review and source publication follow this verification.
+The final integrated `scripts/build.sh test` run at implementation commit `587b556` passed **457 checks, zero failures and zero compiler diagnostics**. Both optimized arm64 and x86_64 builds pass strict signature verification; the Intel bundle Info.plist matches source. The local isolated `Alcove Visual Four` bundle is refreshed as an arm64 test build and has not been launched through denied app access.
+
+One fresh read-only whole-branch reviewer inspected `7afacb8..5d8bf93`, the spec/plan, surrounding code and verification logs. It identified **no Critical or Important defects** and judged the source increment ready. There is no second review or fix pass. Two optional coverage recommendations are recorded below; they do not establish a product defect or waive the full goal.
 
 ## Decisions and remaining gates
 
 The implementation uses an empty transparent native compact toolbar and measures its controls through public APIs. Repositioning/reparenting native buttons and compressing the old row were rejected because of clipping/lifecycle/crowding risks. Geometry readers cannot receive input. No dependencies, session formats or security entitlements change.
 
 Computer Use still denies the isolated Alcove Visual Four test app. Native dragging, animation, fullscreen transitions, keyboard/accessibility interaction, macOS-14 appearance and Arc pixel fidelity remain unverified. The complete goal and the broader feature gaps in `acceptance.md` remain active. No new DMG is claimed for this source increment; public 0.6 remains available.
+
+## Rulings I made
+
+Every behavior the reviewer declined to judge stays an open acceptance gate:
+
+1. **Native dragging and interactive resizing:** geometry does not prove event behavior. Require actual interaction evidence. Cost if treated as done: missed drag/resize defects.
+2. **Sidebar/hover animation:** tests deliberately disable motion. Require live animation verification. Cost if treated as done: flicker, jitter or hover failures can ship unseen.
+3. **Fullscreen/titlebar reveal:** observers are implemented but native transition behavior is unverified. Cost if treated as done: overlapping controls or unstable geometry in fullscreen.
+4. **Keyboard/accessibility:** bounds and native action targets are insufficient. Require keyboard and assistive interaction checks. Cost if treated as done: controls may be inaccessible despite correct layout.
+5. **macOS 14 runtime:** compilation/current-system checks do not prove minimum-OS appearance or behavior. Cost if treated as done: users on the minimum version can encounter unsupported layouts or behavior.
+6. **Intel hardware:** cross-compilation/signatures do not prove hardware execution. Cost if treated as done: Intel-specific runtime failures remain unseen.
+7. **Arc pixel fidelity:** hosting renders omit native titlebar pixels and page content. Require direct comparison on the allowed test app. Cost if treated as done: visual mismatches remain.
+8. **Installation/new-release distribution/full parity:** this is a source increment; existing public 0.6 is preserved and broader features remain unfinished. Cost if treated as done: people download an older UI or expect features that are still missing.
+
+## Deferred minors
+
+- Count native measurement executions, in addition to published changes, to directly verify work coalescing/stopping. Source inspection and current tests show equality-gated publication; they do not measure the work count. This is optional coverage, with no concrete runaway loop observed.
+- Extend the automated responsive matrix around the 680pt breakpoint, long profile names and noncompact maximum text. Current automation covers all densities and type extremes at wide/small windows; the separately inspected 760pt/text1.35 render covers the large noncompact case. Further combinations remain part of visual QA.
