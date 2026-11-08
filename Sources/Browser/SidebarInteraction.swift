@@ -1,31 +1,6 @@
 import SwiftUI
 import BrowserCore
 
-@MainActor
-final class SidebarRevealController: ObservableObject {
-    @Published private(set) var state = SidebarHoverState()
-    private var pending: Task<Void, Never>?
-    var revealed: Bool { state.revealed }
-    func edgeEntered() {
-        pending?.cancel()
-        let token = state.schedule()
-        pending = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(90))
-            guard !Task.isCancelled else { return }; self?.state.completeReveal(token)
-        }
-    }
-    func panelEntered() { pending?.cancel(); state.cancelPending() }
-    func panelExited() {
-        pending?.cancel()
-        let token = state.schedule()
-        pending = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(240))
-            guard !Task.isCancelled else { return }; self?.state.completeHide(token)
-        }
-    }
-    func reset() { pending?.cancel(); state.reset() }
-}
-
 struct SidebarResizeHandle: NSViewRepresentable {
     let onBegin: () -> Void
     let onDrag: (Double) -> Void

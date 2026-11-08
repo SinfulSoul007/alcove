@@ -36,7 +36,6 @@ struct BrowserUI: View {
     @StateObject private var reveal = SidebarRevealController()
     @StateObject private var chrome = NativeWindowChrome()
     @State private var resize = SidebarResizeState()
-    @State private var sidebarHovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var theme: AppearanceTheme { store.activeTheme }
     var appearance: AppearanceSettings { store.appearance }
@@ -47,6 +46,7 @@ struct BrowserUI: View {
         GeometryReader { geometry in
             let width = SidebarSizing.width(saved: resize.temporaryWidth ?? sidebarWidth, windowWidth: geometry.size.width)
             let shown = store.sidebarVisible || reveal.revealed
+            let floatingAllowed = !store.sidebarVisible && !store.commandVisible && !store.onboardingVisible && store.primaryPeekView == nil && store.presentedPanel == nil
             ZStack(alignment: .leading) {
                 // Keep web content and sidebar mounted; transitions change layout, not view ownership.
                 content.padding(8).padding(.leading, store.sidebarVisible ? width : 0)
@@ -62,25 +62,20 @@ struct BrowserUI: View {
                     .allowsHitTesting(!store.sidebarVisible).accessibilityHidden(store.sidebarVisible)
                 sidebar(width: width, windowHeight: geometry.size.height).frame(width: width)
                     .background(theme.gradient)
+                    .background(SidebarTracking(controller: reveal, region: .panel, enabled: floatingAllowed && shown))
                     .clipShape(RoundedRectangle(cornerRadius: store.sidebarVisible ? 0 : appearance.cornerRadius + 4))
                     .shadow(color: .black.opacity(!store.sidebarVisible && shown ? 0.25 : 0), radius: 20, x: 8, y: 0)
                     .overlay(alignment: .trailing) {
-                        SidebarResizeHandle(onBegin: { reveal.panelEntered(); resize.begin(at: width) }, onDrag: { resize.drag(by: $0, windowWidth: geometry.size.width) }, onEnd: {
+                        SidebarResizeHandle(onBegin: { reveal.beginResize(); resize.begin(at: width) }, onDrag: { resize.drag(by: $0, windowWidth: geometry.size.width) }, onEnd: {
                             if let value = resize.finish() { sidebarWidth = value }
-                            if !store.sidebarVisible { if sidebarHovered { reveal.panelEntered() } else { reveal.panelExited() } }
-                        }, onReset: { resize.cancel(); sidebarWidth = 236 }).frame(width: 6)
+                            reveal.endResize()
+                        }, onReset: { resize.cancel(); sidebarWidth = 236; reveal.endResize() }).frame(width: 6)
                     }
                     .offset(x: shown ? 0 : -width - 16)
                     .opacity(shown ? 1 : 0)
                     .allowsHitTesting(shown).accessibilityHidden(!shown)
-                    .onHover { inside in
-                        sidebarHovered = inside
-                        guard !store.sidebarVisible, resize.temporaryWidth == nil else { return }
-                        if inside { reveal.panelEntered() } else { reveal.panelExited() }
-                    }
                     .animation(motion, value: shown)
-                Color.clear.frame(width: 8).contentShape(Rectangle()).allowsHitTesting(!store.sidebarVisible && !shown)
-                    .onHover { inside in guard !store.sidebarVisible else { return }; if inside { reveal.edgeEntered() } else if !reveal.revealed { reveal.reset() } }
+                SidebarTracking(controller: reveal, region: .edge, enabled: floatingAllowed).frame(width: 8)
                 if store.primaryPeekView != nil {
                     Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { store.closePrimaryPeek() }
                     PeekPanel(store: store).frame(width: min(1000, geometry.size.width - 96), height: geometry.size.height - 96).frame(maxWidth: .infinity, maxHeight: .infinity).transition(.opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.98)))
@@ -103,7 +98,9 @@ struct BrowserUI: View {
             .preferredColorScheme(theme.isDark ? .dark : .light)
             .animation(motion, value: store.commandVisible)
             .animation(motion, value: store.primaryPeekView != nil)
-            .onChange(of: store.sidebarVisible) { _, _ in reveal.reset() }
+            .onAppear { reveal.setEnabled(floatingAllowed) }
+            .onChange(of: floatingAllowed) { _, value in reveal.setEnabled(value) }
+            .onChange(of: store.sidebarVisible) { _, _ in resize.cancel() }
             .sheet(item: $store.presentedPanel) { panel in
                 switch panel {
                 case .library: LibraryPanel(store: store, availableHeight: geometry.size.height - 40)

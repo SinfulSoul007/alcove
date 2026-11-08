@@ -13,6 +13,10 @@ mkdir -p "$MANUAL" "$OUT/Contents/MacOS"
 xcrun swiftc "${FLAGS[@]}" -emit-module -emit-library -enable-testing -module-name BrowserCore Sources/BrowserCore/*.swift -o "$MANUAL/libBrowserCore.dylib" -emit-module-path "$MANUAL/BrowserCore.swiftmodule"
 STORE_SOURCES=()
 for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
+SIDEBAR_SOURCES=()
+for source in Sources/Browser/SidebarInteraction.swift Sources/Browser/SidebarRevealController.swift Sources/Browser/SidebarTracking.swift; do
+    [[ ! -f "$source" ]] || SIDEBAR_SOURCES+=("$source")
+done
 run_website_checks() {
     if [[ "${1:-}" != "quick-website-test" ]]; then
         xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileWebsiteChecks.swift -o "$MANUAL/profile-website-checks"
@@ -34,6 +38,11 @@ run_website_checks() {
     trap - EXIT
 
 }
+if [[ "${1:-}" == "sidebar-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${SIDEBAR_SOURCES[@]}" scripts/SidebarInteractionChecks.swift -o "$MANUAL/sidebar-checks"
+    "$MANUAL/sidebar-checks"
+    exit
+fi
 if [[ "${1:-}" == "chrome-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ChromeChecks.swift -o "$MANUAL/chrome-checks"
     "$MANUAL/chrome-checks"
@@ -81,6 +90,8 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${SIDEBAR_SOURCES[@]}" scripts/SidebarInteractionChecks.swift -o "$MANUAL/sidebar-checks"
+    "$MANUAL/sidebar-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ChromeChecks.swift -o "$MANUAL/chrome-checks"
     "$MANUAL/chrome-checks"
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/CoreChecks.swift -o "$MANUAL/checks"
