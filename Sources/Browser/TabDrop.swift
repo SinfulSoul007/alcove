@@ -14,9 +14,7 @@ struct TabDrop: DropDelegate {
             guard let text = value as? String, let id = UUID(uuidString: text) else { return }
             Task { @MainActor in
                 guard store.tab(id) != nil else { return }
-                store.session.placeTab(id, in: store.space.id, section: section, before: before)
-                if let folder { store.update(id) { $0.folder = folder } }
-                store.selectAny(id); store.save()
+                if store.placeTab(id, in: store.space.id, section: section, before: before, folder: folder) { store.selectAny(id); store.save() }
             }
         }
         return true

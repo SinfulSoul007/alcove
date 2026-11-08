@@ -50,6 +50,19 @@ extension BrowserDocument {
         for index in session.spaces.indices {
             if let id = session.spaces[index].profileID { session.spaces[index].profileID = valid(id) }
         }
+        var spaceIDs = Set<UUID>(); var tabIDs = Set<UUID>()
+        for index in session.spaces.indices {
+            if !spaceIDs.insert(session.spaces[index].id).inserted { session.spaces[index].id = UUID(); spaceIDs.insert(session.spaces[index].id) }
+            var localIDs = Set<UUID>()
+            for tabIndex in session.spaces[index].tabs.indices {
+                let old = session.spaces[index].tabs[tabIndex].id
+                let firstInSpace = localIDs.insert(old).inserted
+                if !tabIDs.insert(old).inserted {
+                    let replacement = UUID(); session.spaces[index].tabs[tabIndex].id = replacement; tabIDs.insert(replacement)
+                    if firstInSpace && session.spaces[index].selected == old { session.spaces[index].selected = replacement }
+                }
+            }
+        }
         var entries = profileLibraries ?? []
         for index in entries.indices { entries[index].profileID = valid(entries[index].profileID) }
         let referenced = [BrowserProfile.defaultID] + registry.map(\.id) + session.spaces.map(\.effectiveProfileID) + entries.map(\.profileID)

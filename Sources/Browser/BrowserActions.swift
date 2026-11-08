@@ -21,7 +21,7 @@ extension BrowserStore {
             do {
                 let key = try await Task.detached { if let keyProvider { return try keyProvider() }; return try MetadataKey.load(createIfMissing: !FileManager.default.fileExists(atPath: url.path), allowInteraction: true) }.value
                 let storage = MetadataStore(url: url, key: key)
-                let pending = BrowserDocument(session: session, library: library, preferences: preferences)
+                let pending = makeDocument()
                 var document = try storage.load(BrowserDocument.self)
                 var migratedLegacyURL: URL?
                 if document == nil {
@@ -40,15 +40,18 @@ extension BrowserStore {
                         for i in space.tabs.indices { space.tabs[i].id = UUID() }; space.selected = space.tabs.first?.id
                         candidate.session.spaces.append(space)
                     }
-                    for bookmark in pending.library.bookmarks { candidate.library.bookmark(title: bookmark.title, url: bookmark.url) }
-                    candidate.library.history.insert(contentsOf: pending.library.history, at: 0)
+                    candidate.profiles = (candidate.profiles ?? [.defaultProfile]) + (pending.profiles ?? []).filter { profile in !(candidate.profiles ?? [.defaultProfile]).contains(where: { $0.id == profile.id }) }
+                    for entry in pending.profileLibraries ?? [ProfileLibrary(profileID: BrowserProfile.defaultID, library: pending.library)] {
+                        var value = candidate.library(for: entry.profileID); value.mergePreservingRecords(entry.library); candidate.setLibrary(value, for: entry.profileID)
+                    }
                     if candidate.preferences.onboardingCompleted == nil { candidate.preferences.onboardingCompleted = true }
                 }
-                candidate.session = Self.repairedSession(candidate.session)
+                candidate.repairProfiles(); candidate.session = Self.repairedSession(candidate.session)
                 // Commit disk state before publishing a restore. Failed retries leave live tabs intact.
                 try persist(storage, candidate)
+                persistedProfileIDs = Set((candidate.profiles ?? []).map(\.id))
                 if document != nil { for id in Array(views.keys) { discardView(id) }; splitID = nil; closePeek() }
-                session = candidate.session; library = candidate.library; preferences = candidate.preferences
+                applyDocument(candidate)
                 hasSavedDocument = true; vault = storage; savingEnabled = true
                 onboardingVisible = OnboardingPolicy.shouldPresent(isPrivate: isPrivate, savingEnabled: savingEnabled, completed: preferences.onboardingCompleted, hasSavedDocument: hasSavedDocument)
                 if let migratedLegacyURL {
@@ -97,9 +100,13 @@ extension BrowserStore {
         let cutoff = Date().addingTimeInterval(-Double(preferences.archiveAfterDays) * 86400)
         var protected = Set(session.spaces.compactMap(\.selected))
         if let splitID { protected.insert(splitID) }
+        var profileBeforeArchive: [UUID: UUID] = [:]
+        for space in session.spaces { for tab in space.tabs { profileBeforeArchive[tab.id] = space.effectiveProfileID } }
         let archived = session.archiveInactive(before: cutoff, excluding: protected)
-        for tab in archived { discardView(tab.id) }
-        library.archive.insert(contentsOf: archived, at: 0)
+        for tab in archived {
+            let owner = viewProfileIDs[tab.id] ?? profileBeforeArchive[tab.id] ?? BrowserProfile.defaultID
+            mutateLibrary(for: owner) { $0.archive.insert(tab, at: 0) }; discardView(tab.id)
+        }
         save()
     }
     func updateDownload(_ download: WKDownload, status: String) {
@@ -116,7 +123,8 @@ extension BrowserStore {
                 for source in imported.spaces {
                     var tabs = source.tabs
                     for i in tabs.indices { tabs[i].id = UUID() }
-                    self.session.spaces.append(Space(name: "Imported \(source.name)", tabs: tabs.isEmpty ? [BrowserCore.Tab()] : tabs))
+                    var space = Space(name: "Imported \(source.name)", tabs: tabs.isEmpty ? [BrowserCore.Tab()] : tabs)
+                    space.profileID = self.activeProfileID; self.session.spaces.append(space)
                 }
                 self.repairSession(); self.save(); self.message = "Imported preview tabs. The original JSON file was kept; it contains unencrypted URLs."
             } catch { self.message = "Couldn’t import this session: \(error.localizedDescription)" }
@@ -140,12 +148,13 @@ extension BrowserStore {
         guard let web = views.removeValue(forKey: id) else { return }
         web.navigationDelegate = nil; web.uiDelegate = nil; web.stopLoading()
         observations.removeValue(forKey: id); accessOrder.removeAll { $0 == id }
+        viewProfileIDs.removeValue(forKey: id); siteIcons.removeValue(forKey: id)
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard views.values.contains(where: { $0 === webView }) else { return }
         loadSiteIcon(webView)
-        if !isPrivate && !clearingData, let url = webView.url?.absoluteString {
-            library.record(title: webView.title ?? url, url: url); save()
+        if !isPrivate && !clearingData, let url = webView.url?.absoluteString, let owner = profileID(for: webView) {
+            mutateLibrary(for: owner) { $0.record(title: webView.title ?? url, url: url) }; save()
         }
         revision += 1
     }

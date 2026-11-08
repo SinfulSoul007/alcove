@@ -276,7 +276,7 @@ struct CommandPanel: View {
                 results.append(CommandResult(id: command.rawValue, title: command.title, icon: "command", run: { store.runCommand(command) }))
             }
             if store.commandOpensNewTab || !query.contains("://") {
-                for tab in store.session.spaces.flatMap(\.tabs).filter({ !$0.url.isEmpty && ($0.title.localizedCaseInsensitiveContains(query) || $0.url.localizedCaseInsensitiveContains(query)) }).prefix(5) {
+                for tab in store.profileTabs.filter({ !$0.url.isEmpty && ($0.title.localizedCaseInsensitiveContains(query) || $0.url.localizedCaseInsensitiveContains(query)) }).prefix(5) {
                     results.append(CommandResult(id: tab.id.uuidString, title: "Switch to \(tab.pinnedTitle ?? tab.title)", icon: "rectangle.on.rectangle", run: { store.selectAny(tab.id); store.commandVisible = false; store.commandOpensNewTab = false }))
                 }
             }

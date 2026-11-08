@@ -56,4 +56,11 @@ check(duplicates.profiles?.first(where: { $0.id == profile.id })?.isPendingDelet
 let roundTrip = try JSONDecoder().decode(BrowserDocument.self, from: JSONEncoder().encode(duplicates))
 check(roundTrip.library(for: profile.id).bookmarks.count == 2 && roundTrip.profiles?.contains(where: { $0.isPendingDeletion }) == true, "Named libraries and deletion state survive document relaunch")
 check(BrowserProfile(name: "  ").name == "Profile" && BrowserProfile(name: String(repeating: "x", count: 100)).name.count == 60 && profile.name == "Work", "Profile names remain usable for native controls")
+let repeatedTab = Tab(title: "Duplicated", url: "https://example.com")
+var firstSpace = Space(name: "First", tabs: [repeatedTab])
+var secondSpace = Space(name: "Second", tabs: [repeatedTab]); secondSpace.profileID = profile.id; secondSpace.id = firstSpace.id
+var collisions = BrowserDocument(profiles: [.defaultProfile, profile]); collisions.session.spaces = [firstSpace, secondSpace]; collisions.session.selectedSpace = firstSpace.id
+collisions.repairProfiles()
+check(Set(collisions.session.spaces.map(\.id)).count == 2, "Duplicate Space identities are repaired without dropping Spaces")
+check(Set(collisions.session.spaces.flatMap(\.tabs).map(\.id)).count == 2 && collisions.session.spaces[1].selected == collisions.session.spaces[1].tabs[0].id, "Duplicate live tab identities cannot share a native view across profiles")
 exit(failures == 0 ? 0 : 1)

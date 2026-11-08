@@ -1,23 +1,29 @@
 import SwiftUI
 import WebKit
+import BrowserCore
 
 extension BrowserStore {
-    func openPeek(_ url: URL) {
+    func openPeek(_ url: URL, from source: WKWebView? = nil) {
+        let ownerProfile: UUID; let ownerSpace: UUID
+        if let source {
+            guard let profile = profileID(for: source), let space = spaceID(for: source) else { return }
+            ownerProfile = profile; ownerSpace = space
+        } else { ownerProfile = activeProfileID; ownerSpace = space.id }
         closePeek()
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = privateDataStore ?? currentView?.configuration.websiteDataStore ?? .default()
+        config.websiteDataStore = websiteDataStore(forProfile: ownerProfile)
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self; web.uiDelegate = self; web.allowsBackForwardNavigationGestures = true
-        peekView = web
+        peekView = web; peekProfileID = ownerProfile; peekSpaceID = ownerSpace
         peekObservations = [web.observe(\.url) { [weak self] _, _ in Task { @MainActor in self?.revision += 1 } }]
         web.load(URLRequest(url: url))
     }
     func closePeek() {
-        peekView?.navigationDelegate = nil; peekView?.uiDelegate = nil; peekView?.stopLoading(); peekView = nil; peekObservations = []
+        peekView?.navigationDelegate = nil; peekView?.uiDelegate = nil; peekView?.stopLoading(); peekView = nil; peekObservations = []; peekProfileID = nil; peekSpaceID = nil
     }
     func expandPeek() {
         guard let url = peekView?.url, ["http", "https"].contains(url.scheme ?? "") else { return }
-        closePeek(); newTab(url: url)
+        let owner = peekSpaceID; closePeek(); newTab(url: url, in: owner)
     }
     func loadSiteIcon(_ web: WKWebView) {
         guard let id = views.first(where: { $0.value === web })?.key, let url = web.url, ["http", "https"].contains(url.scheme ?? "") else { return }
