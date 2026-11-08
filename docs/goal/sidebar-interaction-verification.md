@@ -50,3 +50,7 @@ Both optimized architecture builds were repeated after the fix and pass separate
 Live drag feel, animated reveal/hover behavior, fullscreen, keyboard/accessibility interaction, macOS14/physical Intel behavior, Arc pixel fidelity and the wider feature inventory are still unverified or unfinished. The public0.6 release remains unchanged. This increment can be batched with native chrome in the next public preview.
 
 The previous native-chrome increment passed [GitHub CI42518774377](https://github.com/SinfulSoul007/alcove/actions/runs/42518774377) at `a3eb2c0`:457 browser checks plus two ZIP-verifier checks, both architecture builds and universal packaging. That evidence does not cover this later interaction source.
+
+## Publication follow-up
+
+The combined changes are now in public [0.6.1-preview.2](https://github.com/SinfulSoul007/alcove/releases/tag/v0.6.1-preview.2) at2250ccf. Two added scheduler-stall fixture checks and bounded transition waits bring the full suite to530 browser checks; browser code and timer policy remain unchanged from the reviewed fix. Source/release CI, download-back/mounted-image verification and live update selection pass. See [the release report](../releases/0.6.1-verification.md). This closes the source/artifact/public-catalog evidence for this preview, while actual installation, native interaction and the wider goal remain open.

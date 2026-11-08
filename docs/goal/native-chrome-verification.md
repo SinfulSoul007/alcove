@@ -50,3 +50,5 @@ Every behavior the reviewer declined to judge stays an open acceptance gate:
 ## GitHub verification of the source increment
 
 [CI42518774377](https://github.com/SinfulSoul007/alcove/actions/runs/42518774377) completed successfully at `a3eb2c0`. Its macOS job passed 457 browser checks plus two ZIP-verifier checks, both architecture builds and universal ZIP/DMG verification with zero compiler diagnostics. These are CI artifacts of that source, not a new public release or native onscreen certification.
+
+Publication follow-up: these chrome changes and the subsequent sidebar fixes are now included in public [0.6.1-preview.2](https://github.com/SinfulSoul007/alcove/releases/tag/v0.6.1-preview.2). Its [release report](../releases/0.6.1-verification.md) records successful CI, public artifact and update-client verification. Native visual/hardware/install gates and the two optional coverage improvements above remain open.
