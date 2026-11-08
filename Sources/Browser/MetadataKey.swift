@@ -1,13 +1,16 @@
 import Foundation
 import Security
 import CryptoKit
+import LocalAuthentication
 
 /// The encryption key never enters preferences, the repository, or a release artifact.
 enum MetadataKey {
-    static func load(createIfMissing: Bool) throws -> SymmetricKey {
+    static func load(createIfMissing: Bool, allowInteraction: Bool = false) throws -> SymmetricKey {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "dev.openbrowser.mac.metadata", kSecAttrAccount as String: "local-v1"]
+            kSecAttrService as String: (Bundle.main.bundleIdentifier ?? "dev.openbrowser.mac") + ".metadata", kSecAttrAccount as String: "local-v1"]
+        let context = LAContext(); context.interactionNotAllowed = !allowInteraction
         var lookup = query
+        lookup[kSecUseAuthenticationContext as String] = context
         lookup[kSecReturnData as String] = true
         lookup[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
@@ -18,6 +21,7 @@ enum MetadataKey {
         }
         let key = SymmetricKey(size: .bits256)
         var insert = query
+        insert[kSecUseAuthenticationContext as String] = context
         insert[kSecValueData as String] = key.withUnsafeBytes { Data($0) }
         insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let inserted = SecItemAdd(insert as CFDictionary, nil)

@@ -3,6 +3,7 @@ import SwiftUI
 import WebKit
 import BrowserCore
 import UniformTypeIdentifiers
+import CryptoKit
 
 struct DownloadItem: Identifiable {
     let id = UUID()
@@ -11,6 +12,33 @@ struct DownloadItem: Identifiable {
 }
 
 extension BrowserStore {
+    @discardableResult func unlockLocalData(keyProvider: (() throws -> SymmetricKey)? = nil) -> Bool {
+        guard !isPrivate, !savingEnabled, !unlocking else { return false }
+        unlocking = true
+        let url = sessionURL
+        Task {
+            defer { unlocking = false }
+            do {
+                let key = try await Task.detached { if let keyProvider { return try keyProvider() }; return try MetadataKey.load(createIfMissing: !FileManager.default.fileExists(atPath: url.path), allowInteraction: true) }.value
+                let storage = MetadataStore(url: url, key: key)
+                let pending = BrowserDocument(session: session, library: library, preferences: preferences)
+                if let restored = try storage.load(BrowserDocument.self) {
+                    for id in Array(views.keys) { discardView(id) }; splitID = nil; closePeek()
+                    session = restored.session; library = restored.library; preferences = restored.preferences
+                    for var space in pending.session.spaces where space.tabs.contains(where: { !$0.url.isEmpty }) {
+                        space.id = UUID(); space.name = "Unsaved " + space.name
+                        for i in space.tabs.indices { space.tabs[i].id = UUID() }; space.selected = space.tabs.first?.id
+                        session.spaces.append(space)
+                    }
+                    for bookmark in pending.library.bookmarks { library.bookmark(title: bookmark.title, url: bookmark.url) }
+                    library.history.insert(contentsOf: pending.library.history, at: 0)
+                }
+                repairSession(); vault = storage; savingEnabled = true; flush()
+                message = "Local data unlocked. Existing saved tabs and this session’s unsaved tabs were kept."
+            } catch { message = "Local data remains locked and unchanged. \(error.localizedDescription)" }
+        }
+        return true
+    }
     func findNext(backwards: Bool = false) {
         guard let web = currentView, !findText.isEmpty else { findResult = ""; return }
         let config = WKFindConfiguration(); config.backwards = backwards; config.wraps = true; config.caseSensitive = false
@@ -39,7 +67,7 @@ extension BrowserStore {
         alert.accessoryView = field; alert.addButton(withTitle: "Save"); alert.addButton(withTitle: "Cancel"); alert.window.initialFirstResponder = field
         if alert.runModal() == .alertFirstButtonReturn {
             let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            update(id) { $0.folder = name.isEmpty ? nil : name; if !name.isEmpty { $0.pinned = true } }
+            update(id) { $0.folder = name.isEmpty ? nil : name; if !name.isEmpty { $0.pinned = true; $0.homeURL = $0.homeURL ?? $0.url; $0.pinnedTitle = $0.pinnedTitle ?? $0.title } }
         }
     }
     func archiveOldTabs() {
@@ -78,7 +106,7 @@ extension BrowserStore {
         alert.informativeText = "This signs you out of websites and closes this window’s tabs. Bookmarks are kept. Downloaded files are kept."
         alert.addButton(withTitle: "Clear Data"); alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        clearingData = true
+        clearingData = true; closePeek(); siteIcons.removeAll()
         for id in Array(views.keys) { discardView(id) }
         session = Session(); splitID = nil; clearHistory(); flush()
         let dataStore = privateDataStore ?? WKWebsiteDataStore.default()
@@ -93,6 +121,7 @@ extension BrowserStore {
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard views.values.contains(where: { $0 === webView }) else { return }
+        loadSiteIcon(webView)
         if !isPrivate && !clearingData, let url = webView.url?.absoluteString {
             library.record(title: webView.title ?? url, url: url); save()
         }

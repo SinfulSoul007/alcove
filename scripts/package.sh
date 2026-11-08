@@ -22,7 +22,7 @@ ditto "$APP" "$STAGE/Alcove.app"
 ln -s /Applications "$STAGE/Applications"
 cp LICENSE "$STAGE/LICENSE.txt"
 cat > "$STAGE/READ ME FIRST.txt" <<'NOTE'
-Alcove 0.2 — UNSIGNED PREVIEW
+Alcove — UNSIGNED PREVIEW
 
 macOS 14+, Apple Silicon or Intel. No Xcode or developer tools required.
 Drag Alcove.app to Applications, then launch it from Applications.

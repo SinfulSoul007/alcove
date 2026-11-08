@@ -1,6 +1,12 @@
 name: Package preview DMG
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing preview release tag to package
+        required: true
+        default: v0.3.0-preview.1
+        type: string
 permissions:
   contents: write
 concurrency:
@@ -13,21 +19,26 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      RELEASE_TAG: v0.2.0-preview.1
+      RELEASE_TAG: ${{ inputs.tag }}
     steps:
       - name: Verify and package the published universal app
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-preview\.[0-9]+$ ]]
           mkdir -p downloads stage mounted
           gh release download "$RELEASE_TAG" --pattern '*.zip' --pattern SHA256SUMS.txt --dir downloads
-          (cd downloads && shasum -a 256 -c SHA256SUMS.txt)
-          ditto -x -k downloads/Alcove-0.2.0-universal-unsigned-preview.zip stage
+          (cd downloads && grep '\.zip$' SHA256SUMS.txt | shasum -a 256 -c -)
+          archives=(downloads/*.zip)
+          [[ "${#archives[@]}" == 1 ]]
+          ditto -x -k "${archives[0]}" stage
+          version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' stage/Alcove.app/Contents/Info.plist)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           codesign --verify --deep --strict stage/Alcove.app
           lipo stage/Alcove.app/Contents/MacOS/Alcove -verify_arch arm64 x86_64
           ln -s /Applications stage/Applications
           cat > 'stage/READ ME FIRST.txt' <<'NOTE'
-          Alcove 0.2 — Unsigned Preview
+          Alcove — Unsigned Preview
           Drag Alcove.app to Applications.
           macOS 14+, Apple Silicon or Intel. No developer tools needed.
           This app is ad hoc signed, not Developer ID signed or notarized.
@@ -35,7 +46,7 @@ jobs:
           Early testing build, not a stable or independently audited browser.
           Source, privacy details and limitations: https://github.com/SinfulSoul007/alcove
           NOTE
-          dmg=Alcove-0.2.0-universal-unsigned-preview.dmg
+          dmg="Alcove-$version-universal-unsigned-preview.dmg"
           hdiutil create -volname 'Alcove Preview' -srcfolder stage -format UDZO "$dmg"
           hdiutil verify "$dmg"
           hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$PWD/mounted"

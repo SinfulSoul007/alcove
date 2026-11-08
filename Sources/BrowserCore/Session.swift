@@ -25,6 +25,9 @@ public struct Tab: Codable, Identifiable, Equatable {
     public var title: String
     public var url: String
     public var pinned: Bool
+    public var favorite: Bool?
+    public var homeURL: String?
+    public var pinnedTitle: String?
     public var folder: String?
     public var lastAccessed: Date?
     public init(title: String = "New Tab", url: String = "", pinned: Bool = false) {
@@ -34,6 +37,7 @@ public struct Tab: Codable, Identifiable, Equatable {
 public struct Space: Codable, Identifiable {
     public var id = UUID()
     public var name: String
+    public var theme: String?
     public var tabs: [Tab]
     public var selected: UUID?
     public init(name: String, tabs: [Tab] = [Tab()]) {

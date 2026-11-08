@@ -9,8 +9,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var session = Session()
     @Published var commandVisible = false
     @Published var command = ""
+    var commandOpensNewTab = false
     @Published var sidebarVisible = true
     @Published var splitID: UUID?
+    @Published var activePaneID: UUID?
     @Published var message: String?
     @Published var revision = 0
     @Published var library = BrowserLibrary()
@@ -22,10 +24,14 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var findResult = ""
     @Published var downloads: [DownloadItem] = []
     @Published var clearingData = false
+    @Published var peekView: WKWebView?
+    var peekObservations: [NSKeyValueObservation] = []
+    @Published var siteIcons: [UUID: NSImage] = [:]
     let isPrivate: Bool
     let privateDataStore: WKWebsiteDataStore?
     var vault: MetadataStore?
     var savingEnabled = true
+    @Published var unlocking = false
     var downloadIDs: [ObjectIdentifier: UUID] = [:]
     var archiveTimer: Timer?
     var views: [UUID: WKWebView] = [:]
@@ -36,8 +42,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var spaceIndex: Int { session.spaces.firstIndex { $0.id == session.selectedSpace } ?? 0 }
     var space: Space { session.spaces[spaceIndex] }
     var selectedID: UUID? { space.selected }
-    var selectedTab: BrowserCore.Tab? { space.tabs.first { $0.id == selectedID } }
-    var currentView: WKWebView? { selectedID.flatMap { views[$0] } }
+    var focusedID: UUID? { activePaneID == splitID && splitID != nil ? splitID : selectedID }
+    var selectedTab: BrowserCore.Tab? { space.tabs.first { $0.id == focusedID } }
+    var currentView: WKWebView? { focusedID.flatMap { views[$0] } }
+    func focusPane(_ id: UUID) { if id == selectedID || id == splitID { activePaneID = id } }
 
     init(isPrivate: Bool = false, dataRoot: URL? = nil, keyProvider: (Bool) throws -> SymmetricKey = { try MetadataKey.load(createIfMissing: $0) }) {
         self.isPrivate = isPrivate
@@ -90,12 +98,13 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func select(_ id: UUID) {
         guard session.spaces[spaceIndex].tabs.contains(where: { $0.id == id }) else { return }
-        session.spaces[spaceIndex].selected = id
+        session.spaces[spaceIndex].selected = id; activePaneID = nil
         update(id) { $0.lastAccessed = Date() }
+        if activePaneID == id { activePaneID = nil }
         if splitID == id { splitID = nil }
         save()
     }
-    func selectSpace(_ id: UUID) { splitID = nil; session.selectedSpace = id; save() }
+    func selectSpace(_ id: UUID) { activePaneID = nil; splitID = nil; session.selectedSpace = id; save() }
     func addSpace() {
         let alert = NSAlert(); alert.messageText = "Create a Space"; alert.informativeText = "Give this collection of tabs a name."
         let field = NSTextField(string: ""); field.placeholderString = "Work, Personal, Research…"; field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
@@ -114,10 +123,22 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func close(_ id: UUID) {
         guard let owner = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) })?.id else { return }
+        if let tab = tab(id), tab.pinned {
+            update(id) { $0.url = $0.homeURL ?? $0.url; $0.title = $0.pinnedTitle ?? $0.title }
+            discardView(id)
+            if activePaneID == id { activePaneID = nil }
+        if splitID == id { splitID = nil }
+            if let s = session.spaces.firstIndex(where: { $0.id == owner }), session.spaces[s].selected == id {
+                if let next = session.spaces[s].tabs.first(where: { $0.id != id && !$0.pinned }) { session.spaces[s].selected = next.id }
+                else { let empty = BrowserCore.Tab(); session.spaces[s].tabs.append(empty); session.spaces[s].selected = empty.id }
+            }
+            save(); return
+        }
         if let tab = tab(id), !tab.url.isEmpty {
             library.closedTabs.insert(tab, at: 0)
             library.closedTabs = Array(library.closedTabs.prefix(30))
         }
+        if activePaneID == id { activePaneID = nil }
         if splitID == id { splitID = nil }
         discardView(id)
         session.close(id, in: owner)
@@ -125,8 +146,26 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         save()
     }
     func togglePin(_ id: UUID) {
-        guard let i = session.spaces[spaceIndex].tabs.firstIndex(where: { $0.id == id }) else { return }
-        session.spaces[spaceIndex].tabs[i].pinned.toggle(); save()
+        update(id) {
+            $0.pinned.toggle()
+            if $0.pinned { $0.homeURL = $0.url; $0.pinnedTitle = $0.title }
+            else { $0.favorite = nil; $0.folder = nil; $0.homeURL = nil; $0.pinnedTitle = nil }
+        }
+    }
+    var favorites: [BrowserCore.Tab] { session.spaces.flatMap(\.tabs).filter { $0.favorite == true } }
+    func selectAny(_ id: UUID) {
+        if let owner = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) }) {
+            if owner.id != space.id { selectSpace(owner.id) }; select(id)
+        }
+    }
+    func toggleFavorite(_ id: UUID) {
+        update(id) {
+            $0.favorite = !($0.favorite ?? false)
+            if $0.favorite == true { $0.pinned = true; $0.homeURL = $0.homeURL ?? $0.url; $0.pinnedTitle = $0.pinnedTitle ?? $0.title }
+        }
+    }
+    func removeFromSidebar(_ id: UUID) {
+        update(id) { $0.pinned = false; $0.favorite = nil }; close(id)
     }
     func move(_ id: UUID, to destination: UUID) {
         guard let source = session.spaces[spaceIndex].tabs.first(where: { $0.id == id }), let d = session.spaces.firstIndex(where: { $0.id == destination }), d != spaceIndex else { return }
@@ -135,13 +174,14 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         if splitID == id || splitID == selectedID { splitID = nil }; save()
     }
     func showCommand(new: Bool = false) {
-        if new { _ = newTab() }
-        command = selectedTab?.url ?? ""; commandVisible = true
+        commandOpensNewTab = new
+        command = new ? "" : (selectedTab?.url ?? ""); commandVisible = true
     }
     func navigate(_ input: String) {
         guard let url = Address.resolve(input) else { return }
         commandVisible = false
-        let id = selectedID ?? newTab()
+        let id = commandOpensNewTab && selectedTab?.url.isEmpty != true ? newTab() : (focusedID ?? newTab())
+        commandOpensNewTab = false
         update(id) { $0.url = url.absoluteString; $0.title = url.host ?? "Page" }
         view(for: id).load(URLRequest(url: url))
     }
@@ -166,7 +206,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         views[id] = web
         observations[id] = [
             web.observe(\.title, options: [.new]) { [weak self] web, _ in
-                Task { @MainActor in self?.update(id) { $0.title = web.title ?? web.url?.host ?? "Page" } }
+                Task { @MainActor in self?.update(id) {
+                        $0.title = web.title ?? web.url?.host ?? "Page"
+                        if $0.pinned && ($0.pinnedTitle == nil || $0.pinnedTitle == web.url?.host) { $0.pinnedTitle = $0.title }
+                    } }
             },
             web.observe(\.url, options: [.new]) { [weak self] web, _ in
                 Task { @MainActor in if let url = web.url { self?.update(id) { $0.url = url.absoluteString } } }
@@ -190,6 +233,9 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         guard let url = action.request.url else { decisionHandler(.cancel); return }
         guard ["https", "http", "about", "blob", "data"].contains(url.scheme?.lowercased() ?? "") else {
             decisionHandler(.cancel); message = "This prototype only opens web links (http and https)."; return
+        }
+        if action.navigationType == .linkActivated && action.modifierFlags.contains(.shift) && ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            decisionHandler(.cancel); openPeek(url); return
         }
         decisionHandler(action.shouldPerformDownload ? .download : .allow)
     }
@@ -218,7 +264,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         let popup = view(for: id, configuration: configuration)
         return popup
     }
-    func webViewDidClose(_ webView: WKWebView) { if let id = views.first(where: { $0.value === webView })?.key { close(id) } }
+    func webViewDidClose(_ webView: WKWebView) { if webView === peekView { closePeek(); return }; if let id = views.first(where: { $0.value === webView })?.key { close(id) } }
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let alert = NSAlert(); alert.messageText = frame.request.url?.host ?? "Website"; alert.informativeText = message; alert.runModal(); completionHandler()
     }

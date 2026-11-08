@@ -14,7 +14,7 @@ xcrun swiftc "${FLAGS[@]}" -emit-module -emit-library -enable-testing -module-na
 if [[ "${1:-}" == "test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/CoreChecks.swift -o "$MANUAL/checks"
     "$MANUAL/checks"
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/BrowserStore.swift Sources/Browser/BrowserActions.swift Sources/Browser/MetadataKey.swift scripts/StoreChecks.swift -o "$MANUAL/store-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/BrowserStore.swift Sources/Browser/BrowserActions.swift Sources/Browser/MetadataKey.swift Sources/Browser/CommandActions.swift Sources/Browser/PeekPanel.swift Sources/Browser/BrowserUI.swift Sources/Browser/LibraryUI.swift Sources/Browser/SidebarTheme.swift Sources/Browser/TabDrop.swift Sources/Browser/FocusedInput.swift scripts/StoreChecks.swift -o "$MANUAL/store-checks"
     "$MANUAL/store-checks"
     exit
 fi
@@ -26,6 +26,14 @@ if [[ ! -f .build/resources/Alcove.icns || scripts/Icon.swift -nt .build/resourc
     .build/resources/make-icon .build/resources/Alcove.iconset
 fi
 cp .build/resources/Alcove.icns "$OUT/Contents/Resources/Alcove.icns"
+cp LICENSE "$OUT/Contents/Resources/LICENSE.txt"
 cp scripts/Info.plist "$OUT/Contents/Info.plist"
+if [[ -n "${BROWSER_BUNDLE_ID:-}" ]]; then
+    /usr/libexec/PlistBuddy -c "Set CFBundleIdentifier $BROWSER_BUNDLE_ID" "$OUT/Contents/Info.plist"
+fi
+if [[ -n "${BROWSER_DISPLAY_NAME:-}" ]]; then
+    /usr/libexec/PlistBuddy -c "Set CFBundleName $BROWSER_DISPLAY_NAME" "$OUT/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Set CFBundleDisplayName $BROWSER_DISPLAY_NAME" "$OUT/Contents/Info.plist"
+fi
 codesign --force --sign - --options runtime --entitlements scripts/Entitlements.plist "$OUT"
 printf 'Built %s/%s (%s, ad hoc signed, not notarized)\n' "$PWD" "$OUT" "$ARCH"

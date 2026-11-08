@@ -3,16 +3,15 @@ import BrowserCore
 
 struct FindBar: View {
     @ObservedObject var store: BrowserStore
-    @FocusState var focused: Bool
     var body: some View {
         HStack {
-            TextField("Find in page", text: $store.findText).textFieldStyle(.roundedBorder).frame(width: 240).focused($focused).onSubmit { store.findNext() }
+            FocusedInput(text: $store.findText, placeholder: "Find in page", size: 13, selectAll: true, onSubmit: { store.findNext() }, onCancel: { store.findVisible = false }, onMove: { store.findNext(backwards: $0 < 0) }).frame(width: 240, height: 24)
             Text(store.findResult).font(.caption).foregroundStyle(.secondary)
             Button { store.findNext(backwards: true) } label: { Image(systemName: "chevron.up") }.help("Previous match")
             Button { store.findNext() } label: { Image(systemName: "chevron.down") }.help("Next match")
             Spacer()
             Button { store.findVisible = false } label: { Image(systemName: "xmark") }.help("Close Find")
-        }.buttonStyle(.plain).padding(10).task { await Task.yield(); focused = true }.onExitCommand { store.findVisible = false }
+        }.buttonStyle(.plain).padding(10).onExitCommand { store.findVisible = false }
     }
 }
 
@@ -63,6 +62,10 @@ struct SettingsPanel: View {
             HStack { Text("Alcove Settings").font(.title2.bold()); Spacer(); Button("Done") { store.settingsVisible = false }.keyboardShortcut(.cancelAction) }
             GroupBox("Privacy") {
                 VStack(alignment: .leading, spacing: 12) {
+                    if !store.savingEnabled && !store.isPrivate {
+                        Button(store.unlocking ? "Unlocking…" : "Unlock Local Data…") { store.unlockLocalData() }.disabled(store.unlocking)
+                        Text("Saving is paused. Existing data is preserved until Keychain access is restored.").foregroundStyle(.orange)
+                    }
                     Text(store.isPrivate ? "Private window: cookies and website storage stay in memory. Sessions and history are not saved." : "Sessions, bookmarks and history are encrypted locally with a key held in macOS Keychain. Websites manage their own storage through WebKit.")
                     Text("No Alcove account, sync service or app analytics. Spaces share website logins; they are not separate profiles.")
                     Text("Camera and microphone requests require your permission. Location and notification features are not supported in this preview.")

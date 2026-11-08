@@ -7,6 +7,7 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
     names = archive.namelist()
     assert all('..' not in PurePosixPath(name).parts and not name.startswith('/') for name in names)
     assert 'Alcove.app/Contents/Resources/Alcove.icns' in names
+    assert 'Alcove.app/Contents/Resources/LICENSE.txt' in names, 'Redistributed app must include its license'
     info = plistlib.loads(archive.read('Alcove.app/Contents/Info.plist'))
     executable = 'Alcove.app/Contents/MacOS/' + info['CFBundleExecutable']
     assert archive.getinfo(executable).external_attr >> 16 & 0o111, 'App executable lost its executable bit'
