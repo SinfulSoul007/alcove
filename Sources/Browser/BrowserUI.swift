@@ -34,6 +34,7 @@ struct BrowserUI: View {
     @EnvironmentObject private var updates: UpdateController
     @AppStorage("sidebarWidth") private var sidebarWidth = 236.0
     @StateObject private var reveal = SidebarRevealController()
+    @StateObject private var chrome = NativeWindowChrome()
     @State private var resize = SidebarResizeState()
     @State private var sidebarHovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -50,6 +51,15 @@ struct BrowserUI: View {
                 // Keep web content and sidebar mounted; transitions change layout, not view ownership.
                 content.padding(8).padding(.leading, store.sidebarVisible ? width : 0)
                     .animation(resize.temporaryWidth == nil ? motion : nil, value: store.sidebarVisible)
+                HStack(spacing: 7) {
+                    Color.clear.frame(width: max(0, chrome.leadingEdge - 17)).allowsHitTesting(false)
+                    mini("sidebar.left", "Show Sidebar") { store.sidebarVisible = true }
+                    Spacer(minLength: 0)
+                }.padding(.horizontal, 10).frame(height: store.sidebarVisible ? 0 : chrome.height).clipped()
+                    .background(NativeChromeReader(chrome: chrome))
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .opacity(store.sidebarVisible ? 0 : 1)
+                    .allowsHitTesting(!store.sidebarVisible).accessibilityHidden(store.sidebarVisible)
                 sidebar(width: width, windowHeight: geometry.size.height).frame(width: width)
                     .background(theme.gradient)
                     .clipShape(RoundedRectangle(cornerRadius: store.sidebarVisible ? 0 : appearance.cornerRadius + 4))
@@ -131,7 +141,7 @@ struct BrowserUI: View {
     }
     private var content: some View {
         VStack(spacing: 0) {
-            HStack { Spacer().frame(width: 66); mini("sidebar.left", "Show Sidebar") { store.sidebarVisible = true }; Spacer() }.padding(.horizontal, 8).frame(height: store.sidebarVisible ? 0 : 36).opacity(store.sidebarVisible ? 0 : 1).clipped().accessibilityHidden(store.sidebarVisible)
+            Color.clear.frame(height: store.sidebarVisible ? 0 : max(0, chrome.height - 8)).accessibilityHidden(true)
             if !store.savingEnabled && !store.isPrivate {
                 HStack { Text("Local saving is paused. Your existing data is preserved."); Spacer(); Button(store.unlocking ? "Unlocking…" : "Unlock") { store.unlockLocalData() }.disabled(store.unlocking) }.font(.system(size: 11)).padding(9).background(Color.orange.opacity(0.18))
             }
@@ -148,12 +158,13 @@ struct BrowserUI: View {
         let favoritesHeight: Double = min(max(0, favoriteRows * 55.0 - 7.0), min(224.0, max(96.0, windowHeight * 0.28)))
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
-                Spacer().frame(width: 64)
+                Color.clear.frame(width: max(0, chrome.leadingEdge - 17)).allowsHitTesting(false)
                 mini("sidebar.left", "Hide Sidebar") { store.sidebarVisible = false }
                 mini("arrow.left", "Back") { store.currentView?.goBack() }.disabled(store.currentView?.canGoBack != true)
                 mini("arrow.right", "Forward") { store.currentView?.goForward() }.disabled(store.currentView?.canGoForward != true)
                 mini(store.currentView?.isLoading == true ? "xmark" : "arrow.clockwise", "Reload / Stop") { if store.currentView?.isLoading == true { store.currentView?.stopLoading() } else { store.currentView?.reload() } }
-            }.padding(.horizontal, 10).frame(height: 40)
+            }.padding(.horizontal, 10).frame(height: chrome.height)
+                .background(NativeChromeReader(chrome: chrome))
             Button { store.showCommand() } label: {
                 HStack {
                     if store.currentView?.url?.scheme == "https" && store.currentView?.hasOnlySecureContent == true { Image(systemName: "lock.fill").font(.system(size: 9)).opacity(0.5) }

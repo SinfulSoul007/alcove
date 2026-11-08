@@ -88,6 +88,7 @@ final class QuickBrowseWindowState: ObservableObject {
 @MainActor
 struct QuickBrowseUI: View {
     @ObservedObject var store: BrowserStore
+    @StateObject private var chrome = NativeWindowChrome()
     let id: UUID
     @ObservedObject var state: QuickBrowseWindowState
     let onPromoteSpace: (UUID?) -> Void
@@ -189,7 +190,7 @@ struct QuickBrowseUI: View {
     private func toolbar(compact: Bool) -> some View {
         HStack(spacing: 6) {
             // Full-size content windows draw native traffic lights above this reserved area.
-            Color.clear.frame(width: 64).accessibilityHidden(true).allowsHitTesting(false)
+            Color.clear.frame(width: max(0, chrome.leadingEdge - 14)).accessibilityHidden(true).allowsHitTesting(false)
             toolbarButton("arrow.left", label: "Back", enabled: foregroundWeb?.canGoBack == true && ownerAvailable) { store.performQuickNavigation(id, action: .back) }
             toolbarButton("arrow.right", label: "Forward", enabled: foregroundWeb?.canGoForward == true && ownerAvailable) { store.performQuickNavigation(id, action: .forward) }
             toolbarButton(foregroundWeb?.isLoading == true ? "xmark" : "arrow.clockwise",
@@ -197,7 +198,7 @@ struct QuickBrowseUI: View {
                           enabled: foregroundWeb != nil && ownerAvailable) {
                 store.performQuickNavigation(id, action: foregroundWeb?.isLoading == true ? .stop : .reload)
             }
-            addressField.layoutPriority(1)
+            addressField
             if !compact {
                 Button { profilePickerVisible.toggle() } label: {
                     HStack(spacing: 5) {
@@ -205,7 +206,8 @@ struct QuickBrowseUI: View {
                         Text(ownerName).lineLimit(1).truncationMode(.tail)
                     }.font(.system(size: 11 * appearance.textScale, weight: .medium))
                         .frame(maxWidth: 105).padding(.horizontal, 8).frame(height: 30)
-                }.buttonStyle(.plain).background(theme.tile, in: RoundedRectangle(cornerRadius: appearance.cornerRadius))
+                }.buttonStyle(.plain).fixedSize(horizontal: true, vertical: false)
+                    .background(theme.tile, in: RoundedRectangle(cornerRadius: appearance.cornerRadius))
                     .disabled(ownPeek != nil).help("Profile: \(ownerName)").accessibilityLabel("Choose profile, currently \(ownerName)")
                 Menu { destinationMenu } label: {
                     Label("Open in Space", systemImage: "arrow.up.forward.square")
@@ -230,12 +232,13 @@ struct QuickBrowseUI: View {
                 Button("Close Quick Browse", action: onClose)
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 14, weight: .medium)).frame(width: 25, height: 30)
-            }.menuStyle(.borderlessButton).menuIndicator(.hidden)
+            }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize(horizontal: true, vertical: false)
                 .help("Quick Browse actions").accessibilityLabel("Quick Browse actions")
         }
         .buttonStyle(.plain)
         .padding(.leading, 8).padding(.trailing, 10)
-        .frame(height: max(48, appearance.rowHeight + 12))
+        .frame(height: chrome.height)
+        .background(NativeChromeReader(chrome: chrome))
         .background(theme.gradient)
         .popover(isPresented: $profilePickerVisible, arrowEdge: .bottom) { profilePicker }
     }
