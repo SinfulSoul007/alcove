@@ -46,4 +46,4 @@
 - [x] Write RED lifetime/dispatch checks for closing/reopening primary, final quick close, promotion order, private owners and duplicate window leases; implement the real owner used by AppDelegate.
 - [x] Build native controls around verified APIs and revalidate modal targets. Route external links through only the normal owner. Preserve first-run/update behavior. Test native UI when access permits; otherwise explicitly keep visual/keyboard/animation QA pending and continue independent checks.
 - [x] Run full suite and both optimized architecture builds; expected all software checks pass. Dispatch one fresh whole-branch reviewer with this Review Focus and ledger rulings. Re-grade findings by actual user effect and fix material findings with RED→GREEN, then full suite.
-- [ ] Commit/push verified code. Package/publish a correctly labeled preview only after matching CI passes; verify downloaded-back artifacts/update offers. Leave the full browser goal active.
+- [x] Commit/push verified code. Package/publish a correctly labeled preview only after matching CI passes; verify downloaded-back artifacts/update offers. Leave the full browser goal active.
