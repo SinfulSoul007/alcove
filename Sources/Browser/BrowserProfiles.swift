@@ -51,7 +51,7 @@ extension BrowserStore {
         for page in records.quickPages ?? [] { if let archived = archivedQuickTab(page) { records.archive.insert(archived, at: 0) } }
         records.quickPages = []; candidate.setLibrary(records, for: id)
         try commitProfileDocument(candidate)
-        if peekProfileID == id { closePeek() }
+        closePeeks(forProfile: id)
         for tabID in Array(views.keys) where viewProfileIDs[tabID] == id { discardView(tabID) }
         namedDataStores.removeValue(forKey: id)
         do {
@@ -103,7 +103,7 @@ extension BrowserStore {
         candidate.setLibrary(records, for: id)
         if isPrivate { try commitQuickDocument(candidate, discarding: affected, beforePublish: { self.splitID = nil; self.activePaneID = nil }) }
         else { try commitProfileDocument(candidate, discarding: affected, resetting: activeProfileID == id ? space.id : nil) }
-        if peekProfileID == id { closePeek() }
+        closePeeks(forProfile: id)
         clearingData = true; clearingProfileID = id
         defer { clearingData = false; clearingProfileID = nil }
         // This path is deliberately allowed to access a pending-clear store for removal only.
@@ -139,11 +139,11 @@ extension BrowserStore {
         return session.spaces.first(where: { $0.tabs.contains(where: { $0.id == tabID }) })?.effectiveProfileID ?? profileLibraries.first(where: { $0.library.favoriteTabs?.contains(where: { $0.id == tabID }) == true })?.profileID ?? quickProfileID(tabID)
     }
     func profileID(for web: WKWebView) -> UUID? {
-        if web === peekView { return peekProfileID }
+        if let peek = peekState(for: web) { return peek.profileID }
         return views.first(where: { $0.value === web }).flatMap { viewProfileIDs[$0.key] }
     }
     func spaceID(for web: WKWebView) -> UUID? {
-        if web === peekView { return peekSpaceID }
+        if let peek = peekState(for: web) { return peek.spaceID }
         guard let id = views.first(where: { $0.value === web })?.key else { return nil }
         if let quick = quickPage(id), let profile = quickProfileID(id) {
             return session.spaces.first(where: { $0.id == quick.intendedSpaceID && (isPrivate || $0.effectiveProfileID == profile) })?.id
@@ -177,15 +177,12 @@ extension BrowserStore {
         do { try vault.save(prepared) }
         catch { savingEnabled = false; message = "Couldn’t save profile changes. Your existing tabs and data were kept. \(error.localizedDescription)"; throw error }
         persistedProfileIDs = Set((prepared.profiles ?? []).map(\.id))
-        if let spaceID, peekSpaceID == spaceID {
-            if peekParentQuickID == nil { closePeek() }
-            else if !prepared.session.spaces.contains(where: { $0.id == spaceID && $0.effectiveProfileID == peekProfileID }) { peekSpaceID = nil }
-        }
         let retained = Set(prepared.session.spaces.flatMap(\.tabs).map(\.id))
         let nextQuick = Set((prepared.profileLibraries ?? []).flatMap { $0.library.quickPages ?? [] }.map(\.id))
         let removedQuick = Set(allQuickPages.map(\.id)).subtracting(nextQuick).subtracting(retained)
         for id in Set(ids).union(removedQuick) { discardView(id) }
         beforePublish?()
+        reconcilePeeks(in: prepared, resetting: spaceID)
         if spaceID == space.id || ids.contains(where: { $0 == splitID || $0 == selectedID }) { splitID = nil; activePaneID = nil }
         try applyDocument(prepared); hasSavedDocument = true
     }

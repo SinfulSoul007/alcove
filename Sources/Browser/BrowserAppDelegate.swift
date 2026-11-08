@@ -24,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var activeWebView: WKWebView? {
         if let quick = activeQuick { return quick.activeWebView }
         guard let store = activeStore else { return nil }
-        return store.peekParentQuickID == nil ? store.peekView ?? store.currentView : store.currentView
+        return store.primaryPeekView ?? store.currentView
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular); buildMenu()
@@ -38,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         updateTimer?.tolerance = 60
         paneFocusMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             guard let self, let window = event.window, let store = self.windows[window],
-                  !(store.peekView != nil && store.peekParentQuickID == nil), !store.commandVisible else { return event }
+                  store.primaryPeekView == nil, !store.commandVisible else { return event }
             for (id, web) in store.views where web.window === window {
                 if web.convert(web.bounds, to: nil).contains(event.locationInWindow) { store.focusPane(id); break }
             }
@@ -47,11 +47,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53, let self else { return event }
             if let quick = self.activeQuick, event.window === quick.window,
-               quick.state.findVisible || quick.state.isEditingAddress || quick.store.peekParentQuickID == quick.pageID {
+               quick.state.findVisible || quick.state.isEditingAddress || quick.store.quickPeekView(quick.pageID) != nil {
                 quick.escape(); return nil
             }
             guard let window = event.window, let store = self.windows[window],
-                  store.presentedPanel != nil || (store.peekView != nil && store.peekParentQuickID == nil) || store.commandVisible || store.findVisible else { return event }
+                  store.presentedPanel != nil || store.primaryPeekView != nil || store.commandVisible || store.findVisible else { return event }
             self.closePeek(); return nil
         }
     }
@@ -135,7 +135,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         let owner = primaryOwners.removeValue(forKey: window); let lease = primaryLeases.removeValue(forKey: window)
-        windows.removeValue(forKey: window); window.contentView = nil
+        let store = windows.removeValue(forKey: window); window.contentView = nil
+        store?.closePrimaryWindowPages()
         if normalWindow === window { normalWindow = nil }
         if let lease { owner?.release(lease) }
     }

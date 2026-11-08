@@ -81,13 +81,13 @@ import BrowserCore
         check(popupID.flatMap { store.quickProfileID($0) } == work && popup?.configuration.websiteDataStore.identifier == work, "A quick popup retains its opener's profile even after its intended Space changes")
         check(exposedPopupConfiguration == "AlcoveQuickPopupFixture", "A popup's WebKit configuration is installed before window observers can render it")
         store.openPeek(URL(string: "about:blank")!, from: parentView!)
-        check(store.peekProfileID == work && store.peekParentQuickID == parent && store.peekSpaceID == nil && store.peekView?.configuration.websiteDataStore.identifier == work, "Peek belongs to its quick source even when that profile has no remaining Space")
+        check(store.peekPages[.quick(parent)]?.profileID == work && store.peekContext(for: store.quickPeekView(parent)!) == .quick(parent) && store.peekPages[.quick(parent)]?.spaceID == nil && store.quickPeekView(parent)?.configuration.websiteDataStore.identifier == work, "Peek belongs to its quick source even when that profile has no remaining Space")
         check(store.primaryPeekView == nil, "A quick window's Peek cannot also mount in the main window")
         var peekPopup: WKWebView?
-        if let peek = store.peekView { peekPopup = store.createPopup(from: peek, configuration: WKWebViewConfiguration()) }
+        if let peek = store.quickPeekView(parent) { peekPopup = store.createPopup(from: peek, configuration: WKWebViewConfiguration()) }
         let peekPopupID = store.views.first(where: { $0.value === peekPopup })?.key
         check(peekPopupID.flatMap { store.quickProfileID($0) } == work, "A popup opened from quick Peek keeps the same profile and compact-window lifecycle")
-        store.closePeek()
+        store.closeQuickPeek(parent)
         store.preferences.quickDomainChoices = [QuickDomainChoice(host: "clear.example", profileID: work)]
         var clearObserved = false; var clearRouteBlocked = false
         try await store.clearProfileData(work, removeData: { _ in

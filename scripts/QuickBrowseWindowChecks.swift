@@ -146,7 +146,7 @@ import BrowserCore
         check(!focused.isFocusedWebsite(quickWeb), "A background permission sheet cannot keep capture eligibility")
         compact.fixtureSheet = nil; compact.fixtureIsKey = true; focused.focusedQuickPageID = focusID
         focused.openPeek(URL(string: "about:blank")!, from: quickWeb)
-        let peek = focused.peekView!; host.addSubview(peek)
+        let peek = focused.quickPeekView(focusID)!; host.addSubview(peek)
         check(focused.isFocusedWebsite(peek) && !focused.isFocusedWebsite(quickWeb), "A quick Peek is the only eligible website while it covers its parent")
         compact.fixtureIsKey = false; main.fixtureIsKey = true; focused.focusedQuickPageID = nil
         check(focused.isFocusedWebsite(primaryWeb) && !focused.isFocusedWebsite(peek), "A background quick Peek cannot request devices or block another foreground primary page")

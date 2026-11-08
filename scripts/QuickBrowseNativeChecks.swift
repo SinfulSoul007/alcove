@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import WebKit
 import BrowserCore
 
 /// Native controller lifecycle checks. Windows stay hidden; this is not visual/keyboard QA.
@@ -51,6 +52,32 @@ import BrowserCore
         check(handoff.library.archive.isEmpty, "Closing the promoted native window cannot archive the page a second time")
         handoff.quickPagesDidChange = nil
         if let destinationLease { handoffOwner.release(destinationLease) }
+
+        let retained = BrowserStore(dataRoot: root.appendingPathComponent("primary-close"), keyProvider: { _ in key })
+        let delegate = AppDelegate()
+        let retainedQuick = try retained.openQuickPage()
+        let retainedOwner = delegate.makeOwner(retained); delegate.normalOwner = retainedOwner
+        let primaryLease = try retainedOwner.acquirePrimary(); let retainedQuickLease = try retainedOwner.acquireQuick(retainedQuick)
+        let primaryID = retained.selectedID!
+        let primaryPage = retained.view(for: primaryID)
+        let quickPage = retained.view(for: retainedQuick)
+        let retainedCompact = try QuickBrowseWindowController(owner: retainedOwner, pageID: retainedQuick, requestPrimary: {}, requestProfiles: {}, didClose: {})
+        retained.openPeek(URL(string: "about:blank")!, from: quickPage)
+        let retainedQuickPeek = retained.quickPeekView(retainedQuick)!
+        for _ in 0..<500 where retainedQuickPeek.url == nil { try await Task.sleep(for: .milliseconds(10)) }
+        retainedCompact.requestLocation()
+        check(retainedCompact.activeWebView === retainedQuickPeek && retainedCompact.state.isEditingAddress && retainedCompact.state.addressText == retainedQuickPeek.url?.absoluteString && retained.quickPeekView(retainedQuick) === retainedQuickPeek, "The location command uses the visible Peek's address without discarding that preview")
+        retained.openPeek(URL(string: "about:blank")!, from: primaryPage)
+        let oldPrimaryPeek = retained.primaryPeekView!
+        let primaryWindow = NSWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: false)
+        primaryWindow.contentView = primaryPage
+        delegate.windows[primaryWindow] = retained; delegate.primaryOwners[primaryWindow] = retainedOwner
+        delegate.primaryLeases[primaryWindow] = primaryLease; delegate.normalWindow = primaryWindow
+        delegate.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: primaryWindow))
+        check(retained.views[primaryID] == nil && primaryPage.navigationDelegate == nil && primaryPage.uiDelegate == nil && retained.primaryPeekView == nil && oldPrimaryPeek.navigationDelegate == nil, "Closing the actual primary delegate path tears down its documents and Peek while a quick window survives")
+        check(retained.views[retainedQuick] === quickPage && retained.quickPeekView(retainedQuick) === retainedQuickPeek && retained.quickPage(retainedQuick) != nil && retained.tab(primaryID) != nil && !retained.isShuttingDown, "Primary native teardown preserves quick identity, its independent Peek and saved main tabs")
+        check(delegate.ensureNormalOwner() === retainedOwner && retainedOwner.store === retained && delegate.normalWindow == nil, "Reopening after actual primary close resolves the same surviving data writer")
+        retainedCompact.window?.close(); retainedOwner.release(retainedQuickLease)
 
         let privateRoot = root.appendingPathComponent("private")
         var keyRequests = 0

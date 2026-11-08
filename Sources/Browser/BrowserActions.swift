@@ -80,7 +80,7 @@ extension BrowserStore {
                         if profile != viewProfileIDs[id] || tab?.url != self.tab(id)?.url { discardView(id) }
                     }
                     splitID = nil; activePaneID = nil
-                    if !canRetainPeek(in: candidate) { closePeek() }
+                    reconcilePeeks(in: candidate, recovering: true)
                 }
                 try applyDocument(candidate)
                 hasSavedDocument = true; vault = storage; savingEnabled = true; startArchiveTimer()

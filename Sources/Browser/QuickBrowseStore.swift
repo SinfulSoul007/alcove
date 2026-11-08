@@ -20,6 +20,8 @@ private struct QuickArchiveSnapshot {
     let lastActiveAt: Date
     let viewID: ObjectIdentifier?
     let peekID: ObjectIdentifier?
+    let viewURL: URL?
+    let peekURL: URL?
 }
 private struct QuickArchiveMediaRequest {
     let snapshot: QuickArchiveSnapshot
@@ -46,8 +48,8 @@ extension BrowserStore {
         return isPrivate ? BrowserProfile.defaultID : entry.profileID
     }
     func quickContext(for web: WKWebView) -> (id: UUID, profileID: UUID, intendedSpaceID: UUID?)? {
-        if web === peekView, let parent = peekParentQuickID, let profile = peekProfileID,
-           quickProfileID(parent) == profile { return (parent, profile, peekSpaceID) }
+        if case .quick(let parent)? = peekContext(for: web), let peek = peekPages[.quick(parent)],
+           quickProfileID(parent) == peek.profileID { return (parent, peek.profileID, peek.spaceID) }
         guard let id = views.first(where: { $0.value === web })?.key, let profile = quickProfileID(id), let page = quickPage(id) else { return nil }
         return (id, profile, page.intendedSpaceID)
     }
@@ -62,6 +64,7 @@ extension BrowserStore {
         if isPrivate {
             for id in ids { discardView(id) }
             beforePublish?()
+            reconcilePeeks(in: document)
             session = Self.repairedSession(document.session); profileLibraries = document.profileLibraries ?? []
             preferences = document.preferences; pruneQuickActivity(); quickPagesDidChange?()
         } else { try commitProfileDocument(document, discarding: ids, beforePublish: beforePublish) }
@@ -124,7 +127,7 @@ extension BrowserStore {
         if let archived = archivedQuickTab(page) { records.archive.insert(archived, at: 0) }
         candidate.setLibrary(records, for: owner)
         try commitQuickDocument(candidate, discarding: [id], beforePublish: {
-            if self.peekParentQuickID == id { self.closePeek() }
+            self.closeQuickPeek(id)
         })
         if focusedQuickPageID == id { focusedQuickPageID = nil }
     }
@@ -156,10 +159,8 @@ extension BrowserStore {
         let spaceID = candidate.session.spaces[index].id; candidate.session.selectedSpace = spaceID
         try commitQuickDocument(candidate, discarding: discard, beforePublish: {
             if !crossing { self.views[id]?.removeFromSuperview() }
-            if self.peekParentQuickID == id {
-                if crossing { self.closePeek() }
-                else { self.peekParentQuickID = nil; self.peekSpaceID = spaceID }
-            }
+            if crossing { self.closePrimaryPeek(); self.closeQuickPeek(id) }
+            else { self.adoptQuickPeek(id, into: spaceID) }
             self.splitID = nil; self.activePaneID = nil
         })
         if focusedQuickPageID == id { focusedQuickPageID = nil }
@@ -183,10 +184,10 @@ extension BrowserStore {
             choices.insert(QuickDomainChoice(host: host, profileID: profileID), at: 0); candidate.preferences.quickDomainChoices = choices
         }
         try commitQuickDocument(candidate, discarding: crossing ? [id] : [], beforePublish: {
-            if crossing && self.peekParentQuickID == id { self.closePeek() }
+            if crossing { self.closeQuickPeek(id) }
         })
     }
-    private func quickPeek(_ id: UUID) -> WKWebView? { peekParentQuickID == id ? peekView : nil }
+    private func quickPeek(_ id: UUID) -> WKWebView? { quickPeekView(id) }
     private func quickHasCapture(_ id: UUID) -> Bool {
         [views[id], quickPeek(id)].compactMap { $0 }.contains { $0.cameraCaptureState != .none || $0.microphoneCaptureState != .none }
     }
@@ -198,6 +199,7 @@ extension BrowserStore {
               quickPeek(item.id)?.window?.attachedSheet == nil,
               views[item.id]?.isLoading != true, quickPeek(item.id)?.isLoading != true else { return false }
         return views[item.id].map(ObjectIdentifier.init) == item.viewID && quickPeek(item.id).map(ObjectIdentifier.init) == item.peekID
+            && views[item.id]?.url == item.viewURL && quickPeek(item.id)?.url == item.peekURL
     }
     private func commitQuickArchive(_ snapshots: [QuickArchiveSnapshot], cutoff: Date, now: Date) {
         guard !isShuttingDown, isPrivate || savingEnabled, !profileDataOperationInProgress,
@@ -218,7 +220,7 @@ extension BrowserStore {
         }
         do {
             try commitQuickDocument(candidate, discarding: Array(expiredIDs), beforePublish: {
-                if let parent = self.peekParentQuickID, expiredIDs.contains(parent) { self.closePeek() }
+                for id in expiredIDs { self.closeQuickPeek(id) }
             })
         } catch { message = "Quick windows stayed open because their archive could not be saved. \(error.localizedDescription)" }
     }
@@ -234,7 +236,8 @@ extension BrowserStore {
                       views[page.id]?.isLoading != true, quickPeek(page.id)?.isLoading != true else { continue }
                 if quickHasCapture(page.id) { touchQuickPage(page.id, now: now); continue }
                 let item = QuickArchiveSnapshot(id: page.id, profileID: owner, url: page.tab.url, lastActiveAt: page.lastActiveAt,
-                                                viewID: views[page.id].map(ObjectIdentifier.init), peekID: quickPeek(page.id).map(ObjectIdentifier.init))
+                                                viewID: views[page.id].map(ObjectIdentifier.init), peekID: quickPeek(page.id).map(ObjectIdentifier.init),
+                                                viewURL: views[page.id]?.url, peekURL: quickPeek(page.id)?.url)
                 snapshots.append(item)
                 for web in [views[page.id], quickPeek(page.id)].compactMap({ $0 }) { requests.append(QuickArchiveMediaRequest(snapshot: item, web: web)) }
             }

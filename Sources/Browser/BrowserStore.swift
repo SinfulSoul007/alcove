@@ -63,11 +63,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var clearingProfileID: UUID?
     @Published var deletingProfileID: UUID?
     var isShuttingDown = false
-    @Published var peekView: WKWebView?
-    var peekObservations: [NSKeyValueObservation] = []
-    var peekProfileID: UUID?
-    var peekSpaceID: UUID?
-    var peekParentQuickID: UUID?
+    @Published var peekPages: [PeekContext: PeekState] = [:]
     @Published var siteIcons: [UUID: NSImage] = [:]
     let isPrivate: Bool
     let privateDataStore: WKWebsiteDataStore?
@@ -177,7 +173,12 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         guard !isShuttingDown else { return }
         flush(); isShuttingDown = true; quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
-        closePeek(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
+        closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
+    }
+    func closePrimaryWindowPages() {
+        closePrimaryPeek()
+        for id in Array(views.keys) where quickProfileID(id) == nil { discardView(id) }
+        splitID = nil; activePaneID = nil; presentedPanel = nil; commandVisible = false; findVisible = false
     }
     func select(_ id: UUID) {
         guard session.spaces[spaceIndex].tabs.contains(where: { $0.id == id }) else { return }
@@ -414,7 +415,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         createPopup(from: webView, configuration: configuration)
     }
-    func webViewDidClose(_ webView: WKWebView) { if webView === peekView { closePeek(); return }; if let id = views.first(where: { $0.value === webView })?.key { close(id) } }
+    func webViewDidClose(_ webView: WKWebView) { if let context = peekContext(for: webView) { closePeek(in: context); return }; if let id = views.first(where: { $0.value === webView })?.key { close(id) } }
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let alert = NSAlert(); alert.messageText = frame.request.url?.host ?? "Website"; alert.informativeText = message; alert.runModal(); completionHandler()
     }

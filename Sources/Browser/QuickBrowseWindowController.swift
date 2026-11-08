@@ -17,7 +17,7 @@ import BrowserCore
     private var archivingUserClose = false
     private var released = false
     var store: BrowserStore { windowOwner.store }
-    var activeWebView: WKWebView? { store.peekParentQuickID == pageID ? store.peekView ?? store.views[pageID] : store.views[pageID] }
+    var activeWebView: WKWebView? { store.foregroundQuickView(pageID) }
 
     init(owner: BrowserWindowOwner, pageID: UUID, requestPrimary: @escaping () -> Void,
          requestProfiles: @escaping () -> Void, didClose: @escaping () -> Void) throws {
@@ -90,7 +90,7 @@ import BrowserCore
         if store.focusedQuickPageID == pageID { store.focusedQuickPageID = nil }
         store.touchQuickPage(pageID)
     }
-    func requestLocation() { state.requestLocation(currentURL: store.quickPage(pageID)?.tab.url ?? "") }
+    func requestLocation() { state.requestLocation(currentURL: activeWebView?.url?.absoluteString ?? store.quickPage(pageID)?.tab.url ?? "") }
     func newQuick() {
         guard let profile = store.quickProfileID(pageID) else { return }
         do { _ = try store.openQuickPage(profileID: profile) } catch { state.navigationError = error.localizedDescription }
@@ -98,7 +98,7 @@ import BrowserCore
     func escape() {
         if state.findVisible { state.dismissFind() }
         else if state.isEditingAddress { state.cancelLocation(currentURL: store.quickPage(pageID)?.tab.url ?? "") }
-        else if store.peekParentQuickID == pageID { store.closePeek() }
+        else if store.quickPeekView(pageID) != nil { store.closeQuickPeek(pageID) }
     }
     func refreshMediaStatus() {
         guard let web = activeWebView else { return }
@@ -145,8 +145,8 @@ import BrowserCore
         if crossing { confirmReload("Move this page to another profile?", completion: apply) } else { apply() }
     }
     private func promotePeek() {
-        guard store.peekParentQuickID == pageID else { return }
+        guard store.quickPeekView(pageID) != nil else { return }
         requestPrimary()
-        do { _ = try store.promotePeek() } catch { state.navigationError = error.localizedDescription; surface() }
+        do { _ = try store.promotePeek(in: .quick(pageID)) } catch { state.navigationError = error.localizedDescription; surface() }
     }
 }

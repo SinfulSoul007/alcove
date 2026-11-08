@@ -72,7 +72,7 @@ struct BrowserUI: View {
                 Color.clear.frame(width: 8).contentShape(Rectangle()).allowsHitTesting(!store.sidebarVisible && !shown)
                     .onHover { inside in guard !store.sidebarVisible else { return }; if inside { reveal.edgeEntered() } else if !reveal.revealed { reveal.reset() } }
                 if store.primaryPeekView != nil {
-                    Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { store.closePeek() }
+                    Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { store.closePrimaryPeek() }
                     PeekPanel(store: store).frame(width: min(1000, geometry.size.width - 96), height: geometry.size.height - 96).frame(maxWidth: .infinity, maxHeight: .infinity).transition(.opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.98)))
                 }
                 if store.commandVisible {

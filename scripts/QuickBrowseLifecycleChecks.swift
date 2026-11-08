@@ -11,6 +11,8 @@ import BrowserCore
     var fixtureMicrophone: WKMediaCaptureState = .none
     var delayReply = false
     var delayedReply: (@MainActor (WKMediaPlaybackState) -> Void)?
+    var fixtureURL: URL?
+    override var url: URL? { fixtureURL ?? super.url }
     override var cameraCaptureState: WKMediaCaptureState { fixtureCapture }
     override var microphoneCaptureState: WKMediaCaptureState { fixtureMicrophone }
     override func requestMediaPlaybackState(completionHandler: @escaping @MainActor (WKMediaPlaybackState) -> Void) {
@@ -44,42 +46,42 @@ import BrowserCore
         let id = try store.openQuickPage(profileID: profile)
         var page: WKWebView? = store.view(for: id)
         store.openPeek(URL(string: "about:blank")!, from: page!)
-        var child: WKWebView? = store.peekView
+        var child: WKWebView? = store.quickPeekView(id)
         store.selectSpace(personalSpace)
-        check(store.peekView === child && store.peekParentQuickID == id, "Switching the main window's Space does not dismiss another quick window's Peek")
-        if store.peekView == nil { store.openPeek(URL(string: "about:blank")!, from: page!); child = store.peekView }
+        check(store.quickPeekView(id) === child && store.peekContext(for: child!) == .quick(id), "Switching the main window's Space does not dismiss another quick window's Peek")
+        if store.quickPeekView(id) == nil { store.openPeek(URL(string: "about:blank")!, from: page!); child = store.quickPeekView(id) }
         try store.assignProfile(BrowserProfile.defaultID, to: originalSpace)
-        check(store.peekView === child && store.peekProfileID == profile && store.peekSpaceID == nil, "Reassigning an intended Space retains an independent quick Peek under its captured profile")
-        if store.peekView == nil { store.openPeek(URL(string: "about:blank")!, from: page!); child = store.peekView }
+        check(store.quickPeekView(id) === child && store.peekPages[.quick(id)]?.profileID == profile && store.peekPages[.quick(id)]?.spaceID == nil, "Reassigning an intended Space retains an independent quick Peek under its captured profile")
+        if store.quickPeekView(id) == nil { store.openPeek(URL(string: "about:blank")!, from: page!); child = store.quickPeekView(id) }
         let unrelated = try store.createProfile(name: "Unrelated"); try owned.register(unrelated)
-        check(store.peekView === child && store.peekParentQuickID == id, "Creating an unrelated main-window profile does not close a quick Peek")
-        if store.peekView == nil { store.openPeek(URL(string: "about:blank")!, from: page!); child = store.peekView }
+        check(store.quickPeekView(id) === child && store.peekContext(for: child!) == .quick(id), "Creating an unrelated main-window profile does not close a quick Peek")
+        if store.quickPeekView(id) == nil { store.openPeek(URL(string: "about:blank")!, from: page!); child = store.quickPeekView(id) }
         let destination = try store.promoteQuickPage(id)
-        check(store.peekView === child && store.peekParentQuickID == nil && store.peekSpaceID == destination && store.peekProfileID == profile, "Promoting a quick parent retains its same-profile Peek in the destination Space")
-        store.closePeek(); child = nil
+        check(store.primaryPeekView === child && store.peekContext(for: child!) == .primary && store.peekPages[.primary]?.spaceID == destination && store.peekPages[.primary]?.profileID == profile, "Promoting a quick parent retains its same-profile Peek in the destination Space")
+        store.closePrimaryPeek(); child = nil
         let changing = try store.openQuickPage(profileID: profile)
         var changingPage: WKWebView? = store.view(for: changing)
         store.openPeek(URL(string: "about:blank")!, from: changingPage!)
-        child = store.peekView
+        child = store.quickPeekView(changing)
         let beforeChange = try Data(contentsOf: store.sessionURL)
         var declined = false
         do { try store.changeQuickProfile(changing, to: BrowserProfile.defaultID) } catch { declined = true }
         let afterDeclined = try Data(contentsOf: store.sessionURL)
-        check(declined && store.peekView === child && store.quickProfileID(changing) == profile && beforeChange == afterDeclined, "An unconfirmed quick-profile change preserves its parent, Peek and encrypted ownership")
+        check(declined && store.quickPeekView(changing) === child && store.quickProfileID(changing) == profile && beforeChange == afterDeclined, "An unconfirmed quick-profile change preserves its parent, Peek and encrypted ownership")
         try store.changeQuickProfile(changing, to: BrowserProfile.defaultID, allowReload: true)
-        check(store.peekView == nil && store.views[changing] == nil && store.quickProfileID(changing) == BrowserProfile.defaultID, "A confirmed profile reload also closes the old profile's Peek")
-        store.closePeek(); child = nil
+        check(store.quickPeekView(changing) == nil && store.views[changing] == nil && store.quickProfileID(changing) == BrowserProfile.defaultID, "A confirmed profile reload also closes the old profile's Peek")
+        store.closeQuickPeek(changing); child = nil
         let closing = try store.openQuickPage(profileID: profile)
         var closingPage: WKWebView? = store.view(for: closing)
         store.update(closing) { $0.url = "https://example.com/quick-close" }
         store.openPeek(URL(string: "about:blank")!, from: closingPage!)
-        child = store.peekView
+        child = store.quickPeekView(closing)
         store.vault = MetadataStore(url: root, key: key)
         let beforeClose = try Data(contentsOf: store.sessionURL)
         declined = false
         do { try store.closeQuickPage(closing) } catch { declined = true }
         let afterClose = try Data(contentsOf: store.sessionURL)
-        check(declined && !store.savingEnabled && store.quickPage(closing) != nil && store.views[closing] === closingPage && store.peekView === child && beforeClose == afterClose, "A failed quick close preserves its live parent and Peek before any native teardown")
+        check(declined && !store.savingEnabled && store.quickPage(closing) != nil && store.views[closing] === closingPage && store.quickPeekView(closing) === child && beforeClose == afterClose, "A failed quick close preserves its live parent and Peek before any native teardown")
         let beforeNew = Set(store.allQuickPages.map(\.id))
         declined = false
         do { _ = try store.openQuickPage(profileID: profile) } catch { declined = true }
@@ -88,13 +90,13 @@ import BrowserCore
         check(resurfaced == closing && store.views[closing] === closingPage, "An already-known quick link can resurface while new metadata writes are paused")
         declined = false
         do { _ = try store.promoteQuickPage(closing) } catch { declined = true }
-        check(declined && store.quickPage(closing) != nil && store.views[closing] === closingPage && store.peekView === child, "Locked promotion cannot discard or move a live page or its Peek")
+        check(declined && store.quickPage(closing) != nil && store.views[closing] === closingPage && store.quickPeekView(closing) === child, "Locked promotion cannot discard or move a live page or its Peek")
         store.update(closing) { $0.url = "https://example.com/latest-close" }
         store.unlockLocalData(keyProvider: { key })
         for _ in 0..<500 where store.unlocking { try await Task.sleep(for: .milliseconds(10)) }
-        check(store.savingEnabled && store.views[closing] === closingPage && store.peekView === child && store.peekParentQuickID == closing && store.quickPage(closing)?.tab.url == "https://example.com/latest-close", "Unlock keeps the latest quick page and its still-owned Peek alive")
+        check(store.savingEnabled && store.views[closing] === closingPage && store.quickPeekView(closing) === child && store.peekContext(for: child!) == .quick(closing) && store.quickPage(closing)?.tab.url == "https://example.com/latest-close", "Unlock keeps the latest quick page and its still-owned Peek alive")
         try store.closeQuickPage(closing)
-        check(store.quickPage(closing) == nil && store.views[closing] == nil && store.peekView == nil && store.library(for: profile).archive.first?.url == "https://example.com/latest-close", "A retried close archives its latest URL and closes its Peek exactly once")
+        check(store.quickPage(closing) == nil && store.views[closing] == nil && store.quickPeekView(closing) == nil && store.library(for: profile).archive.first?.url == "https://example.com/latest-close", "A retried close archives its latest URL and closes its Peek exactly once")
         let now = Date(timeIntervalSince1970: 100_000)
         let expired = try store.openQuickPage(url: URL(string: "https://expiry.example/old"), profileID: BrowserProfile.defaultID)
         let focused = try store.openQuickPage(url: URL(string: "https://expiry.example/focused"), profileID: BrowserProfile.defaultID)
@@ -203,6 +205,21 @@ import BrowserCore
         check(store.quickArchiveProbeID == nil && store.quickPage(unknownID) != nil && store.views[unknownID] === unknownView, "An unresponsive media query times out without closing an unknown live page")
         unknownView!.delayedReply = nil
         unknownView!.delayReply = false; unknownView!.fixturePlayback = .playing
+        let changedPeekID = try store.openQuickPage(profileID: BrowserProfile.defaultID)
+        let changedPeekConfig = WKWebViewConfiguration(); changedPeekConfig.websiteDataStore = store.websiteDataStore(forProfile: BrowserProfile.defaultID)
+        var changedPeek: PlaybackFixtureWebView? = PlaybackFixtureWebView(frame: .zero, configuration: changedPeekConfig)
+        changedPeek!.fixtureURL = URL(string: "https://expiry.example/peek-before")
+        changedPeek!.delayReply = true
+        store.peekPages[.quick(changedPeekID)] = PeekState(web: changedPeek!, profileID: BrowserProfile.defaultID, spaceID: store.space.id)
+        store.mutateLibrary(for: BrowserProfile.defaultID) { records in
+            if let index = records.quickPages?.firstIndex(where: { $0.id == changedPeekID }) { records.quickPages?[index].lastActiveAt = Date(timeIntervalSince1970: 1) }
+        }
+        store.archiveInactiveQuickPages(now: now)
+        changedPeek!.fixtureURL = URL(string: "https://expiry.example/peek-after")
+        let peekReply = changedPeek!.delayedReply; changedPeek!.delayedReply = nil; peekReply?(.none)
+        for _ in 0..<300 where store.quickArchiveProbeID != nil { try await Task.sleep(for: .milliseconds(10)) }
+        check(store.quickPage(changedPeekID) != nil && store.quickPeekView(changedPeekID) === changedPeek, "A media reply for a previous Peek URL cannot archive its newly navigated live document")
+        changedPeek!.delayReply = false; changedPeek!.fixturePlayback = .playing
         let failedArchive = try store.openQuickPage(url: URL(string: "https://expiry.example/save-failure"), profileID: BrowserProfile.defaultID)
         store.mutateLibrary(for: BrowserProfile.defaultID) { records in
             if let index = records.quickPages?.firstIndex(where: { $0.id == failedArchive }) { records.quickPages?[index].lastActiveAt = Date(timeIntervalSince1970: 1) }
@@ -225,7 +242,7 @@ import BrowserCore
         check(privateStore.quickPage(privateID) == nil && privateStore.library.archive.first?.url == "https://expiry.example/private" && privateKeyRequests == 0 && !FileManager.default.fileExists(atPath: privateRoot.path), "Private auto-archive keeps its records in memory without requesting a normal key or file")
         check(privateStore.archiveTimer?.isValid != true, "A private owner stops its archive timer after its final quick window leaves")
         privateStore.shutdown(); loadingView = nil; playingView = nil; captureView = nil; pausedView = nil; delayedView = nil; microphoneView = nil; switchedOffView = nil; unknownView = nil
-        store.shutdown(); page = nil; changingPage = nil; closingPage = nil; child = nil
+        store.shutdown(); page = nil; changingPage = nil; closingPage = nil; child = nil; changedPeek = nil
         let clock = ContinuousClock(); let deadline = clock.now.advanced(by: .seconds(5))
         while store.closingPages.contains(where: { $0.webView != nil }) && clock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
         store.namedDataStores.removeAll(); if !(await owned.cleanup()) { failures += 1 }

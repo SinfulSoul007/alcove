@@ -120,12 +120,13 @@ struct QuickBrowseUI: View {
     private var ownerID: UUID? { store.quickProfileID(id) }
     private var owner: BrowserProfile? { store.profiles.first { $0.id == ownerID } }
     private var ownerName: String { store.isPrivate ? "Private" : (owner?.name ?? "Unavailable profile") }
-    private var currentURL: String { page?.tab.url ?? "" }
+    private var currentURL: String { ownPeek?.url?.absoluteString ?? page?.tab.url ?? "" }
     private var currentHost: String? { URL(string: currentURL).flatMap(QuickBrowseRouting.host(for:)) }
     private var ownerAvailable: Bool { ownerID.map { !store.profileUnavailable($0) } ?? false }
     private var canSave: Bool { store.isPrivate || store.savingEnabled }
     private var canMove: Bool { page != nil && ownerAvailable && canSave }
-    private var ownPeek: WKWebView? { store.peekParentQuickID == id ? store.peekView : nil }
+    private var ownPeek: WKWebView? { store.quickPeekView(id) }
+    private var foregroundWeb: WKWebView? { store.foregroundQuickView(id) }
     private var appearance: AppearanceSettings { store.appearance }
     private var theme: AppearanceTheme {
         if let intended = page?.intendedSpaceID,
@@ -170,7 +171,9 @@ struct QuickBrowseUI: View {
             // registerView publishes a revision when these KVO properties change.
             .onChange(of: store.views[id]?.cameraCaptureState) { _, _ in refreshMediaStatus() }
             .onChange(of: store.views[id]?.microphoneCaptureState) { _, _ in refreshMediaStatus() }
-            .onChange(of: ownPeek.map(ObjectIdentifier.init)) { _, _ in state.dismissFind(); refreshMediaStatus() }
+            .onChange(of: ownPeek.map(ObjectIdentifier.init)) { _, _ in
+                profilePickerVisible = false; state.dismissFind(); state.cancelLocation(currentURL: currentURL); refreshMediaStatus()
+            }
             .onChange(of: ownPeek?.isLoading) { _, loading in if loading == false { refreshMediaStatus() } }
             .onChange(of: ownPeek?.cameraCaptureState) { _, _ in refreshMediaStatus() }
             .onChange(of: ownPeek?.microphoneCaptureState) { _, _ in refreshMediaStatus() }
@@ -187,13 +190,12 @@ struct QuickBrowseUI: View {
         HStack(spacing: 6) {
             // Full-size content windows draw native traffic lights above this reserved area.
             Color.clear.frame(width: 64).accessibilityHidden(true).allowsHitTesting(false)
-            toolbarButton("arrow.left", label: "Back", enabled: store.views[id]?.canGoBack == true && ownerAvailable) { store.views[id]?.goBack() }
-            toolbarButton("arrow.right", label: "Forward", enabled: store.views[id]?.canGoForward == true && ownerAvailable) { store.views[id]?.goForward() }
-            toolbarButton(store.views[id]?.isLoading == true ? "xmark" : "arrow.clockwise",
-                          label: store.views[id]?.isLoading == true ? "Stop loading" : "Reload page",
-                          enabled: store.views[id] != nil && ownerAvailable) {
-                if store.views[id]?.isLoading == true { store.views[id]?.stopLoading() }
-                else { store.views[id]?.reload() }
+            toolbarButton("arrow.left", label: "Back", enabled: foregroundWeb?.canGoBack == true && ownerAvailable) { store.performQuickNavigation(id, action: .back) }
+            toolbarButton("arrow.right", label: "Forward", enabled: foregroundWeb?.canGoForward == true && ownerAvailable) { store.performQuickNavigation(id, action: .forward) }
+            toolbarButton(foregroundWeb?.isLoading == true ? "xmark" : "arrow.clockwise",
+                          label: foregroundWeb?.isLoading == true ? "Stop loading" : "Reload page",
+                          enabled: foregroundWeb != nil && ownerAvailable) {
+                store.performQuickNavigation(id, action: foregroundWeb?.isLoading == true ? .stop : .reload)
             }
             addressField.layoutPriority(1)
             if !compact {
@@ -204,17 +206,17 @@ struct QuickBrowseUI: View {
                     }.font(.system(size: 11 * appearance.textScale, weight: .medium))
                         .frame(maxWidth: 105).padding(.horizontal, 8).frame(height: 30)
                 }.buttonStyle(.plain).background(theme.tile, in: RoundedRectangle(cornerRadius: appearance.cornerRadius))
-                    .help("Profile: \(ownerName)").accessibilityLabel("Choose profile, currently \(ownerName)")
+                    .disabled(ownPeek != nil).help("Profile: \(ownerName)").accessibilityLabel("Choose profile, currently \(ownerName)")
                 Menu { destinationMenu } label: {
                     Label("Open in Space", systemImage: "arrow.up.forward.square")
                         .font(.system(size: 11 * appearance.textScale, weight: .medium))
-                }.menuStyle(.borderlessButton).fixedSize().disabled(!canMove)
+                }.menuStyle(.borderlessButton).fixedSize().disabled(!canMove || ownPeek != nil)
                     .help("Move this live page into a Space")
             }
             Menu {
                 if compact {
-                    Button("Profile: \(ownerName)…") { profilePickerVisible = true }
-                    Menu("Open in Space") { destinationMenu }.disabled(!canMove)
+                    Button("Profile: \(ownerName)…") { profilePickerVisible = true }.disabled(ownPeek != nil)
+                    Menu("Open in Space") { destinationMenu }.disabled(!canMove || ownPeek != nil)
                     Divider()
                 }
                 Button("New Quick Browse", action: onNewQuick).disabled(!canMove)
@@ -312,7 +314,7 @@ struct QuickBrowseUI: View {
     }
 
     @ViewBuilder private var progress: some View {
-        if let web = store.views[id], web.isLoading {
+        if let web = foregroundWeb, web.isLoading {
             ProgressView(value: min(1, max(0, web.estimatedProgress)))
                 .progressViewStyle(.linear).tint(theme.accent).frame(height: 2)
                 .accessibilityLabel("Loading page").accessibilityValue("\(Int(web.estimatedProgress * 100)) percent")
@@ -377,12 +379,12 @@ struct QuickBrowseUI: View {
     private func peekOverlay(_ web: WKWebView, size: CGSize) -> some View {
         ZStack {
             Color.black.opacity(0.3).contentShape(Rectangle()).onTapGesture {
-                if store.peekParentQuickID == id { store.closePeek() }
+                store.closeQuickPeek(id)
             }.accessibilityLabel("Close Peek").accessibilityAddTraits(.isButton)
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     toolbarButton("xmark", label: "Close Peek") {
-                        if store.peekParentQuickID == id { store.closePeek() }
+                        store.closeQuickPeek(id)
                     }
                     Text(web.url?.host ?? "Peek").font(.system(size: 12 * appearance.textScale, weight: .medium))
                         .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
@@ -409,33 +411,33 @@ struct QuickBrowseUI: View {
     private func requestLocation() { state.requestLocation(currentURL: currentURL) }
     private func navigate() {
         do {
-            try store.navigateQuickPage(id, input: state.addressText)
+            try store.navigateForegroundQuickPage(id, input: state.addressText)
             state.navigationError = nil
-            state.cancelLocation(currentURL: store.quickPage(id)?.tab.url ?? currentURL)
+            state.cancelLocation(currentURL: currentURL)
             focusPage()
         } catch { state.navigationError = error.localizedDescription }
     }
     private func refreshMediaStatus() {
-        guard let web = ownPeek ?? store.views[id] else { return }
+        guard let web = foregroundWeb else { return }
         state.refreshMediaStatus(web: web) { [weak store] candidate in
             guard let store, store.quickPage(id) != nil else { return false }
-            return (store.peekParentQuickID == id ? store.peekView ?? store.views[id] : store.views[id]) === candidate
+            return store.foregroundQuickView(id) === candidate
         }
     }
     private func findNext(backwards: Bool = false) {
-        state.findNext(web: ownPeek ?? store.views[id], backwards: backwards) { [weak store] web in
+        state.findNext(web: foregroundWeb, backwards: backwards) { [weak store] web in
             guard let store, store.quickPage(id) != nil else { return false }
-            return (store.peekParentQuickID == id ? store.peekView ?? store.views[id] : store.views[id]) === web
+            return store.foregroundQuickView(id) === web
         }
     }
     private func focusPage() {
-        guard let web = ownPeek ?? store.views[id], let window = web.window, window.isKeyWindow else { return }
+        guard let web = foregroundWeb, let window = web.window, window.isKeyWindow else { return }
         window.makeFirstResponder(web)
     }
     private func cancelEditing() {
         if state.findVisible { state.dismissFind(); focusPage() }
         else if state.isEditingAddress { state.cancelLocation(currentURL: currentURL); focusPage() }
-        else if ownPeek != nil { store.closePeek() }
+        else if ownPeek != nil { store.closeQuickPeek(id) }
     }
 }
 
@@ -463,7 +465,7 @@ private struct QuickBrowsePageContent: View {
                     WebPane(webView: web).id(ObjectIdentifier(web))
                         .task(id: ObjectIdentifier(web)) {
                             state.refreshMediaStatus(web: web) { [weak store] candidate in
-                                store?.views[id] === candidate && store?.quickPage(id) != nil
+                                store?.foregroundQuickView(id) === candidate && store?.quickPage(id) != nil
                             }
                         }
                 } else {

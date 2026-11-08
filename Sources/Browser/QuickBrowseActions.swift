@@ -7,19 +7,40 @@ struct QuickActionSnapshot {
     let url: String
     let viewID: ObjectIdentifier?
 }
+enum QuickPageNavigation { case back, forward, reload, stop }
 
 extension BrowserStore {
-    var primaryPeekView: WKWebView? { peekParentQuickID == nil ? peekView : nil }
+    func foregroundQuickView(_ id: UUID) -> WKWebView? {
+        guard !isShuttingDown, let profile = quickProfileID(id), !profileUnavailable(profile) else { return nil }
+        return quickPeekView(id) ?? views[id]
+    }
+    func performQuickNavigation(_ id: UUID, action: QuickPageNavigation) {
+        guard let web = foregroundQuickView(id) else { return }
+        switch action {
+        case .back: web.goBack()
+        case .forward: web.goForward()
+        case .reload: web.reload()
+        case .stop: web.stopLoading()
+        }
+    }
+    func navigateForegroundQuickPage(_ id: UUID, input: String) throws {
+        guard let profile = quickProfileID(id) else { throw QuickBrowseError.missing }
+        try requireQuickProfile(profile)
+        if let peek = quickPeekView(id) {
+            guard let url = Address.resolve(input), QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.invalidAddress }
+            touchQuickPage(id); peek.load(URLRequest(url: url))
+        } else { try navigateQuickPage(id, input: input) }
+    }
     func isFocusedWebsite(_ web: WKWebView) -> Bool {
         guard !isShuttingDown, let window = web.window,
               window.isKeyWindow || window.attachedSheet?.isKeyWindow == true,
               let profile = profileID(for: web), !profileUnavailable(profile) else { return false }
         if let context = quickContext(for: web) {
-            if peekParentQuickID == context.id, let peekView { return web === peekView }
+            if let peek = quickPeekView(context.id) { return web === peek }
             return views[context.id] === web
         }
         guard presentedPanel == nil, !commandVisible, !onboardingVisible else { return false }
-        if let primaryPeekView { return web === primaryPeekView && peekSpaceID == space.id }
+        if let primaryPeekView { return web === primaryPeekView && peekPages[.primary]?.spaceID == space.id }
         return web === currentView
     }
     func focusProfileSpace(_ profileID: UUID) throws {
