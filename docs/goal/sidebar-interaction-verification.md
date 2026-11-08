@@ -22,7 +22,7 @@ Task2's existing core API failed both late-drag regressions before correction. A
 
 Browser integration checks pass35, including five added cases exercising the actual `BrowserUI` root: floating reveal, website identity, page hit testing outside the panel, command-overlay suppression and stationary-pointer recovery. These fixtures substitute only key-window/pointer inputs and never show a window or operate a user app. Synthetic events are passed directly to owned handlers; no global input is synthesized.
 
-Optimized arm64 and x86_64 builds pass without compiler diagnostics. Final integrated suite, strict signatures and independent review are recorded after verification.
+The final integrated `scripts/build.sh test` run at source commit `875f9ff` passes **508 checks, zero failures and zero compiler diagnostics**. Optimized arm64 and x86_64 builds pass strict signature verification; the Intel Info.plist matches source. Fresh whole-branch review follows this verification.
 
 ## Rulings I made
 
