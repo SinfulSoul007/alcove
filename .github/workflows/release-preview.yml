@@ -1,0 +1,120 @@
+name: Release unsigned preview
+
+on:
+  push:
+    tags: ['v*-preview.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-preview-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a matching preview tag and bundle version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          python3 - <<'PY'
+          import os, plistlib, re
+          tag = os.environ['RELEASE_TAG']
+          number = r'(?:0|[1-9][0-9]*)'
+          match = re.fullmatch(r'v(' + number + r'\.' + number + r'\.' + number + r')-preview\.' + number, tag)
+          if not match:
+              raise SystemExit('Expected vMAJOR.MINOR.PATCH-preview.NUMBER with no leading zeroes')
+          with open('scripts/Info.plist', 'rb') as source:
+              info = plistlib.load(source)
+          if info.get('CFBundleShortVersionString') != match[1] or info.get('AlcoveReleaseTag') != tag:
+              raise SystemExit('Tag, CFBundleShortVersionString and AlcoveReleaseTag must match before release')
+          print('Validated preview tag and bundle version:', tag)
+          PY
+      - name: Test and package the universal app
+        run: ./scripts/package.sh
+      - name: Verify checksums, ZIP, universal binaries and mounted DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' scripts/Info.plist)
+          zip="dist/Alcove-$version-universal-unsigned-preview.zip"
+          dmg="dist/Alcove-$version-universal-unsigned-preview.dmg"
+          test -s "$zip"
+          test -s "$dmg"
+          (cd dist && shasum -a 256 -c SHA256SUMS.txt)
+          python3 scripts/verify-package.py "$zip"
+          mkdir -p .build/release-zip .build/release-dmg
+          ditto -x -k "$zip" .build/release-zip
+          codesign --verify --deep --strict .build/release-zip/Alcove.app
+          lipo .build/release-zip/Alcove.app/Contents/MacOS/Alcove -verify_arch arm64 x86_64
+          cmp scripts/Info.plist .build/release-zip/Alcove.app/Contents/Info.plist
+          hdiutil verify "$dmg"
+          hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$PWD/.build/release-dmg"
+          trap 'hdiutil detach "$PWD/.build/release-dmg" || true' EXIT
+          test -L .build/release-dmg/Applications
+          test "$(readlink .build/release-dmg/Applications)" = /Applications
+          test -s '.build/release-dmg/READ ME FIRST.txt'
+          codesign --verify --deep --strict .build/release-dmg/Alcove.app
+          lipo .build/release-dmg/Alcove.app/Contents/MacOS/Alcove -verify_arch arm64 x86_64
+          cmp .build/release-zip/Alcove.app/Contents/MacOS/Alcove .build/release-dmg/Alcove.app/Contents/MacOS/Alcove
+          cmp scripts/Info.plist .build/release-dmg/Alcove.app/Contents/Info.plist
+          hdiutil detach "$PWD/.build/release-dmg"
+          trap - EXIT
+      - name: Pass only verified artifacts to publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-preview
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/Alcove-*-universal-unsigned-preview.zip
+            dist/Alcove-*-universal-unsigned-preview.dmg
+            dist/SHA256SUMS.txt
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Retrieve verified artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-preview
+          path: dist
+      - name: Publish a GitHub prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check SHA256SUMS.txt)
+          cat > release-notes.txt <<'NOTE'
+          Universal macOS 14+ preview for Apple Silicon and Intel.
+
+          Download the DMG, drag Alcove.app to Applications, and review these release notes before opening it. The ZIP contains the same app as an alternative.
+
+          This preview is ad hoc signed. It is NOT Developer ID signed or notarized by Apple. macOS may block it. Keep system security enabled. If blocked, build from source or wait for a notarized release. Early builds may contain bugs and unfinished features.
+
+          SHA256SUMS.txt contains checksums for both installers. Checksums detect changed bytes; they do not establish developer identity.
+          NOTE
+          # Existing releases are never silently overwritten, including on workflow re-runs.
+          gh release create "$RELEASE_TAG" --verify-tag --prerelease --latest=false \
+            --title "Alcove $RELEASE_TAG — Unsigned Preview" \
+            --notes-file release-notes.txt --generate-notes \
+            dist/Alcove-*-universal-unsigned-preview.zip \
+            dist/Alcove-*-universal-unsigned-preview.dmg dist/SHA256SUMS.txt

@@ -1,15 +1,22 @@
 import AppKit
 import SwiftUI
+import BrowserCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var windows: [NSWindow: BrowserStore] = [:]
+    let updates = UpdateController(installedTag: Bundle.main.object(forInfoDictionaryKey: "AlcoveReleaseTag") as? String ?? "unknown")
     var normalWindow: NSWindow?
     var escapeMonitor: Any?
     var paneFocusMonitor: Any?
+    var updateTimer: Timer?
     var activeStore: BrowserStore? { (NSApp.keyWindow.flatMap { windows[$0] }) ?? (NSApp.mainWindow.flatMap { windows[$0] }) ?? normalWindow.flatMap { windows[$0] } }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular); buildMenu(); openWindow(isPrivate: false); NSApp.activate(ignoringOtherApps: true)
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkNormalWindowAutomatically() }
+        }
+        updateTimer?.tolerance = 60
         paneFocusMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             guard let self, let window = event.window, let store = self.windows[window], store.peekView == nil, !store.commandVisible else { return event }
             for (id, web) in store.views where web.window === window {
@@ -26,18 +33,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func openWindow(isPrivate: Bool) {
         if !isPrivate, let normalWindow { if normalWindow.isMiniaturized { normalWindow.deminiaturize(nil) }; normalWindow.makeKeyAndOrderFront(nil); return }
         let store = BrowserStore(isPrivate: isPrivate)
+        if isPrivate, let normalWindow, let normal = windows[normalWindow] {
+            store.preferences.appearance = normal.preferences.appearance
+            store.session.spaces[0].theme = normal.space.theme; store.session.spaces[0].customTheme = normal.space.customTheme
+        }
+        store.onboardingDidFinish = { [weak self, weak store] in if let store { self?.checkAutomaticallyIfNeeded(store) } }
+        store.automaticUpdatesDidChange = { [weak self, weak store] in if let store { self?.checkAutomaticallyIfNeeded(store) } }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1260, height: 820), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = isPrivate ? "Alcove — Private" : "Alcove"; window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false; window.delegate = self
         window.minSize = NSSize(width: 800, height: 540)
-        let hosting = NSHostingView(rootView: BrowserUI(store: store))
+        let hosting = NSHostingView(rootView: BrowserUI(store: store).environmentObject(updates))
         hosting.safeAreaRegions = []
         hosting.sizingOptions = [.minSize]
         window.contentView = hosting
         windows[window] = store
         if !isPrivate { normalWindow = window }
         window.center(); window.makeKeyAndOrderFront(nil)
+        checkAutomaticallyIfNeeded(store)
     }
+    func checkAutomaticallyIfNeeded(_ store: BrowserStore) {
+        guard !store.isPrivate, !store.onboardingVisible, store.savingEnabled, store.preferences.automaticUpdateChecks == true, !updates.checking else { return }
+        let defaults = UserDefaults.standard
+        let now = Date()
+        guard UpdateCheckSchedule.isDue(lastAttempt: defaults.object(forKey: "lastAutomaticUpdateAttempt") as? Date, now: now) else { return }
+        defaults.set(now, forKey: "lastAutomaticUpdateAttempt")
+        let channel = UpdateChannel(rawValue: store.preferences.updateChannel ?? "preview") ?? .preview
+        Task { await updates.check(channel: channel) }
+    }
+    func checkNormalWindowAutomatically() { if let normalWindow, let store = windows[normalWindow] { checkAutomaticallyIfNeeded(store) } }
+    func applicationDidBecomeActive(_ notification: Notification) { checkNormalWindowAutomatically() }
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         if let store = windows.removeValue(forKey: window) {
@@ -46,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if normalWindow === window { normalWindow = nil }
     }
-    func applicationWillTerminate(_ notification: Notification) { for store in windows.values { store.flush() } }
+    func applicationWillTerminate(_ notification: Notification) { updateTimer?.invalidate(); for store in windows.values { store.flush() } }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func application(_ application: NSApplication, open urls: [URL]) {
         openWindow(isPrivate: false)
@@ -63,6 +88,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let app = submenu("Alcove")
         add(app, "About Alcove", #selector(about), ""); add(app, "Settings…", #selector(settings), ",")
+        add(app, "Customize…", #selector(customize), ",", [.command, .shift])
+        add(app, "Check for Updates…", #selector(checkUpdates), "")
+        add(app, "Welcome to Alcove…", #selector(welcome), "")
         app.addItem(.separator()); add(app, "Quit Alcove", #selector(quit), "q")
         let file = submenu("File")
         add(file, "New Tab", #selector(newTab), "t"); add(file, "New Private Window", #selector(privateWindow), "n", [.command, .shift])
@@ -87,9 +115,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
         NSApp.mainMenu = main
     }
-    @objc func about() { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Alcove", .applicationVersion: "0.3 Unsigned Preview", .credits: NSAttributedString(string: "An independent, open-source WebKit browser for Mac. Not notarized by Apple.")]) }
+    @objc func about() { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Alcove", .applicationVersion: updates.installedTag + " · Unsigned Preview", .credits: NSAttributedString(string: "An independent, open-source WebKit browser for Mac. Not notarized by Apple.")]) }
     @objc func quit() { NSApp.terminate(nil) }
-    @objc func newTab() { activeStore?.showCommand(new: true) }
+    @objc func newTab() { if activeStore?.onboardingVisible == true { activeStore?.finishOnboarding() }; activeStore?.showCommand(new: true) }
     @objc func privateWindow() { openWindow(isPrivate: true) }
     @objc func closePeek() {
         guard let store = activeStore else { return }
@@ -115,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func previousSpace() { stepSpace(-1) }
     @objc func importSession() { activeStore?.importLegacySession() }
     @objc func newSpace() { activeStore?.addSpace() }
-    @objc func location() { activeStore?.showCommand() }
+    @objc func location() { if activeStore?.onboardingVisible == true { activeStore?.finishOnboarding() }; activeStore?.showCommand() }
     @objc func closeTab() { if let store = activeStore, let id = store.focusedID { store.close(id) } }
     @objc func reopen() { activeStore?.reopenClosed() }
     @objc func reload() { activeStore?.currentView?.reload() }
@@ -131,6 +159,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func showLibrary() { activeStore?.libraryVisible = true }
     @objc func bookmark() { activeStore?.addBookmark() }
     @objc func settings() { activeStore?.settingsVisible = true }
+    @objc func customize() { activeStore?.appearanceVisible = true }
+    @objc func welcome() { if activeStore?.isPrivate == false { activeStore?.presentedPanel = nil; activeStore?.onboardingVisible = true } }
+    @objc func checkUpdates() {
+        guard let store = activeStore else { return }
+        store.updatesVisible = true
+        let channel = UpdateChannel(rawValue: store.preferences.updateChannel ?? "preview") ?? .preview
+        Task { await updates.check(channel: channel) }
+    }
 }
 MainActor.assumeIsolated {
     let app = NSApplication.shared

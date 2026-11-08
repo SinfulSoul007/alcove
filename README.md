@@ -2,7 +2,7 @@
 
 A native, open-source WebKit browser for Mac, inspired by Arc’s sidebar, Spaces and focused browsing workflow. Independent project; no Arc code, trademarks or assets are included.
 
-**Status: 0.3 unsigned preview.** Useful for testing, not yet recommended as your primary browser. No account or subscription is required. macOS 14 or newer; Apple Silicon and Intel.
+**Status: 0.4 unsigned preview.** Useful for testing, not yet recommended as your primary browser. No account or subscription is required. macOS 14 or newer; Apple Silicon and Intel.
 
 ## Download
 
@@ -13,7 +13,11 @@ Download the universal ZIP (or DMG when offered) from [GitHub Releases](https://
 ## Features
 
 - Compact, resizable Arc-style sidebar with Favorites tiles, pinned tabs/folders, Today and named Spaces.
-- Per-Space themes, a bottom Space dock and collapsed-sidebar edge reveal.
+- Twelve per-Space themes, custom gradients/accent colors, Space icons and a live appearance preview.
+- Tab density, text size, corner rounding, responsive Favorite columns, icon/close-button visibility and reduced-motion support.
+- A bottom Space dock and delayed collapsed-sidebar edge reveal; sidebar drag width saves on release.
+- Animated, skippable first-launch setup, plus a replayable welcome tour. Existing sessions and private windows skip setup.
+- Manual GitHub update checks, stable/preview channels and optional daily checks. Downloads and installation remain explicit actions.
 - Drag tabs between sections and into folders. Pinned tabs keep their title and saved home URL when closed.
 - Folders for pinned tabs; right-click a tab to organize it.
 - Split view with actions targeted to the clicked pane.
@@ -38,7 +42,9 @@ Alcove metadata is encrypted on disk. WebKit manages cookies, caches, website st
 
 Normal metadata is saved to the app’s sandbox Application Support directory, under `OpenBrowser/session.sealed`. On a standard macOS install this is `~/Library/Containers/dev.openbrowser.mac/Data/Library/Application Support/OpenBrowser/session.sealed`. The key stays in Keychain and is not included in downloads, source, or metadata files. Copying this encrypted file to another Mac alone is insufficient to restore it. If the key cannot be read or the file is corrupt, Alcove disables saving rather than overwrite existing data. Startup does not display a blocking authentication prompt; use the explicit Unlock action if Keychain access is required. Local saving remains visibly paused until recovery succeeds.
 
-Private windows do not read/save normal sessions or history. Ordinary sidebar width/appearance defaults are local UI preferences shared across windows; they are not browsing history and are not part of metadata encryption. Downloads you explicitly save remain on disk. Private browsing does not make you anonymous to websites, your network or your provider. OS-level artifacts and website fingerprinting are outside this feature’s guarantees.
+Private windows do not read/save normal sessions or history. Private windows inherit cosmetic appearance only, and changes inside them are temporary. Per-Space colors and appearance preferences are encrypted with normal metadata. Sidebar width and the last automatic update attempt are ordinary local UI defaults, outside metadata encryption. Downloads you explicitly save remain on disk. Private browsing does not make you anonymous to websites, your network or your provider. OS-level artifacts and website fingerprinting are outside this feature’s guarantees.
+
+Automatic update checks are off until you enable them. Manual checks and opted-in automatic checks request public release metadata from GitHub; GitHub receives the normal connection information, including your IP address. No account token, browsing history, cookies or website credentials are included. There is no automatic replacement or execution of downloaded apps. Use **Alcove → Check for Updates…** to see release notes and the installer link.
 
 Settings includes history deletion and website-data clearing. Clearing website data signs you out and closes this window’s tabs; bookmarks and downloaded files remain. Deleted data may still exist in backups or filesystem snapshots; Alcove does not promise secure erasure.
 
@@ -72,7 +78,7 @@ Create verified universal release archives with:
 ./scripts/package.sh
 ```
 
-This runs core/store checks, compiles both architectures, combines the executable, signs it ad hoc with sandbox/hardened-runtime entitlements, verifies signatures/architectures, generates an icon, and produces a ZIP and SHA256SUMS.txt, plus a DMG when disk-image services are available under `dist/`. It does not publish anything or use paid signing credentials. See [RELEASE.md](RELEASE.md).
+This runs core/store/appearance/update checks, compiles both architectures, combines the executable, signs it ad hoc with sandbox/hardened-runtime entitlements, verifies signatures/architectures, generates an icon, and produces a ZIP and SHA256SUMS.txt, plus a DMG when disk-image services are available under `dist/`. It does not publish anything or use paid signing credentials. CI checks every push/PR; matching preview tags package and publish verified ZIP and DMG downloads. See [RELEASE.md](RELEASE.md).
 
 ## Shortcuts
 
@@ -86,6 +92,7 @@ This runs core/store checks, compiles both architectures, combines the executabl
 | Command-D | Bookmark page |
 | Command-Shift-B | Library |
 | Command-comma | Settings |
+| Command-Shift-comma | Customize appearance |
 | Command-R | Reload |
 | Command-S | Toggle sidebar |
 | Command-Shift-P | Pin/unpin |
@@ -98,7 +105,7 @@ This runs core/store checks, compiles both architectures, combines the executabl
 
 ## Still needed before a stable release
 
-Broader website/login/media/download compatibility testing; accessibility and keyboard polish; permission revocation UI; safe update delivery; password-manager integration; independent security review; performance/energy benchmarks; phishing/malware protection strategy; full bookmark import/export and isolated profiles. WebKit does not automatically make Chrome extensions compatible.
+Broader website/login/media/download compatibility testing; accessibility and keyboard polish; permission revocation UI; authenticated update signing; password-manager integration; independent security review; performance/energy benchmarks; phishing/malware protection strategy; full bookmark import/export and isolated profiles. WebKit does not automatically make Chrome extensions compatible.
 
 Arc-inspired next steps include more gesture/animation fidelity, site search and Little Arc-style external-link windows. Favorites, drag organization and Shift-click Peek are implemented; full Arc parity is not claimed. Sync and AI features are intentionally outside the preview. No Safari-equivalent speed or complete-security claim is made.
 

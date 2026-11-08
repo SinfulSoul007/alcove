@@ -38,6 +38,9 @@ public struct Space: Codable, Identifiable {
     public var id = UUID()
     public var name: String
     public var theme: String?
+    public var customTheme: CustomTheme?
+    public var icon: String?
+    public var collapsedFolders: [String]?
     public var tabs: [Tab]
     public var selected: UUID?
     public init(name: String, tabs: [Tab] = [Tab()]) {

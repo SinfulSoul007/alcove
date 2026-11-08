@@ -14,8 +14,14 @@ xcrun swiftc "${FLAGS[@]}" -emit-module -emit-library -enable-testing -module-na
 if [[ "${1:-}" == "test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/CoreChecks.swift -o "$MANUAL/checks"
     "$MANUAL/checks"
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/BrowserStore.swift Sources/Browser/BrowserActions.swift Sources/Browser/MetadataKey.swift Sources/Browser/CommandActions.swift Sources/Browser/PeekPanel.swift Sources/Browser/BrowserUI.swift Sources/Browser/LibraryUI.swift Sources/Browser/SidebarTheme.swift Sources/Browser/TabDrop.swift Sources/Browser/FocusedInput.swift scripts/StoreChecks.swift -o "$MANUAL/store-checks"
+    STORE_SOURCES=()
+    for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/StoreChecks.swift -o "$MANUAL/store-checks"
     "$MANUAL/store-checks"
+    xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/AppearanceChecks.swift -o "$MANUAL/appearance-checks"
+    "$MANUAL/appearance-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/UpdateController.swift scripts/UpdateChecks.swift -o "$MANUAL/update-checks"
+    "$MANUAL/update-checks"
     exit
 fi
 xcrun swiftc "${FLAGS[@]}" -O -parse-as-library -whole-module-optimization -emit-object -module-name BrowserCore Sources/BrowserCore/*.swift -o "$MANUAL/BrowserCore.o"

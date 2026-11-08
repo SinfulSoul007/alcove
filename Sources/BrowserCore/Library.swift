@@ -28,6 +28,10 @@ public struct BrowserLibrary: Codable {
 public struct Preferences: Codable {
     public var suspendTabs = false
     public var archiveAfterDays = 0
+    public var appearance: AppearanceSettings?
+    public var onboardingCompleted: Bool? = false
+    public var automaticUpdateChecks: Bool? = false
+    public var updateChannel: String? = "preview"
     public init() {}
 }
 public struct BrowserDocument: Codable {

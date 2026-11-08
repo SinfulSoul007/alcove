@@ -1,6 +1,6 @@
 # Security policy
 
-Alcove 0.3 is an unsigned experimental preview, not an independently audited or stable browser. No release is currently represented as suitable for all sensitive browsing. Keep macOS updated: Alcove uses system WebKit.
+Alcove 0.4 is an unsigned experimental preview, not an independently audited or stable browser. No release is currently represented as suitable for all sensitive browsing. Keep macOS updated: Alcove uses system WebKit.
 
 ## Boundaries
 
@@ -12,7 +12,7 @@ Alcove 0.3 is an unsigned experimental preview, not an independently audited or 
 - TLS validation uses WebKit defaults. Release views are not inspectable through Web Inspector. Unsupported external app schemes are blocked rather than silently opened.
 - Media permission grants are request-specific, for the focused HTTPS origin, with a user prompt and an origin recheck before granting. No persistent allow-list exists in this preview.
 - Shift-click Peek uses the window’s normal or private WebKit data store, is not added to saved session metadata, and is stopped when its window closes. Same-origin favicon data stays in memory; layout preferences such as sidebar width are ordinary local defaults.
-- No passwords are stored by Alcove. There is no analytics, sync service, remote suggestion service or self-update code.
+- No passwords are stored by Alcove. There is no analytics, sync service or remote suggestion service. Update checks are manual or opt-in, use an ephemeral credential-free GitHub metadata request, validate release version/asset URLs, and never install or launch an update. Published checksums do not authenticate the developer.
 
 ## Recovery and known limitations
 

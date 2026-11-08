@@ -31,63 +31,82 @@ struct WebPane: NSViewRepresentable {
 
 struct BrowserUI: View {
     @ObservedObject var store: BrowserStore
-    @AppStorage("sidebarTheme") private var themeName = SidebarTheme.midnight.rawValue
-    @State private var hoveringSidebar = false
+    @EnvironmentObject private var updates: UpdateController
     @AppStorage("sidebarWidth") private var sidebarWidth = 236.0
-    @State private var resizeStart: Double?
-    @State private var resizing = false
-    var theme: SidebarTheme { SidebarTheme(rawValue: store.space.theme ?? themeName) ?? .midnight }
+    @StateObject private var reveal = SidebarRevealController()
+    @State private var resize = SidebarResizeState()
+    @State private var sidebarHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var theme: AppearanceTheme { store.activeTheme }
+    var appearance: AppearanceSettings { store.appearance }
+    var motion: Animation? { reduceMotion || !appearance.animationsEnabled ? nil : .spring(response: 0.28, dampingFraction: 0.88) }
     var pins: [BrowserCore.Tab] { store.space.tabs.filter { $0.pinned && $0.favorite != true } }
     var today: [BrowserCore.Tab] { store.space.tabs.filter { !$0.pinned && !$0.url.isEmpty } }
     var body: some View {
         GeometryReader { geometry in
-        let width = SidebarSizing.width(saved: sidebarWidth, windowWidth: geometry.size.width)
-        ZStack(alignment: .leading) {
-            HStack(spacing: 0) {
-                if store.sidebarVisible {
-                    sidebar.frame(width: width)
-                        .overlay(alignment: .trailing) {
-                            Rectangle().fill(resizing ? theme.ink.opacity(0.12) : .clear).frame(width: 5).contentShape(Rectangle())
-                                .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
-                                .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                                    if resizeStart == nil { resizeStart = width }; resizing = true
-                                    sidebarWidth = min(360, max(196, (resizeStart ?? width) + value.translation.width))
-                                }.onEnded { _ in resizeStart = nil; resizing = false })
-                        }
+            let width = SidebarSizing.width(saved: resize.temporaryWidth ?? sidebarWidth, windowWidth: geometry.size.width)
+            let shown = store.sidebarVisible || reveal.revealed
+            ZStack(alignment: .leading) {
+                // Keep web content and sidebar mounted; transitions change layout, not view ownership.
+                content.padding(8).padding(.leading, store.sidebarVisible ? width : 0)
+                    .animation(resize.temporaryWidth == nil ? motion : nil, value: store.sidebarVisible)
+                sidebar(width: width, windowHeight: geometry.size.height).frame(width: width)
+                    .background(theme.gradient)
+                    .clipShape(RoundedRectangle(cornerRadius: store.sidebarVisible ? 0 : appearance.cornerRadius + 4))
+                    .shadow(color: .black.opacity(!store.sidebarVisible && shown ? 0.25 : 0), radius: 20, x: 8, y: 0)
+                    .overlay(alignment: .trailing) {
+                        SidebarResizeHandle(onBegin: { reveal.panelEntered(); resize.begin(at: width) }, onDrag: { resize.drag(by: $0, windowWidth: geometry.size.width) }, onEnd: {
+                            if let value = resize.finish() { sidebarWidth = value }
+                            if !store.sidebarVisible { if sidebarHovered { reveal.panelEntered() } else { reveal.panelExited() } }
+                        }, onReset: { resize.cancel(); sidebarWidth = 236 }).frame(width: 6)
+                    }
+                    .offset(x: shown ? 0 : -width - 16)
+                    .opacity(shown ? 1 : 0)
+                    .allowsHitTesting(shown).accessibilityHidden(!shown)
+                    .onHover { inside in
+                        sidebarHovered = inside
+                        guard !store.sidebarVisible, resize.temporaryWidth == nil else { return }
+                        if inside { reveal.panelEntered() } else { reveal.panelExited() }
+                    }
+                    .animation(motion, value: shown)
+                Color.clear.frame(width: 8).contentShape(Rectangle()).allowsHitTesting(!store.sidebarVisible && !shown)
+                    .onHover { inside in guard !store.sidebarVisible else { return }; if inside { reveal.edgeEntered() } else if !reveal.revealed { reveal.reset() } }
+                if store.peekView != nil {
+                    Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { store.closePeek() }
+                    PeekPanel(store: store).frame(width: min(1000, geometry.size.width - 96), height: geometry.size.height - 96).frame(maxWidth: .infinity, maxHeight: .infinity).transition(.opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.98)))
                 }
-                content.padding(8)
-            }.background(theme.background)
-            if !store.sidebarVisible {
-                Color.clear.frame(width: 10).contentShape(Rectangle()).onHover { if $0 { hoveringSidebar = true } }
-                if hoveringSidebar { sidebar.frame(width: width).background(theme.background).shadow(radius: 20).onHover { hoveringSidebar = $0 } }
+                if store.commandVisible {
+                    Color.black.opacity(0.25).ignoresSafeArea().onTapGesture { store.commandVisible = false }
+                    CommandPanel(store: store).frame(width: min(600, geometry.size.width - 64)).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, min(140, geometry.size.height * 0.18)).transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : -8)))
+                }
+                if let message = store.message {
+                    VStack { Spacer(); HStack {
+                        if !store.savingEnabled && !store.isPrivate { Button("Unlock") { store.unlockLocalData() } }
+                        Text(message).font(.system(size: 12)).textSelection(.enabled)
+                        Button { store.message = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+                    }.padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)).shadow(radius: 10).padding(24) }.frame(maxWidth: .infinity)
+                }
+                if store.onboardingVisible { OnboardingView(store: store).transition(.opacity).zIndex(10) }
             }
-            if store.peekView != nil {
-                Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { store.closePeek() }
-                PeekPanel(store: store).frame(width: min(1000, geometry.size.width - 96), height: geometry.size.height - 96).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(theme.gradient).foregroundStyle(theme.ink)
+            .frame(minWidth: 800, minHeight: 540).ignoresSafeArea()
+            .preferredColorScheme(theme.isDark ? .dark : .light)
+            .animation(motion, value: store.commandVisible)
+            .animation(motion, value: store.peekView != nil)
+            .onChange(of: store.sidebarVisible) { _, _ in reveal.reset() }
+            .sheet(item: $store.presentedPanel) { panel in
+                switch panel {
+                case .library: LibraryPanel(store: store)
+                case .settings: SettingsPanel(store: store, availableHeight: geometry.size.height - 40)
+                case .appearance: AppearancePanel(store: store, availableHeight: geometry.size.height - 40)
+                case .updates: UpdatesPanel(controller: updates, channel: Binding(get: { UpdateChannel(rawValue: store.preferences.updateChannel ?? "preview") ?? .preview }, set: { store.preferences.updateChannel = $0.rawValue; store.save() }), availableHeight: geometry.size.height - 40, onClose: { store.presentedPanel = nil })
+                }
             }
-            if store.commandVisible {
-                Color.black.opacity(0.25).ignoresSafeArea().onTapGesture { store.commandVisible = false }
-                CommandPanel(store: store).frame(width: 600).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, 140)
-            }
-            if let message = store.message {
-                VStack { Spacer(); HStack {
-                    if !store.savingEnabled && !store.isPrivate { Button("Unlock") { store.unlockLocalData() } }
-                    Text(message).font(.system(size: 12)).textSelection(.enabled)
-                    Button { store.message = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
-                }.padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)).shadow(radius: 10).padding(24) }.frame(maxWidth: .infinity)
-            }
-        }
-        .foregroundStyle(theme.ink).frame(minWidth: 800, minHeight: 540).ignoresSafeArea()
-        .preferredColorScheme(theme.isDark ? .dark : .light)
-        .sheet(isPresented: $store.libraryVisible) { LibraryPanel(store: store) }
-        .sheet(isPresented: $store.settingsVisible) { SettingsPanel(store: store) }
         }
     }
     private var content: some View {
         VStack(spacing: 0) {
-            if !store.sidebarVisible {
-                HStack { Spacer().frame(width: 66); mini("sidebar.left", "Show Sidebar") { store.sidebarVisible = true }; Spacer() }.padding(8).frame(height: 30)
-            }
+            HStack { Spacer().frame(width: 66); mini("sidebar.left", "Show Sidebar") { store.sidebarVisible = true }; Spacer() }.padding(.horizontal, 8).frame(height: store.sidebarVisible ? 0 : 36).opacity(store.sidebarVisible ? 0 : 1).clipped().accessibilityHidden(store.sidebarVisible)
             if !store.savingEnabled && !store.isPrivate {
                 HStack { Text("Local saving is paused. Your existing data is preserved."); Spacer(); Button(store.unlocking ? "Unlocking…" : "Unlock") { store.unlockLocalData() }.disabled(store.unlocking) }.font(.system(size: 11)).padding(9).background(Color.orange.opacity(0.18))
             }
@@ -96,11 +115,11 @@ struct BrowserUI: View {
             if let web = store.currentView, web.isLoading { ProgressView(value: web.estimatedProgress).progressViewStyle(.linear).tint(.purple).frame(height: 2) }
             HSplitView { pane(store.selectedID); if let split = store.splitID { pane(split) } }
         }.background(theme.isDark ? Color(red: 0.095, green: 0.09, blue: 0.12) : .white)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: appearance.cornerRadius))
     }
-    private var sidebar: some View {
+    private func sidebar(width: Double, windowHeight: Double) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 9) {
+            HStack(spacing: 7) {
                 Spacer().frame(width: 64)
                 mini("sidebar.left", "Hide Sidebar") { store.sidebarVisible = false }
                 mini("arrow.left", "Back") { store.currentView?.goBack() }.disabled(store.currentView?.canGoBack != true)
@@ -116,35 +135,38 @@ struct BrowserUI: View {
             }.buttonStyle(.plain).padding(.horizontal, 8).padding(.bottom, 8)
             if !store.favorites.isEmpty {
                 ScrollView(.vertical, showsIndicators: false) {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: 3), spacing: 7) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: appearance.columns(for: width)), spacing: 7) {
                     ForEach(store.favorites) { tab in
                         Button { store.selectAny(tab.id) } label: {
-                            SiteBadge(url: tab.homeURL ?? tab.url, large: true, image: store.siteIcons[tab.id]).frame(maxWidth: .infinity).frame(height: 48).background(store.focusedID == tab.id ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: 10))
+                            SiteBadge(url: tab.homeURL ?? tab.url, large: true, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil).frame(maxWidth: .infinity).frame(height: 48).background(store.focusedID == tab.id ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: 10))
                         }.buttonStyle(.plain).help(tab.pinnedTitle ?? tab.title).onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }.contextMenu { Button("Remove from Favorites") { store.toggleFavorite(tab.id) }; Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) } }
                     }
                 }
-                }.frame(height: min(CGFloat((store.favorites.count + 2) / 3) * 55 - 7, 158)).padding(.horizontal, 8).padding(.bottom, 12).onDrop(of: [.text], delegate: TabDrop(store: store, section: .favorites))
+                }.frame(height: min(CGFloat((store.favorites.count + appearance.columns(for: width) - 1) / appearance.columns(for: width)) * 55 - 7, min(224, max(96, windowHeight * 0.28)))).padding(.horizontal, 8).padding(.bottom, 12).onDrop(of: [.text], delegate: TabDrop(store: store, section: .favorites))
             }
             HStack {
-                Text(store.space.name).font(.system(size: 12, weight: .semibold)).opacity(0.5)
+                Text(store.space.name.isEmpty ? "Space" : store.space.name).font(.system(size: 12, weight: .semibold)).opacity(0.5)
                 Spacer()
                 Menu {
                     Button("New Space…") { store.addSpace() }
-                    Menu("Theme") { ForEach(SidebarTheme.allCases) { choice in Button(choice.name) { store.session.spaces[store.spaceIndex].theme = choice.rawValue; store.save() } } }
+                    Button("Customize…") { store.appearanceVisible = true }
+                    Menu("Theme") { ForEach(SidebarTheme.allCases) { choice in Button(choice.name) { withAnimation(motion) { store.setTheme(choice) } } } }
                     Button("Split View") { store.toggleSplit() }
                     Button("Bookmark Page") { store.addBookmark() }.disabled(store.isPrivate)
-                } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 16)
+                } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("Space settings")
             }.padding(.horizontal, 16).padding(.vertical, 12)
             ScrollView {
-                VStack(alignment: .leading, spacing: 3) {
+                LazyVStack(alignment: .leading, spacing: 3) {
                     ForEach(pins.filter { $0.folder == nil }) { row($0) }
                     ForEach(Array(Set(pins.compactMap(\.folder))).sorted(), id: \.self) { folder in
-                        DisclosureGroup { ForEach(pins.filter { $0.folder == folder }) { row($0) } } label: {
-                            Label(folder, systemImage: "folder.fill").font(.system(size: 12, weight: .medium)).padding(.vertical, 7)
+                        DisclosureGroup(isExpanded: Binding(get: { !(store.space.collapsedFolders ?? []).contains(folder) }, set: { expanded in
+                            var collapsed = store.space.collapsedFolders ?? []; collapsed.removeAll { $0 == folder }; if !expanded { collapsed.append(folder) }; store.session.spaces[store.spaceIndex].collapsedFolders = collapsed; store.save()
+                        })) { ForEach(pins.filter { $0.folder == folder }) { row($0) } } label: {
+                            Label(folder, systemImage: "folder.fill").font(.system(size: 12 * appearance.textScale, weight: .medium)).lineLimit(1).padding(.vertical, 7).foregroundStyle(theme.accent)
                         }.tint(theme.ink.opacity(0.4)).padding(.horizontal, 9).onDrop(of: [.text], delegate: TabDrop(store: store, section: .pinned, folder: folder))
                     }
                     Color.clear.frame(height: pins.isEmpty ? 10 : 3).contentShape(Rectangle()).onDrop(of: [.text], delegate: TabDrop(store: store, section: .pinned))
-                    Divider().overlay(theme.ink.opacity(0.08)).padding(.horizontal, 10).padding(.vertical, 12)
+                    Rectangle().fill(theme.ink.opacity(0.12)).frame(height: 0.5).padding(.horizontal, 10).padding(.vertical, 12)
                     HStack {
                         Button { store.showCommand(new: true) } label: { Label("New Tab", systemImage: "plus").font(.system(size: 13)).opacity(0.5) }.buttonStyle(.plain)
                         Spacer()
@@ -155,27 +177,28 @@ struct BrowserUI: View {
             }
             HStack(spacing: 10) {
                 mini("archivebox", "Library") { store.libraryVisible = true }
+                if updates.offer != nil { mini("arrow.down.circle.fill", "An Alcove update is available") { store.updatesVisible = true }.foregroundStyle(theme.accent) }
                 Spacer(minLength: 0)
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
                             ForEach(Array(store.session.spaces.enumerated()), id: \.element.id) { index, space in
                                 Button { store.selectSpace(space.id) } label: {
-                                    Image(systemName: ["circle.fill", "moon.fill", "leaf.fill", "sun.max.fill", "star.fill", "square.fill"][index % 6]).font(.system(size: 11)).opacity(store.session.selectedSpace == space.id ? 1 : 0.3).frame(width: 19, height: 26)
+                                    Image(systemName: space.icon ?? ["circle.fill", "moon.fill", "leaf.fill", "sun.max.fill", "star.fill", "square.fill"][index % 6]).font(.system(size: 11)).opacity(store.session.selectedSpace == space.id ? 1 : 0.3).frame(width: 19, height: 26)
                                 }.buttonStyle(.plain).help(space.name).id(space.id)
                             }
                         }.frame(minHeight: 26)
                     }.onChange(of: store.session.selectedSpace) { _, id in proxy.scrollTo(id, anchor: .center) }
                 }
                 Spacer(minLength: 0)
-                Menu { Button("New Space…") { store.addSpace() }; Button("Settings…") { store.settingsVisible = true }; ForEach(store.session.spaces) { s in Button(s.name) { store.selectSpace(s.id) } } } label: { Image(systemName: "plus").font(.system(size: 15)) }.menuStyle(.borderlessButton).frame(width: 18)
+                Menu { Button("New Space…") { store.addSpace() }; Button("Settings…") { store.settingsVisible = true }; Button("Customize…") { store.appearanceVisible = true }; ForEach(store.session.spaces) { s in Button(s.name) { store.selectSpace(s.id) } } } label: { Image(systemName: "plus").font(.system(size: 15)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("More Spaces and settings")
             }.padding(.horizontal, 14).frame(height: 42)
         }.padding(.bottom, 4)
     }
     private func mini(_ icon: String, _ help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: icon).font(.system(size: 12, weight: .medium)).frame(width: 20, height: 24) }.buttonStyle(.plain).opacity(0.65).help(help)
     }
-    private func row(_ tab: BrowserCore.Tab) -> some View { SidebarTabRow(tab: tab, store: store, theme: theme) }
+    private func row(_ tab: BrowserCore.Tab) -> some View { SidebarTabRow(tab: tab, store: store, theme: theme, appearance: appearance, motion: motion) }
     @ViewBuilder private func pane(_ id: UUID?) -> some View {
         if let id, let tab = store.tab(id), !tab.url.isEmpty { WebPane(webView: store.view(for: id)).id(id).frame(minWidth: 160) }
         else {
@@ -199,7 +222,7 @@ struct SiteBadge: View {
         let hue = Double(host.utf8.reduce(0) { ($0 + Int($1)) % 360 }) / 360
         Group {
             if let image { Image(nsImage: image).resizable().scaledToFit() }
-            else { Text(letter).font(.system(size: large ? 15 : 10, weight: .bold, design: .rounded)).foregroundStyle(Color(hue: hue, saturation: 0.4, brightness: 0.95)).background(Color(hue: hue, saturation: 0.5, brightness: 0.8).opacity(0.16), in: RoundedRectangle(cornerRadius: large ? 7 : 5)) }
+            else { Text(letter).font(.system(size: large ? 15 : 10, weight: .bold, design: .rounded)).foregroundStyle(.primary).background(Color(hue: hue, saturation: 0.5, brightness: 0.8).opacity(0.16), in: RoundedRectangle(cornerRadius: large ? 7 : 5)) }
         }.frame(width: large ? 25 : 18, height: large ? 25 : 18)
     }
 }
@@ -207,15 +230,17 @@ struct SiteBadge: View {
 struct SidebarTabRow: View {
     let tab: BrowserCore.Tab
     @ObservedObject var store: BrowserStore
-    let theme: SidebarTheme
+    let theme: AppearanceTheme
+    let appearance: AppearanceSettings
+    let motion: Animation?
     @State private var hovered = false
     var body: some View {
         HStack(spacing: 7) {
             Button { store.select(tab.id) } label: {
-                HStack(spacing: 9) { SiteBadge(url: tab.homeURL ?? tab.url, image: store.siteIcons[tab.id]); Text(tab.pinned ? (tab.pinnedTitle ?? tab.title) : tab.title).font(.system(size: 12, weight: store.focusedID == tab.id ? .semibold : .medium)).lineLimit(1); Spacer(minLength: 0) }.contentShape(Rectangle())
+                HStack(spacing: 9) { SiteBadge(url: tab.homeURL ?? tab.url, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil); Text(tab.pinned ? (tab.pinnedTitle ?? tab.title) : tab.title).font(.system(size: 12 * appearance.textScale, weight: store.focusedID == tab.id ? .semibold : .medium)).lineLimit(1); Spacer(minLength: 0) }.contentShape(Rectangle())
             }.buttonStyle(.plain)
-            Button { store.close(tab.id) } label: { Image(systemName: "xmark").font(.system(size: 9)).frame(width: 18, height: 22) }.buttonStyle(.plain).opacity(hovered ? 0.6 : 0).help(tab.pinned ? "Close page and keep pin" : "Close tab").accessibilityLabel(tab.pinned ? "Close pinned page" : "Close tab")
-        }.padding(.horizontal, 10).frame(height: 34).background(store.focusedID == tab.id ? theme.selected : (hovered ? theme.tile : .clear), in: RoundedRectangle(cornerRadius: 8)).onHover { hovered = $0 }
+            Button { store.close(tab.id) } label: { Image(systemName: "xmark").font(.system(size: 9)).frame(width: 18, height: 22) }.buttonStyle(.plain).opacity(hovered || appearance.alwaysShowCloseButtons ? 0.65 : 0).help(tab.pinned ? "Close page and keep pin" : "Close tab").accessibilityLabel(tab.pinned ? "Close pinned page" : "Close tab")
+        }.padding(.horizontal, 10).frame(height: appearance.rowHeight).background(store.focusedID == tab.id ? theme.selected : (hovered ? theme.tile : .clear), in: RoundedRectangle(cornerRadius: appearance.cornerRadius)).onHover { hovered = $0 }.animation(motion, value: hovered)
         .onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }
         .onDrop(of: [.text], delegate: TabDrop(store: store, section: tab.pinned ? .pinned : .today, before: tab.id, folder: tab.folder))
         .contextMenu {

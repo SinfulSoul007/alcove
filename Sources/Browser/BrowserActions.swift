@@ -12,7 +12,7 @@ struct DownloadItem: Identifiable {
 }
 
 extension BrowserStore {
-    @discardableResult func unlockLocalData(keyProvider: (() throws -> SymmetricKey)? = nil) -> Bool {
+    @discardableResult func unlockLocalData(keyProvider: (() throws -> SymmetricKey)? = nil, persist: @escaping (MetadataStore, BrowserDocument) throws -> Void = { try $0.save($1) }) -> Bool {
         guard !isPrivate, !savingEnabled, !unlocking else { return false }
         unlocking = true
         let url = sessionURL
@@ -22,18 +22,40 @@ extension BrowserStore {
                 let key = try await Task.detached { if let keyProvider { return try keyProvider() }; return try MetadataKey.load(createIfMissing: !FileManager.default.fileExists(atPath: url.path), allowInteraction: true) }.value
                 let storage = MetadataStore(url: url, key: key)
                 let pending = BrowserDocument(session: session, library: library, preferences: preferences)
-                if let restored = try storage.load(BrowserDocument.self) {
-                    for id in Array(views.keys) { discardView(id) }; splitID = nil; closePeek()
-                    session = restored.session; library = restored.library; preferences = restored.preferences
+                var document = try storage.load(BrowserDocument.self)
+                var migratedLegacyURL: URL?
+                if document == nil {
+                    let legacyURL = url.deletingLastPathComponent().appendingPathComponent("session.json")
+                    if FileManager.default.fileExists(atPath: legacyURL.path) {
+                        let legacy = try JSONDecoder().decode(Session.self, from: Data(contentsOf: legacyURL))
+                        var migratedPreferences = Preferences(); migratedPreferences.onboardingCompleted = true
+                        document = BrowserDocument(session: legacy, preferences: migratedPreferences)
+                        migratedLegacyURL = legacyURL
+                    }
+                }
+                var candidate = document ?? pending
+                if document != nil {
                     for var space in pending.session.spaces where space.tabs.contains(where: { !$0.url.isEmpty }) {
                         space.id = UUID(); space.name = "Unsaved " + space.name
                         for i in space.tabs.indices { space.tabs[i].id = UUID() }; space.selected = space.tabs.first?.id
-                        session.spaces.append(space)
+                        candidate.session.spaces.append(space)
                     }
-                    for bookmark in pending.library.bookmarks { library.bookmark(title: bookmark.title, url: bookmark.url) }
-                    library.history.insert(contentsOf: pending.library.history, at: 0)
+                    for bookmark in pending.library.bookmarks { candidate.library.bookmark(title: bookmark.title, url: bookmark.url) }
+                    candidate.library.history.insert(contentsOf: pending.library.history, at: 0)
+                    if candidate.preferences.onboardingCompleted == nil { candidate.preferences.onboardingCompleted = true }
                 }
-                repairSession(); vault = storage; savingEnabled = true; flush()
+                candidate.session = Self.repairedSession(candidate.session)
+                // Commit disk state before publishing a restore. Failed retries leave live tabs intact.
+                try persist(storage, candidate)
+                if document != nil { for id in Array(views.keys) { discardView(id) }; splitID = nil; closePeek() }
+                session = candidate.session; library = candidate.library; preferences = candidate.preferences
+                hasSavedDocument = true; vault = storage; savingEnabled = true
+                onboardingVisible = OnboardingPolicy.shouldPresent(isPrivate: isPrivate, savingEnabled: savingEnabled, completed: preferences.onboardingCompleted, hasSavedDocument: hasSavedDocument)
+                if let migratedLegacyURL {
+                    do { try FileManager.default.removeItem(at: migratedLegacyURL) }
+                    catch { message = "Your tabs were encrypted and restored, but the original legacy JSON could not be removed. It still contains readable URLs."; return }
+                }
+                automaticUpdatesDidChange?()
                 message = "Local data unlocked. Existing saved tabs and this session’s unsaved tabs were kept."
             } catch { message = "Local data remains locked and unchanged. \(error.localizedDescription)" }
         }

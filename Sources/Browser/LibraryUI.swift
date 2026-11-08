@@ -57,9 +57,18 @@ struct LibraryPanel: View {
 
 struct SettingsPanel: View {
     @ObservedObject var store: BrowserStore
+    var availableHeight: Double = 620
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack { Text("Alcove Settings").font(.title2.bold()); Spacer(); Button("Done") { store.settingsVisible = false }.keyboardShortcut(.cancelAction) }
+            ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Button("Customize Appearance…") { store.appearanceVisible = true }
+                Button("Welcome Tour") { store.presentedPanel = nil; store.onboardingVisible = true }.disabled(store.isPrivate)
+                Spacer()
+                Button("Updates…") { store.updatesVisible = true }
+            }
             GroupBox("Privacy") {
                 VStack(alignment: .leading, spacing: 12) {
                     if !store.savingEnabled && !store.isPrivate {
@@ -82,7 +91,15 @@ struct SettingsPanel: View {
                     Text("Pinned tabs and each Space’s selected tab are kept. Restore archived tabs from the Library.").font(.caption).foregroundStyle(.secondary)
                 }.padding(8)
             }.disabled(store.isPrivate)
+            GroupBox("Updates") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Check for updates automatically", isOn: Binding(get: { store.preferences.automaticUpdateChecks ?? false }, set: { store.setAutomaticUpdateChecks($0) }))
+                    Text("When enabled, Alcove contacts GitHub at most once a day. Browsing history is never sent, and installers are opened only when you choose.").font(.caption).foregroundStyle(.secondary)
+                }.padding(8)
+            }.disabled(store.isPrivate)
             Text("Unsigned preview · Not notarized by Apple · Security review and broader compatibility testing remain in progress.").font(.caption).foregroundStyle(.secondary)
-        }.padding(24).frame(width: 600).onChange(of: store.preferences.suspendTabs) { _, _ in store.save() }.onChange(of: store.preferences.archiveAfterDays) { _, _ in store.archiveOldTabs(); store.save() }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }.padding(24).frame(width: 600, height: min(620, max(400, availableHeight))).onChange(of: store.preferences.suspendTabs) { _, _ in store.save() }.onChange(of: store.preferences.archiveAfterDays) { _, _ in store.archiveOldTabs(); store.save() }
     }
 }

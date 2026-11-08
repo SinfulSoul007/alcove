@@ -4,6 +4,8 @@ import WebKit
 import BrowserCore
 import CryptoKit
 
+enum BrowserPanel: String, Identifiable { case library, settings, appearance, updates; var id: String { rawValue } }
+
 @MainActor
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     @Published var session = Session()
@@ -11,14 +13,36 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var command = ""
     var commandOpensNewTab = false
     @Published var sidebarVisible = true
+    @Published var presentedPanel: BrowserPanel?
+    var appearanceVisible: Bool { get { presentedPanel == .appearance } set { if newValue { presentedPanel = .appearance } else if appearanceVisible { presentedPanel = nil } } }
+    var updatesVisible: Bool { get { presentedPanel == .updates } set { if newValue { presentedPanel = .updates } else if updatesVisible { presentedPanel = nil } } }
+    @Published var onboardingVisible = false
+    var hasSavedDocument = false
+    var onboardingDidFinish: (() -> Void)?
+    var automaticUpdatesDidChange: (() -> Void)?
+    func setAutomaticUpdateChecks(_ enabled: Bool) { preferences.automaticUpdateChecks = enabled; save(); automaticUpdatesDidChange?() }
+    var appearance: AppearanceSettings {
+        get { (preferences.appearance ?? AppearanceSettings()).normalized }
+        set { preferences.appearance = newValue.normalized; save() }
+    }
+    private var cachedTheme: AppearanceTheme?
+    var activeTheme: AppearanceTheme {
+        let palette = space.customTheme ?? (SidebarTheme(rawValue: space.theme ?? "midnight") ?? .midnight).palette
+        if let cachedTheme, cachedTheme.palette == palette { return cachedTheme }
+        let theme = AppearanceTheme(palette: palette); cachedTheme = theme; return theme
+    }
+    func setTheme(_ preset: SidebarTheme) { session.spaces[spaceIndex].theme = preset.rawValue; session.spaces[spaceIndex].customTheme = nil; save() }
+    func setCustomTheme(_ theme: CustomTheme) { session.spaces[spaceIndex].customTheme = theme; save() }
+    func finishOnboarding() { preferences.onboardingCompleted = true; onboardingVisible = false; flush(); onboardingDidFinish?() }
+
     @Published var splitID: UUID?
     @Published var activePaneID: UUID?
     @Published var message: String?
     @Published var revision = 0
     @Published var library = BrowserLibrary()
     @Published var preferences = Preferences()
-    @Published var libraryVisible = false
-    @Published var settingsVisible = false
+    var libraryVisible: Bool { get { presentedPanel == .library } set { if newValue { presentedPanel = .library } else if libraryVisible { presentedPanel = nil } } }
+    var settingsVisible: Bool { get { presentedPanel == .settings } set { if newValue { presentedPanel = .settings } else if settingsVisible { presentedPanel = nil } } }
     @Published var findVisible = false
     @Published var findText = ""
     @Published var findResult = ""
@@ -60,27 +84,37 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             let storage = MetadataStore(url: sessionURL, key: key)
             vault = storage
             if let document = try storage.load(BrowserDocument.self) {
+                hasSavedDocument = true
                 session = document.session; library = document.library; preferences = document.preferences
             } else {
                 let legacyURL = root.appendingPathComponent("session.json")
                 if FileManager.default.fileExists(atPath: legacyURL.path) {
+                    hasSavedDocument = true
                     session = try JSONDecoder().decode(Session.self, from: Data(contentsOf: legacyURL))
                     repairSession()
-                    try storage.save(BrowserDocument(session: session))
+                    preferences.onboardingCompleted = true
+                    try storage.save(BrowserDocument(session: session, preferences: preferences))
                     try FileManager.default.removeItem(at: legacyURL)
                 }
             }
             repairSession()
             archiveTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in Task { @MainActor in self?.archiveOldTabs() } }
         } catch { savingEnabled = false; message = "Local data is locked or unreadable. Saving is disabled to preserve it. \(error.localizedDescription)" }
+        onboardingVisible = OnboardingPolicy.shouldPresent(isPrivate: isPrivate, savingEnabled: savingEnabled, completed: preferences.onboardingCompleted, hasSavedDocument: hasSavedDocument)
+        if hasSavedDocument && preferences.onboardingCompleted == nil { preferences.onboardingCompleted = true }
     }
     func repairSession() {
-        if session.spaces.isEmpty { session = Session() }
-        if !session.spaces.contains(where: { $0.id == session.selectedSpace }) { session.selectedSpace = session.spaces[0].id }
-        for i in session.spaces.indices {
-            if session.spaces[i].tabs.isEmpty { session.spaces[i].tabs = [BrowserCore.Tab()] }
-            if !session.spaces[i].tabs.contains(where: { $0.id == session.spaces[i].selected }) { session.spaces[i].selected = session.spaces[i].tabs.first?.id }
+        session = Self.repairedSession(session)
+    }
+    static func repairedSession(_ input: Session) -> Session {
+        var value = input
+        if value.spaces.isEmpty { value = Session() }
+        if !value.spaces.contains(where: { $0.id == value.selectedSpace }) { value.selectedSpace = value.spaces[0].id }
+        for i in value.spaces.indices {
+            if value.spaces[i].tabs.isEmpty { value.spaces[i].tabs = [BrowserCore.Tab()] }
+            if !value.spaces[i].tabs.contains(where: { $0.id == value.spaces[i].selected }) { value.spaces[i].selected = value.spaces[i].tabs.first?.id }
         }
+        return value
     }
     func save() {
         guard !isPrivate, savingEnabled else { return }
@@ -99,6 +133,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func select(_ id: UUID) {
         guard session.spaces[spaceIndex].tabs.contains(where: { $0.id == id }) else { return }
         session.spaces[spaceIndex].selected = id; activePaneID = nil
+        accessOrder.removeAll { $0 == id }; accessOrder.append(id)
         update(id) { $0.lastAccessed = Date() }
         if activePaneID == id { activePaneID = nil }
         if splitID == id { splitID = nil }
@@ -194,8 +229,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func tab(_ id: UUID) -> BrowserCore.Tab? { session.spaces.flatMap(\.tabs).first { $0.id == id } }
     func view(for id: UUID, configuration: WKWebViewConfiguration? = nil) -> WKWebView {
-        accessOrder.removeAll { $0 == id }; accessOrder.append(id)
         if let existing = views[id] { return existing }
+        accessOrder.removeAll { $0 == id }; accessOrder.append(id)
         let config = configuration ?? WKWebViewConfiguration()
         if let privateDataStore { config.websiteDataStore = privateDataStore }
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
