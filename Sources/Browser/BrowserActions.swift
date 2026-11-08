@@ -141,21 +141,32 @@ extension BrowserStore {
     }
     func importLegacySession() {
         guard !isPrivate, savingEnabled else { return }
+        let profileID = activeProfileID
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.json]; panel.allowsMultipleSelection = false
-        panel.message = "Choose session.json from the first Browser prototype. Imported tabs are added as new Spaces."
+        panel.message = "Choose session.json from the first Browser prototype. Imported Spaces will use the \(activeProfile.name) profile."
         panel.begin { [weak self] result in
             guard let self, result == .OK, let url = panel.url else { return }
             do {
                 let imported = try JSONDecoder().decode(Session.self, from: Data(contentsOf: url))
-                for source in imported.spaces {
-                    var tabs = source.tabs
-                    for i in tabs.indices { tabs[i].id = UUID() }
-                    var space = Space(name: "Imported \(source.name)", tabs: tabs.isEmpty ? [BrowserCore.Tab()] : tabs)
-                    space.profileID = self.activeProfileID; self.session.spaces.append(space)
-                }
-                self.repairSession(); self.save(); self.message = "Imported preview tabs. The original JSON file was kept; it contains unencrypted URLs."
+                try self.importSession(imported, into: profileID)
             } catch { self.message = "Couldn’t import this session: \(error.localizedDescription)" }
         }
+    }
+    func importSession(_ imported: Session, into profileID: UUID) throws {
+        guard !isPrivate else { throw ProfileError.privateMode }
+        guard !isShuttingDown else { throw CancellationError() }
+        guard savingEnabled else { throw ProfileError.locked }
+        guard profiles.contains(where: { $0.id == profileID }) else { throw ProfileError.missing }
+        guard !profileUnavailable(profileID) else { throw ProfileError.pending }
+        var candidate = makeDocument()
+        for source in imported.spaces {
+            var tabs = source.tabs
+            for i in tabs.indices { tabs[i].id = UUID() }
+            var space = Space(name: "Imported \(source.name)", tabs: tabs.isEmpty ? [BrowserCore.Tab()] : tabs)
+            space.profileID = profileID; candidate.session.spaces.append(space)
+        }
+        try commitProfileDocument(candidate)
+        message = "Imported preview tabs. The original JSON file was kept; it contains unencrypted URLs."
     }
     func clearHistory() { library.history.removeAll(); library.closedTabs.removeAll(); library.archive.removeAll(); save() }
     func clearWebsiteData() {
