@@ -35,3 +35,5 @@ Full parity inventory reference: official Arc desktop feature resources and rele
 - Visual QA limitation in this turn: Arc is readable through Computer Use. The new isolated test app needs app-access approval; the older review identity can be read but clicks fail through a stale macOS app path. No 0.4 native screenshot/animation success is claimed from source checks.
 
 - 0.5 profile increment: 264 browser checks pass, including real named WebKit storage separation and clear/delete isolation. A fresh whole-branch review found two command/import paths; both have failing-before/passing-after regressions. Universal ZIP/DMG built and mounted locally. Native visual/keyboard QA remains pending; the full goal is active.
+
+- 0.5 published at b7139e5: CI 42462909134 and release 42463181857 passed. Public ZIP/DMG were downloaded back, checksums/signature/universal slices/mounted contents verified, and the live 0.4 update client selected and verified 0.5. See docs/releases/0.5.0-verification.md for evidence and recorded decisions. Native visual QA and the broader goal remain open.
