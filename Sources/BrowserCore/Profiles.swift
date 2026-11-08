@@ -50,8 +50,8 @@ extension BrowserDocument {
     }
     /// Repair metadata without moving an existing valid profile to another cookie store.
     public mutating func repairProfiles() throws {
-        guard formatVersion == nil || formatVersion == 1 || formatVersion == 2 else { throw MetadataFormatError.unsupportedVersion }
-        formatVersion = 2
+        guard formatVersion == nil || formatVersion == 1 || formatVersion == 2 || formatVersion == 3 else { throw MetadataFormatError.unsupportedVersion }
+        formatVersion = 3
         let replacementForZero = UUID()
         func valid(_ id: UUID) -> UUID { id == BrowserProfile.zeroID ? replacementForZero : id }
         var registry = profiles ?? []
@@ -115,6 +115,23 @@ extension BrowserDocument {
             }
             profileLibraries![index].library.favoriteTabs = normalized
         }
+        var occupied = Set(session.spaces.flatMap(\.tabs).map(\.id)).union(favoriteOwners.keys)
+        for index in (profileLibraries ?? []).indices {
+            let owner = profileLibraries![index].profileID
+            var normalized: [QuickPage] = []; var originals: [QuickPage] = []
+            for original in profileLibraries![index].library.quickPages ?? [] {
+                if originals.contains(original) { continue }
+                originals.append(original); var page = original
+                if !occupied.insert(page.id).inserted { page.tab.id = UUID(); occupied.insert(page.id) }
+                page.tab.pinned = false; page.tab.favorite = nil; page.tab.folder = nil
+                page.tab.homeURL = nil; page.tab.pinnedTitle = nil
+                if !session.spaces.contains(where: { $0.id == page.intendedSpaceID && $0.effectiveProfileID == owner }) { page.intendedSpaceID = nil }
+                normalized.append(page)
+            }
+            profileLibraries![index].library.quickPages = normalized
+        }
+        let choices = (preferences.quickDomainChoices ?? []).map { choice in QuickDomainChoice(host: choice.host, profileID: valid(choice.profileID)) }
+        preferences.quickDomainChoices = QuickBrowseRouting.repairedChoices(choices, knownProfiles: Set(ids))
         library = self.library(for: BrowserProfile.defaultID)
     }
 }
@@ -136,6 +153,16 @@ extension BrowserLibrary {
                 result.append(tab)
             }
             return result
+        }
+        if quickPages != nil || other.quickPages != nil {
+            var merged = quickPages ?? []; var originals = merged
+            for original in other.quickPages ?? [] {
+                if originals.contains(original) { continue }
+                originals.append(original); var page = original
+                if merged.contains(where: { $0.id == page.id }) { page.tab.id = UUID() }
+                merged.append(page)
+            }
+            quickPages = merged
         }
         if favoriteTabs != nil || other.favoriteTabs != nil { favoriteTabs = tabs(favoriteTabs ?? [], other.favoriteTabs ?? []) }
         bookmarks = pages(bookmarks, other.bookmarks); history = pages(history, other.history)

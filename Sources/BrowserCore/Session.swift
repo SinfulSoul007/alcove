@@ -30,6 +30,7 @@ public struct Tab: Codable, Identifiable, Equatable {
     public var pinnedTitle: String?
     public var folder: String?
     public var lastAccessed: Date?
+    public var archiveSource: String?
     public init(title: String = "New Tab", url: String = "", pinned: Bool = false) {
         self.title = title; self.url = url; self.pinned = pinned; self.lastAccessed = Date()
     }

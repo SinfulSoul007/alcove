@@ -28,6 +28,11 @@ run_website_checks() {
     trap - EXIT
 
 }
+if [[ "${1:-}" == "quick-core-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/QuickBrowseCoreChecks.swift -o "$MANUAL/quick-core-checks"
+    "$MANUAL/quick-core-checks"
+    exit
+fi
 if [[ "${1:-}" == "website-test" ]]; then run_website_checks; exit; fi
 if [[ "${1:-}" == "command-import-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileCommandImportChecks.swift -o "$MANUAL/profile-command-import-checks"
@@ -57,6 +62,8 @@ if [[ "${1:-}" == "test" ]]; then
     "$MANUAL/profile-favorite-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileLifecycleChecks.swift -o "$MANUAL/profile-lifecycle-checks"
     "$MANUAL/profile-lifecycle-checks"
+    xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/QuickBrowseCoreChecks.swift -o "$MANUAL/quick-core-checks"
+    "$MANUAL/quick-core-checks"
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/AppearanceChecks.swift -o "$MANUAL/appearance-checks"
     "$MANUAL/appearance-checks"
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/ProfileChecks.swift -o "$MANUAL/profile-checks"
