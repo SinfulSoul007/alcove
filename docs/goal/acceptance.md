@@ -2,20 +2,20 @@
 
 The active user goal remains: a fully built browser with regular updates, Arc's full feature set and visually correct behavior, extensive themes/customization, a polished first-launch animation, and a smooth sidebar. A passing preview or a partial feature list does not complete this goal.
 
-Published 0.4 artifacts and public update selection have been verified. Published 0.5 adds isolated profiles and profile-owned Favorites; current 0.6 work adds Quick Browse; the full goal remains in progress.
+Published 0.6 artifacts and public update selection have been verified. Releases 0.5 and 0.6 add isolated profiles, profile-owned Favorites and Quick Browse. The current source increment improves native chrome alignment and responsive controls; the full goal remains in progress.
 
 ## Acceptance areas
 
 | Requirement | Current evidence | Status / remaining evidence |
 | --- | --- | --- |
-| Downloadable app and DMG | 0.4 universal ZIP/DMG, public checksums and mounted-image verification | Implemented; minimum-OS and quarantined-install QA still needed |
+| Downloadable app and DMG | 0.6 universal ZIP/DMG, public checksums and mounted-image verification | Implemented; minimum-OS and quarantined-install QA still needed |
 | Regular updates | In-app manual/opt-in daily checks, channels, strict release selection and repeatable CI/tag workflows | Implemented and behavior-tested in 0.4; public 0.4 tag/download selection verified; native update panel QA pending |
-| Arc sidebar / resizing / navbar | Arc inspected; 0.3 native checks; 0.4 keeps web/sidebar mounted, uses transient drag and delayed hover | State tests pass; 0.4 native resizing, hover/animation and minimum-window visual QA still pending |
+| Arc sidebar / resizing / navbar | Arc inspected; mounted web/sidebar ownership, transient drag and delayed hover; post-0.6 native geometry and responsive-menu checks | Owned geometry/fixture checks pass; live resizing, hover/animation, fullscreen and minimum-OS visual QA still pending |
 | Themes / extensive customization | Twelve presets, custom gradients/accent, density/text/radius/icons/motion, responsive Favorites and preview | Implemented; bounds/contrast/persistence tests pass; native appearance/color-picker/layout QA pending |
 | First-run experience | Animated native introduction, theme/setup steps, skip/replay and reduced motion | Migration/private/locked/retry tests pass; native animation and keyboard QA pending |
 | Tabs / pins / Favorites / folders | 0.3 behavioral and native checks | More edge-case QA; nested folders and richer organization remain |
 | Spaces / isolated profiles | Named WebKit stores, encrypted profile libraries, durable clear/delete recovery and shared profile Favorites | Real cookie/localStorage, relaunch, clear and deletion isolation checks pass; native profile controls/confirmation/keyboard QA pending |
-| Peek / Little Arc | Shift-click Peek plus current 0.6 Quick Browse compact windows, profile memory, live handoff and recovery | Native visual/keyboard/animation verification and broader routing/gesture fidelity remain open |
+| Peek / Little Arc | Shift-click Peek plus 0.6 Quick Browse compact windows, profile memory, live handoff and recovery | Native visual/keyboard/animation verification and broader routing/gesture fidelity remain open |
 | Split view | Two panes with focus routing | More panes, resizing/split lifecycle and full native QA |
 | Air Traffic Control / site search | None | Implement routing rules and keyword site search |
 | Boosts / Easels / capture | None | Implement website customization and a local canvas/capture workflow |

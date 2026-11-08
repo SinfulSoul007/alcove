@@ -19,7 +19,7 @@ Final owned renders show row widths of exactly 760pt and 480pt, a visible 25pt a
 
 Focused checks cover all three densities, text0.85/1.35, wide/minimum layouts, sidebar hide/reveal, theme change, actual top-of-web hit testing, native button ownership, noninteractive measurement views, unchanged native page identity, absence of store invalidations on resize, old-window release and unchanged-measurement coalescing.
 
-Final integrated suite, optimized build, whole-branch review and source publication are recorded below when completed.
+The final integrated `scripts/build.sh test` run at implementation commit `587b556` passed **457 checks, zero failures and zero compiler diagnostics**. Both optimized arm64 and x86_64 builds pass strict signature verification; the Intel bundle Info.plist matches source. The local isolated `Alcove Visual Four` bundle is refreshed as an arm64 test build and has not been launched through denied app access. Whole-branch review and source publication follow this verification.
 
 ## Decisions and remaining gates
 
