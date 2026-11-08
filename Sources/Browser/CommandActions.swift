@@ -10,6 +10,7 @@ extension BrowserStore {
             case .favorite: return selectedTab?.url.isEmpty == false
             case .unfavorite: return selectedTab?.favorite == true
             case .copyURL: return currentView?.url != nil
+            case .profiles: return !isPrivate
             default: return true
             }
         }
@@ -25,6 +26,7 @@ extension BrowserStore {
         case .split: toggleSplit()
         case .library: libraryVisible = true
         case .settings: settingsVisible = true
+        case .profiles: if !isPrivate { profilesVisible = true }
         case .copyURL:
             if let url = currentView?.url { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(url.absoluteString, forType: .string) }
         }

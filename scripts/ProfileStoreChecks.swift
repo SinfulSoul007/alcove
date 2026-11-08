@@ -21,7 +21,7 @@ import BrowserCore
         var workLibrary = BrowserLibrary(); workLibrary.bookmark(title: "Work bookmark", url: "https://example.com/work")
         var document = BrowserDocument(session: session, library: personalLibrary, profiles: [.defaultProfile, work], profileLibraries: [ProfileLibrary(profileID: BrowserProfile.defaultID, library: personalLibrary), ProfileLibrary(profileID: work.id, library: workLibrary)])
         document.preferences.onboardingCompleted = true
-        try MetadataStore(url: root.appendingPathComponent("session.sealed"), key: key).save(document)
+        try MetadataStore(url: root.appendingPathComponent("session-v2.sealed"), key: key).save(document)
         var store: BrowserStore? = BrowserStore(dataRoot: root, keyProvider: { _ in key })
         check(store!.library.bookmarks.first?.title == "Work bookmark", "Selected Space opens its own profile library")
         check(store!.favorites.map(\.id) == [workTab.id], "Favorites do not cross a profile boundary")
@@ -61,7 +61,7 @@ import BrowserCore
         let schoolID = try store!.createProfile(name: "School")
         let schoolSpaceID = store!.space.id; let schoolTabID = store!.selectedID!
         check(store!.activeProfileID == schoolID && store!.library.bookmarks.isEmpty, "Creating a profile opens a Space with an empty library")
-        let durable = try MetadataStore(url: root.appendingPathComponent("session.sealed"), key: key).load(BrowserDocument.self)!
+        let durable = try MetadataStore(url: root.appendingPathComponent("session-v2.sealed"), key: key).load(BrowserDocument.self)!
         check(durable.profiles?.contains(where: { $0.id == schoolID }) == true && durable.session.spaces.contains(where: { $0.id == schoolSpaceID && $0.effectiveProfileID == schoolID }), "New profile identifiers are encrypted before website storage is used")
         var schoolView: WKWebView? = store!.view(for: schoolTabID)
         check(schoolView!.configuration.websiteDataStore.identifier == schoolID, "New profile pages use their own named store")
@@ -74,7 +74,7 @@ import BrowserCore
         for _ in 0..<500 where locked.unlocking { try await Task.sleep(for: .milliseconds(10)) }
         check(locked.savingEnabled && locked.activeProfileID == work.id && locked.library.bookmarks.first?.title == "Work bookmark" && locked.library(for: BrowserProfile.defaultID).bookmarks.first?.title == "Personal bookmark", "Unlock restores the registry and every profile's library atomically")
         store!.flush()
-        let saved = try MetadataStore(url: root.appendingPathComponent("session.sealed"), key: key).load(BrowserDocument.self)!
+        let saved = try MetadataStore(url: root.appendingPathComponent("session-v2.sealed"), key: key).load(BrowserDocument.self)!
         check(saved.library(for: work.id).bookmarks.first?.title == "Work bookmark", "Encrypted browser save preserves every profile library")
         for id in Array(privateStore.views.keys) { privateStore.discardView(id) }
         for id in Array(store!.views.keys) { store!.discardView(id) }

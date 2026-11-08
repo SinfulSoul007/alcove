@@ -5,6 +5,7 @@ struct UpdatesPanel: View {
     @ObservedObject var controller: UpdateController
     @Binding var channel: UpdateChannel
     var availableHeight: Double = 620
+    var canModifyChannel = true
     var onClose: () -> Void
 
     var body: some View {
@@ -18,7 +19,7 @@ struct UpdatesPanel: View {
             HStack {
                 Picker("Release channel", selection: $channel) {
                     ForEach(UpdateChannel.allCases) { Text($0.title).tag($0) }
-                }.frame(width: 250).disabled(controller.checking)
+                }.frame(width: 250).disabled(controller.checking || !canModifyChannel)
                 Spacer()
                 if controller.checking { ProgressView().controlSize(.small) }
                 Button(controller.checking ? "Checking…" : "Check Now") {
@@ -27,6 +28,7 @@ struct UpdatesPanel: View {
             }
             Text(channel == .preview ? "Preview includes early builds and stable releases. Early builds may have unfinished features." : "Stable includes releases marked stable. No stable release may be available yet.")
                 .font(.caption).foregroundStyle(.secondary)
+            if !canModifyChannel { Text("Unlock local data to change the saved release channel.").font(.caption).foregroundStyle(.secondary) }
             Divider()
             if controller.checkedChannel == channel {
                 if let error = controller.error { Text(error).foregroundStyle(.orange) }

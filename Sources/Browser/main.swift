@@ -3,7 +3,7 @@ import SwiftUI
 import BrowserCore
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     var windows: [NSWindow: BrowserStore] = [:]
     let updates = UpdateController(installedTag: Bundle.main.object(forInfoDictionaryKey: "AlcoveReleaseTag") as? String ?? "unknown")
     var normalWindow: NSWindow?
@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53, let self, let window = event.window, self.windows[window] != nil, let store = self.activeStore,
-                  store.peekView != nil || store.commandVisible || store.findVisible else { return event }
+                  store.presentedPanel != nil || store.peekView != nil || store.commandVisible || store.findVisible else { return event }
             self.closePeek(); return nil
         }
     }
@@ -88,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let app = submenu("Alcove")
         add(app, "About Alcove", #selector(about), ""); add(app, "Settings…", #selector(settings), ",")
         add(app, "Customize…", #selector(customize), ",", [.command, .shift])
+        add(app, "Manage Profiles…", #selector(manageProfiles), "")
         add(app, "Check for Updates…", #selector(checkUpdates), "")
         add(app, "Welcome to Alcove…", #selector(welcome), "")
         app.addItem(.separator()); add(app, "Quit Alcove", #selector(quit), "q")
@@ -114,16 +115,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
         NSApp.mainMenu = main
     }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard let store = activeStore else { return menuItem.action == #selector(manageProfiles) || menuItem.action == #selector(quit) || menuItem.action == #selector(about) }
+        let available = store.isPrivate || !store.profileUnavailable(store.activeProfileID)
+        switch menuItem.action {
+        case #selector(newSpace): return store.canModifyLocalMetadata && !store.profileDataOperationInProgress && available
+        case #selector(pin), #selector(reopen): return store.canModifyLocalMetadata && available
+        case #selector(bookmark), #selector(importSession): return !store.isPrivate && store.savingEnabled && available
+        case #selector(welcome): return !store.isPrivate && store.savingEnabled
+        default: return true
+        }
+    }
     @objc func about() { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Alcove", .applicationVersion: updates.installedTag + " · Unsigned Preview", .credits: NSAttributedString(string: "An independent, open-source WebKit browser for Mac. Not notarized by Apple.")]) }
     @objc func quit() { NSApp.terminate(nil) }
-    @objc func newTab() { if activeStore?.onboardingVisible == true { activeStore?.finishOnboarding() }; activeStore?.showCommand(new: true) }
+    @objc func newTab() { guard let store = activeStore else { return }; store.presentedPanel = nil; if store.onboardingVisible { store.finishOnboarding() }; store.showCommand(new: true) }
     @objc func privateWindow() { openWindow(isPrivate: true) }
     @objc func closePeek() {
         guard let store = activeStore else { return }
-        if store.commandVisible { store.commandVisible = false }
+        if store.presentedPanel != nil { store.presentedPanel = nil }
+        else if store.commandVisible { store.commandVisible = false }
         else if store.findVisible { store.findVisible = false }
-        else if store.libraryVisible { store.libraryVisible = false }
-        else if store.settingsVisible { store.settingsVisible = false }
         else { store.closePeek() }
     }
     func stepTab(_ delta: Int) {
@@ -140,15 +151,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func previousTab() { stepTab(-1) }
     @objc func nextSpace() { stepSpace(1) }
     @objc func previousSpace() { stepSpace(-1) }
-    @objc func importSession() { activeStore?.importLegacySession() }
-    @objc func newSpace() { activeStore?.addSpace() }
-    @objc func location() { if activeStore?.onboardingVisible == true { activeStore?.finishOnboarding() }; activeStore?.showCommand() }
-    @objc func closeTab() { if let store = activeStore, let id = store.focusedID { store.close(id) } }
-    @objc func reopen() { activeStore?.reopenClosed() }
+    @objc func importSession() { guard let store = activeStore, !store.isPrivate, store.savingEnabled, !store.profileUnavailable(store.activeProfileID) else { return }; store.importLegacySession() }
+    @objc func newSpace() { activeStore?.requestNewSpace() }
+    @objc func location() { guard let store = activeStore else { return }; store.presentedPanel = nil; if store.onboardingVisible { store.finishOnboarding() }; store.showCommand() }
+    @objc func closeTab() { guard let store = activeStore else { return }; if store.presentedPanel != nil { store.presentedPanel = nil; return }; if let id = store.focusedID { store.close(id) } }
+    @objc func reopen() { guard let store = activeStore, store.canModifyLocalMetadata, store.isPrivate || !store.profileUnavailable(store.activeProfileID) else { return }; store.reopenClosed() }
     @objc func reload() { activeStore?.currentView?.reload() }
     @objc func sidebar() { activeStore?.sidebarVisible.toggle() }
     @objc func split() { activeStore?.toggleSplit() }
-    @objc func pin() { if let store = activeStore, let id = store.focusedID { store.togglePin(id) } }
+    @objc func pin() { if let store = activeStore, store.canModifyLocalMetadata, store.isPrivate || !store.profileUnavailable(store.activeProfileID), let id = store.focusedID { store.togglePin(id) } }
     @objc func back() { activeStore?.currentView?.goBack() }
     @objc func forward() { activeStore?.currentView?.goForward() }
     @objc func find() { activeStore?.findVisible = true }
@@ -156,10 +167,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func zoomOut() { activeStore?.zoom(-0.1) }
     @objc func resetZoom() { activeStore?.currentView?.pageZoom = 1 }
     @objc func showLibrary() { activeStore?.libraryVisible = true }
-    @objc func bookmark() { activeStore?.addBookmark() }
+    @objc func bookmark() { guard let store = activeStore, !store.isPrivate, store.savingEnabled, !store.profileUnavailable(store.activeProfileID) else { return }; store.addBookmark() }
     @objc func settings() { activeStore?.settingsVisible = true }
     @objc func customize() { activeStore?.appearanceVisible = true }
-    @objc func welcome() { if activeStore?.isPrivate == false { activeStore?.presentedPanel = nil; activeStore?.onboardingVisible = true } }
+    @objc func manageProfiles() {
+        openWindow(isPrivate: false)
+        guard let normalWindow, let store = windows[normalWindow] else { return }
+        store.commandVisible = false; store.onboardingVisible = false; store.profilesVisible = true
+    }
+    @objc func welcome() { if activeStore?.isPrivate == false && activeStore?.savingEnabled == true { activeStore?.presentedPanel = nil; activeStore?.onboardingVisible = true } }
     @objc func checkUpdates() {
         guard let store = activeStore else { return }
         store.updatesVisible = true

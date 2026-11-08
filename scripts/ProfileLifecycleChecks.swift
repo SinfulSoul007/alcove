@@ -120,11 +120,42 @@ import BrowserCore
         try? await resumedClear.clearProfileData(closingClearID, removeData: { _ in })
         check(resumedClear.tab(queuedTab)?.url == "https://example.com/queued-during-clear", "Retrying a pending clear preserves links queued after its initial tab reset")
         check(!resumedClear.profileUnavailable(closingClearID), "Retrying interrupted website clearing restores the same profile safely")
+        let upgradeRoot = root.appendingPathComponent("versioned-upgrade")
+        var oldSession = Session(); oldSession.spaces[0].tabs[0].url = "about:blank"
+        var oldObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(BrowserDocument(session: oldSession))) as! [String: Any]
+        for field in ["profiles", "profileLibraries", "formatVersion"] { oldObject.removeValue(forKey: field) }
+        let legacyDocument = try JSONDecoder().decode(BrowserDocument.self, from: JSONSerialization.data(withJSONObject: oldObject))
+        let legacyFile = upgradeRoot.appendingPathComponent("session.sealed")
+        try MetadataStore(url: legacyFile, key: key).save(legacyDocument)
+        let legacyBytes = try Data(contentsOf: legacyFile)
+        var keyCreationRequests: [Bool] = []
+        let upgrade = BrowserStore(dataRoot: upgradeRoot, keyProvider: { create in keyCreationRequests.append(create); return key })
+        let newProfile = try upgrade.createProfile(name: "Must survive older readers")
+        upgrade.update(upgrade.selectedID!) { $0.url = "https://example.com/profile-versioned" }; upgrade.flush()
+        check(keyCreationRequests == [false], "Upgrading encrypted metadata requires the existing key")
+        check(try Data(contentsOf: legacyFile) == legacyBytes, "Profile-enabled saves leave the pre-profile file intact for older readers")
+        try MetadataStore(url: legacyFile, key: key).save(legacyDocument)
+        let returned = BrowserStore(dataRoot: upgradeRoot, keyProvider: { _ in key })
+        check(returned.profiles.contains(where: { $0.id == newProfile }) && returned.session.spaces.flatMap(\.tabs).contains(where: { $0.url == "https://example.com/profile-versioned" }), "Returning from an older preview keeps named-profile metadata intact")
+        var futureObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(returned.makeDocument())) as! [String: Any]
+        futureObject["formatVersion"] = 999; futureObject["futureCriticalField"] = "must remain intact"
+        let futureBytes = try AES.GCM.seal(JSONSerialization.data(withJSONObject: futureObject), using: key).combined!
+        try futureBytes.write(to: returned.sessionURL, options: .atomic)
+        let future = BrowserStore(dataRoot: upgradeRoot, keyProvider: { _ in key }); future.flush()
+        let protectedFutureBytes = try Data(contentsOf: returned.sessionURL)
+        check(!future.savingEnabled && protectedFutureBytes == futureBytes, "An unsupported future format cannot be silently downgraded or overwritten")
+        let lockedUpgradeRoot = root.appendingPathComponent("locked-versioned-upgrade")
+        try MetadataStore(url: lockedUpgradeRoot.appendingPathComponent("session.sealed"), key: key).save(legacyDocument)
+        let lockedUpgrade = BrowserStore(dataRoot: lockedUpgradeRoot, keyProvider: { _ in throw CocoaError(.fileReadNoPermission) })
+        lockedUpgrade.unlockLocalData(keyProvider: { key })
+        for _ in 0..<500 where lockedUpgrade.unlocking { try await Task.sleep(for: .milliseconds(10)) }
+        check(lockedUpgrade.savingEnabled && lockedUpgrade.selectedTab?.url == "about:blank", "Unlock can complete an encrypted pre-profile format migration")
+        check(lockedUpgrade.archiveTimer?.isValid == true, "Unlock after startup failure restarts automatic tab archiving")
         for current in [clearing, privateStore] { for id in Array(current.views.keys) { current.discardView(id) } }
         liveB = nil
         for id in Array(failureStore.views.keys) { failureStore.discardView(id) }
         live = nil; failureStore.namedDataStores.removeAll()
-        for current in [store, failureStore, fresh, finishing, clearing, closingDelete, closingClear, resumedClear, overlappingStore!] { current.archiveTimer?.invalidate(); current.namedDataStores.removeAll() }
+        for current in [store, failureStore, fresh, finishing, clearing, closingDelete, closingClear, resumedClear, overlappingStore!, upgrade, returned, future, lockedUpgrade] { current.archiveTimer?.invalidate(); current.namedDataStores.removeAll() }
         await Task.yield()
         for ownedID in [id, failingID, finishingID, clearA, clearB, closingClearID] { try? await WKWebsiteDataStore.remove(forIdentifier: ownedID) }
         exit(failures == 0 ? 0 : 1)

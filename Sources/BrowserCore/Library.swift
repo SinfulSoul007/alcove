@@ -8,6 +8,7 @@ public struct PageRecord: Codable, Identifiable, Equatable {
     public init(title: String, url: String, date: Date = Date()) { id = UUID(); self.title = title; self.url = url; self.date = date }
 }
 public struct BrowserLibrary: Codable {
+    public var favoriteTabs: [Tab]?
     public var bookmarks: [PageRecord] = []
     public var history: [PageRecord] = []
     public var closedTabs: [Tab] = []
@@ -35,12 +36,13 @@ public struct Preferences: Codable {
     public init() {}
 }
 public struct BrowserDocument: Codable {
+    public var formatVersion: Int?
     public var session: Session
     public var library: BrowserLibrary
     public var preferences: Preferences
     public var profiles: [BrowserProfile]?
     public var profileLibraries: [ProfileLibrary]?
     public init(session: Session = Session(), library: BrowserLibrary = BrowserLibrary(), preferences: Preferences = Preferences(), profiles: [BrowserProfile]? = nil, profileLibraries: [ProfileLibrary]? = nil) {
-        self.session = session; self.library = library; self.preferences = preferences; self.profiles = profiles; self.profileLibraries = profileLibraries
+        formatVersion = 2; self.session = session; self.library = library; self.preferences = preferences; self.profiles = profiles; self.profileLibraries = profileLibraries
     }
 }

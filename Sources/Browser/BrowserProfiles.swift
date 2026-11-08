@@ -24,7 +24,7 @@ enum ProfileError: LocalizedError {
         case .privateMode: return "Profiles are managed in a normal window."
         case .locked: return "Unlock local data before changing profiles."
         case .missing: return "This profile no longer exists."
-        case .pending: return "This profile has an unfinished deletion. Finish or retry it before using the profile."
+        case .pending: return "Finish or retry this profile’s pending data operation before using it."
         case .inUse: return "Move this profile’s Spaces to another profile before deleting it."
         case .defaultProfile: return "The default profile can be cleared but cannot be removed."
         case .busy: return "Another profile data operation is still running."
@@ -93,7 +93,7 @@ extension BrowserStore {
             let empty = BrowserCore.Tab(); candidate.session.spaces[index].tabs = [empty]; candidate.session.spaces[index].selected = empty.id
         }
         var records = library(for: id)
-        if !resuming { records.history = []; records.archive = []; records.closedTabs = [] }
+        if !resuming { records.favoriteTabs = []; records.history = []; records.archive = []; records.closedTabs = [] }
         candidate.setLibrary(records, for: id)
         if isPrivate { for tabID in affected { discardView(tabID) }; session = candidate.session; setLibrary(records, for: id); splitID = nil; activePaneID = nil }
         else { try commitProfileDocument(candidate, discarding: affected, resetting: activeProfileID == id ? space.id : nil) }
@@ -129,7 +129,7 @@ extension BrowserStore {
     var profileDataOperationInProgress: Bool { clearingData || deletingProfileID != nil || (!isPrivate && !ProfileDataOperations.shared.activeIDs.isEmpty) }
     func profileID(for tabID: UUID) -> UUID? {
         guard !isPrivate else { return BrowserProfile.defaultID }
-        return session.spaces.first(where: { $0.tabs.contains(where: { $0.id == tabID }) })?.effectiveProfileID
+        return session.spaces.first(where: { $0.tabs.contains(where: { $0.id == tabID }) })?.effectiveProfileID ?? profileLibraries.first(where: { $0.library.favoriteTabs?.contains(where: { $0.id == tabID }) == true })?.profileID
     }
     func profileID(for web: WKWebView) -> UUID? {
         if web === peekView { return peekProfileID }
@@ -150,8 +150,8 @@ extension BrowserStore {
     func makeDocument() -> BrowserDocument {
         BrowserDocument(session: session, library: library(for: BrowserProfile.defaultID), preferences: preferences, profiles: profiles, profileLibraries: profileLibraries)
     }
-    func applyDocument(_ document: BrowserDocument) {
-        var prepared = document; prepared.repairProfiles()
+    func applyDocument(_ document: BrowserDocument) throws {
+        var prepared = document; try prepared.repairProfiles()
         session = Self.repairedSession(prepared.session); profiles = prepared.profiles ?? [.defaultProfile]
         profileLibraries = prepared.profileLibraries ?? [ProfileLibrary(profileID: BrowserProfile.defaultID, library: prepared.library)]
         preferences = prepared.preferences
@@ -160,14 +160,14 @@ extension BrowserStore {
         guard !isPrivate else { throw ProfileError.privateMode }
         guard !isShuttingDown else { throw CancellationError() }
         guard savingEnabled, let vault else { throw ProfileError.locked }
-        var prepared = candidate; prepared.repairProfiles(); prepared.session = Self.repairedSession(prepared.session)
+        var prepared = candidate; try prepared.repairProfiles(); prepared.session = Self.repairedSession(prepared.session)
         do { try vault.save(prepared) }
         catch { savingEnabled = false; message = "Couldn’t save profile changes. Your existing tabs and data were kept. \(error.localizedDescription)"; throw error }
         persistedProfileIDs = Set((prepared.profiles ?? []).map(\.id))
         if let spaceID, peekSpaceID == spaceID { closePeek() }
         for id in ids { discardView(id) }
         if spaceID == space.id || ids.contains(where: { $0 == splitID || $0 == selectedID }) { splitID = nil; activePaneID = nil }
-        applyDocument(prepared); hasSavedDocument = true
+        try applyDocument(prepared); hasSavedDocument = true
     }
     @discardableResult func createProfile(name: String) throws -> UUID {
         let profile = BrowserProfile(name: name)
@@ -182,21 +182,36 @@ extension BrowserStore {
         guard let profile = profiles.first(where: { $0.id == id }), let index = session.spaces.firstIndex(where: { $0.id == spaceID }) else { throw ProfileError.missing }
         guard !profile.isPendingDeletion, !profile.isPendingClear else { throw ProfileError.pending }
         guard session.spaces[index].effectiveProfileID != id else { return }
-        var candidate = makeDocument(); candidate.session.spaces[index].profileID = id
+        var candidate = makeDocument()
+        candidate.session.spaces[index].tabs.removeAll { $0.favorite == true }
+        candidate.session.spaces[index].profileID = id
         try commitProfileDocument(candidate, discarding: session.spaces[index].tabs.map(\.id), resetting: spaceID)
     }
     @discardableResult func placeTab(_ id: UUID, in destination: UUID, section: SidebarSection, before target: UUID? = nil, folder: String? = nil, allowProfileChange: Bool = false) -> Bool {
-        guard let source = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) }), let dest = session.spaces.first(where: { $0.id == destination }), id != target else { return false }
-        let changingProfile = !isPrivate && source.effectiveProfileID != dest.effectiveProfileID
+        guard let sourceProfile = profileID(for: id), let original = tab(id), let dest = session.spaces.first(where: { $0.id == destination }), id != target else { return false }
+        let source = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) })
+        let changingProfile = !isPrivate && sourceProfile != dest.effectiveProfileID
         guard !changingProfile || allowProfileChange else { return false }
-        guard isPrivate || profiles.contains(where: { $0.id == dest.effectiveProfileID && !$0.isPendingDeletion && !$0.isPendingClear }) else { return false }
-        var candidate = makeDocument(); candidate.session.placeTab(id, in: destination, section: section, before: target)
-        if let folder, let s = candidate.session.spaces.firstIndex(where: { $0.id == destination }), let t = candidate.session.spaces[s].tabs.firstIndex(where: { $0.id == id }) { candidate.session.spaces[s].tabs[t].folder = folder }
+        guard isPrivate || (profiles.contains(where: { $0.id == dest.effectiveProfileID && !$0.isPendingDeletion && !$0.isPendingClear }) && !profileUnavailable(sourceProfile)) else { return false }
+        var candidate = makeDocument()
+        if source == nil, let index = candidate.session.spaces.firstIndex(where: { $0.id == destination }) { candidate.session.spaces[index].tabs.append(original) }
+        candidate.session.placeTab(id, in: destination, section: section, before: target)
+        guard let s = candidate.session.spaces.firstIndex(where: { $0.id == destination }), let t = candidate.session.spaces[s].tabs.firstIndex(where: { $0.id == id }) else { return false }
+        if let folder { candidate.session.spaces[s].tabs[t].folder = folder }
+        let placed = candidate.session.spaces[s].tabs[t]
+        var oldLibrary = candidate.library(for: sourceProfile); oldLibrary.favoriteTabs = favorites(for: sourceProfile).filter { $0.id != id }
+        candidate.setLibrary(oldLibrary, for: sourceProfile)
+        var newLibrary = candidate.library(for: dest.effectiveProfileID)
+        var shelf = (sourceProfile == dest.effectiveProfileID ? oldLibrary.favoriteTabs : newLibrary.favoriteTabs) ?? []
+        if placed.favorite == true {
+            if let target, let index = shelf.firstIndex(where: { $0.id == target }) { shelf.insert(placed, at: index) } else { shelf.append(placed) }
+        }
+        newLibrary.favoriteTabs = shelf; candidate.setLibrary(newLibrary, for: dest.effectiveProfileID)
         if changingProfile {
-            do { try commitProfileDocument(candidate, discarding: [id], resetting: source.id) }
+            do { try commitProfileDocument(candidate, discarding: [id], resetting: source?.id) }
             catch { return false }
-        } else { session = candidate.session; save() }
-        if source.id != dest.id { splitID = nil; activePaneID = nil }
+        } else { session = candidate.session; profileLibraries = candidate.profileLibraries ?? []; save() }
+        if source?.id != dest.id { splitID = nil; activePaneID = nil }
         return true
     }
     func websiteDataStore(forProfile id: UUID) -> WKWebsiteDataStore {

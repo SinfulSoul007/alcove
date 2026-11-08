@@ -1,5 +1,10 @@
 import Foundation
 
+public enum MetadataFormatError: LocalizedError {
+    case unsupportedVersion
+    public var errorDescription: String? { "This data needs a different version of Alcove. Update Alcove before opening it. Existing files were kept." }
+}
+
 public struct BrowserProfile: Codable, Identifiable, Equatable {
     public static let defaultID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     public static let zeroID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
@@ -44,7 +49,9 @@ extension BrowserDocument {
         if profileID == BrowserProfile.defaultID { library = value }
     }
     /// Repair metadata without moving an existing valid profile to another cookie store.
-    public mutating func repairProfiles() {
+    public mutating func repairProfiles() throws {
+        guard formatVersion == nil || formatVersion == 1 || formatVersion == 2 else { throw MetadataFormatError.unsupportedVersion }
+        formatVersion = 2
         let replacementForZero = UUID()
         func valid(_ id: UUID) -> UUID { id == BrowserProfile.zeroID ? replacementForZero : id }
         var registry = profiles ?? []
@@ -83,6 +90,31 @@ extension BrowserDocument {
             for duplicate in matching.dropFirst() { result.mergePreservingRecords(duplicate.library) }
             return ProfileLibrary(profileID: id, library: result)
         }
+        // Favorites belong to a profile, even when it has no associated Space.
+        var favoriteOwners: [UUID: UUID] = [:]
+        let liveOwners = Dictionary(uniqueKeysWithValues: session.spaces.flatMap { space in space.tabs.map { ($0.id, space.effectiveProfileID) } })
+        let liveFavorites = Set(session.spaces.flatMap(\.tabs).filter { $0.favorite == true }.map(\.id))
+        for index in (profileLibraries ?? []).indices {
+            let owner = profileLibraries![index].profileID
+            var favorites = profileLibraries![index].library.favoriteTabs ?? []
+            let live = session.spaces.filter { $0.effectiveProfileID == owner }.flatMap(\.tabs).filter { $0.favorite == true }
+            for tab in live {
+                if let existing = favorites.firstIndex(where: { $0.id == tab.id }) { favorites[existing] = tab }
+                else { favorites.append(tab) }
+            }
+            var normalized: [Tab] = []
+            for var tab in favorites {
+                if normalized.contains(tab) { continue }
+                if favoriteOwners[tab.id] != nil || liveOwners[tab.id].map({ $0 != owner || !liveFavorites.contains(tab.id) }) == true { tab.id = UUID() }
+                tab.favorite = true; tab.pinned = true; tab.folder = nil
+                tab.homeURL = tab.homeURL ?? tab.url; tab.pinnedTitle = tab.pinnedTitle ?? tab.title
+                favoriteOwners[tab.id] = owner; normalized.append(tab)
+                for s in session.spaces.indices where session.spaces[s].effectiveProfileID == owner {
+                    if let t = session.spaces[s].tabs.firstIndex(where: { $0.id == tab.id }) { session.spaces[s].tabs[t] = tab }
+                }
+            }
+            profileLibraries![index].library.favoriteTabs = normalized
+        }
         library = self.library(for: BrowserProfile.defaultID)
     }
 }
@@ -105,6 +137,7 @@ extension BrowserLibrary {
             }
             return result
         }
+        if favoriteTabs != nil || other.favoriteTabs != nil { favoriteTabs = tabs(favoriteTabs ?? [], other.favoriteTabs ?? []) }
         bookmarks = pages(bookmarks, other.bookmarks); history = pages(history, other.history)
         closedTabs = tabs(closedTabs, other.closedTabs); archive = tabs(archive, other.archive)
     }

@@ -5,7 +5,7 @@ import BrowserCore
 import CryptoKit
 import Combine
 
-enum BrowserPanel: String, Identifiable { case library, settings, appearance, updates; var id: String { rawValue } }
+enum BrowserPanel: String, Identifiable { case library, settings, appearance, updates, profiles; var id: String { rawValue } }
 
 @MainActor
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
@@ -17,6 +17,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var presentedPanel: BrowserPanel?
     var appearanceVisible: Bool { get { presentedPanel == .appearance } set { if newValue { presentedPanel = .appearance } else if appearanceVisible { presentedPanel = nil } } }
     var updatesVisible: Bool { get { presentedPanel == .updates } set { if newValue { presentedPanel = .updates } else if updatesVisible { presentedPanel = nil } } }
+    var profilesVisible: Bool { get { presentedPanel == .profiles } set { if newValue { presentedPanel = .profiles } else if profilesVisible { presentedPanel = nil } } }
     @Published var onboardingVisible = false
     var hasSavedDocument = false
     var onboardingDidFinish: (() -> Void)?
@@ -65,7 +66,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     let isPrivate: Bool
     let privateDataStore: WKWebsiteDataStore?
     var vault: MetadataStore?
-    var savingEnabled = true
+    @Published var savingEnabled = true
     @Published var unlocking = false
     var downloadIDs: [ObjectIdentifier: UUID] = [:]
     var archiveTimer: Timer?
@@ -79,6 +80,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     private var saveTask: Task<Void, Never>?
     private var profileOperationSubscription: AnyCancellable?
     let sessionURL: URL
+    let previousSessionURL: URL
     var spaceIndex: Int { session.spaces.firstIndex { $0.id == session.selectedSpace } ?? 0 }
     var space: Space { session.spaces[spaceIndex] }
     var selectedID: UUID? { space.selected }
@@ -91,16 +93,18 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         self.isPrivate = isPrivate
         privateDataStore = isPrivate ? .nonPersistent() : nil
         let root = dataRoot ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("OpenBrowser", isDirectory: true)
-        sessionURL = root.appendingPathComponent("session.sealed")
+        sessionURL = root.appendingPathComponent("session-v2.sealed")
+        previousSessionURL = root.appendingPathComponent("session.sealed")
         super.init()
         guard !isPrivate else { return }
         profileOperationSubscription = ProfileDataOperations.shared.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         do {
-            let exists = FileManager.default.fileExists(atPath: sessionURL.path)
+            let exists = FileManager.default.fileExists(atPath: sessionURL.path) || FileManager.default.fileExists(atPath: previousSessionURL.path)
             let key = try keyProvider(!exists)
             let storage = MetadataStore(url: sessionURL, key: key)
             vault = storage
             var document = try storage.load(BrowserDocument.self)
+            if document == nil { document = try MetadataStore(url: previousSessionURL, key: key).load(BrowserDocument.self) }
             var migratedLegacyURL: URL?
             if document != nil { hasSavedDocument = true }
             else {
@@ -111,23 +115,28 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
                     migrated.preferences.onboardingCompleted = true; document = migrated; migratedLegacyURL = legacyURL
                 }
             }
-            var prepared = document ?? BrowserDocument(); prepared.repairProfiles(); prepared.session = Self.repairedSession(prepared.session)
+            var prepared = document ?? BrowserDocument(); try prepared.repairProfiles(); prepared.session = Self.repairedSession(prepared.session)
             if let document {
                 persistedProfileIDs.formUnion((document.profiles ?? []).map(\.id).filter { $0 != BrowserProfile.zeroID })
                 persistedProfileIDs.formUnion(document.session.spaces.map(\.effectiveProfileID).filter { $0 != BrowserProfile.zeroID })
                 persistedProfileIDs.formUnion((document.profileLibraries ?? []).map(\.profileID).filter { $0 != BrowserProfile.zeroID })
             }
-            applyDocument(prepared)
+            try applyDocument(prepared)
             // Save recovered identifiers before WebKit can create a named website store.
             let canonical = JSONEncoder(); canonical.outputFormatting = [.sortedKeys]
             let previous = try document.map { try canonical.encode($0) }
-            if previous != (try canonical.encode(prepared)) { try storage.save(prepared) }
+            let current = try canonical.encode(prepared)
+            if !FileManager.default.fileExists(atPath: sessionURL.path) || previous != current { try storage.save(prepared) }
             persistedProfileIDs = Set((prepared.profiles ?? []).map(\.id))
             if let migratedLegacyURL { try FileManager.default.removeItem(at: migratedLegacyURL) }
-            archiveTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in Task { @MainActor in self?.archiveOldTabs() } }
+            startArchiveTimer()
         } catch { savingEnabled = false; message = "Local data is locked or unreadable. Saving is disabled to preserve it. \(error.localizedDescription)" }
         onboardingVisible = OnboardingPolicy.shouldPresent(isPrivate: isPrivate, savingEnabled: savingEnabled, completed: preferences.onboardingCompleted, hasSavedDocument: hasSavedDocument)
         if hasSavedDocument && preferences.onboardingCompleted == nil { preferences.onboardingCompleted = true }
+    }
+    func startArchiveTimer() {
+        guard !isPrivate, !isShuttingDown, archiveTimer?.isValid != true else { return }
+        archiveTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in Task { @MainActor in self?.archiveOldTabs() } }
     }
     func repairSession() {
         session = Self.repairedSession(session)
@@ -195,6 +204,9 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return tab.id
     }
     func close(_ id: UUID) {
+        if !session.spaces.contains(where: { $0.tabs.contains(where: { $0.id == id }) }), let favorite = tab(id), favorite.favorite == true {
+            update(id) { $0.url = $0.homeURL ?? $0.url; $0.title = $0.pinnedTitle ?? $0.title }; discardView(id); return
+        }
         guard let owner = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) })?.id else { return }
         if let tab = tab(id), tab.pinned {
             update(id) { $0.url = $0.homeURL ?? $0.url; $0.title = $0.pinnedTitle ?? $0.title }
@@ -219,26 +231,47 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         save()
     }
     func togglePin(_ id: UUID) {
+        if favorites.contains(where: { $0.id == id }) { _ = materializeFavorite(id) }
         update(id) {
             $0.pinned.toggle()
             if $0.pinned { $0.homeURL = $0.url; $0.pinnedTitle = $0.title }
             else { $0.favorite = nil; $0.folder = nil; $0.homeURL = nil; $0.pinnedTitle = nil }
         }
     }
-    var profileTabs: [BrowserCore.Tab] { session.spaces.filter { isPrivate || $0.effectiveProfileID == activeProfileID }.flatMap(\.tabs) }
-    var favorites: [BrowserCore.Tab] { profileTabs.filter { $0.favorite == true } }
+    func favorites(for profile: UUID) -> [BrowserCore.Tab] {
+        library(for: profile).favoriteTabs ?? session.spaces.filter { isPrivate || $0.effectiveProfileID == profile }.flatMap(\.tabs).filter { $0.favorite == true }
+    }
+    var profileTabs: [BrowserCore.Tab] {
+        let local = session.spaces.filter { isPrivate || $0.effectiveProfileID == activeProfileID }.flatMap(\.tabs)
+        let ids = Set(local.map(\.id)); return local + favorites.filter { !ids.contains($0.id) }
+    }
+    var favorites: [BrowserCore.Tab] { favorites(for: activeProfileID) }
+    /// Mount a shared Favorite in this Space without changing its profile or native page.
+    @discardableResult func materializeFavorite(_ id: UUID) -> Bool {
+        guard let favorite = favorites.first(where: { $0.id == id }) else { return false }
+        if let source = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) }) {
+            guard isPrivate || source.effectiveProfileID == activeProfileID else { return false }
+            if source.id == space.id { return true }
+            session.close(id, in: source.id)
+        }
+        session.spaces[spaceIndex].tabs.append(favorite)
+        return true
+    }
     func selectAny(_ id: UUID) {
+        if favorites.contains(where: { $0.id == id }) { if materializeFavorite(id) { select(id) }; return }
         if let owner = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) }) {
             if owner.id != space.id { selectSpace(owner.id) }; select(id)
         }
     }
     func toggleFavorite(_ id: UUID) {
+        if favorites.contains(where: { $0.id == id }) { _ = materializeFavorite(id) }
         update(id) {
             $0.favorite = !($0.favorite ?? false)
             if $0.favorite == true { $0.pinned = true; $0.homeURL = $0.homeURL ?? $0.url; $0.pinnedTitle = $0.pinnedTitle ?? $0.title }
         }
     }
     func removeFromSidebar(_ id: UUID) {
+        if favorites.contains(where: { $0.id == id }) { _ = materializeFavorite(id) }
         update(id) { $0.pinned = false; $0.favorite = nil }; close(id)
     }
     @discardableResult func move(_ id: UUID, to destination: UUID, allowProfileChange: Bool = false) -> Bool {
@@ -259,13 +292,20 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         view(for: id).load(URLRequest(url: url))
     }
     func update(_ id: UUID, change: (inout BrowserCore.Tab) -> Void) {
+        guard let profile = profileID(for: id), var value = tab(id) else { return }
+        change(&value)
         for s in session.spaces.indices {
-            if let t = session.spaces[s].tabs.firstIndex(where: { $0.id == id }) {
-                change(&session.spaces[s].tabs[t]); save(); return
-            }
+            if let t = session.spaces[s].tabs.firstIndex(where: { $0.id == id }) { session.spaces[s].tabs[t] = value; break }
         }
+        var shelf = favorites(for: profile)
+        if value.favorite == true {
+            if let index = shelf.firstIndex(where: { $0.id == id }) { shelf[index] = value } else { shelf.append(value) }
+        } else { shelf.removeAll { $0.id == id } }
+        mutateLibrary(for: profile) { $0.favoriteTabs = shelf }; save()
     }
-    func tab(_ id: UUID) -> BrowserCore.Tab? { session.spaces.flatMap(\.tabs).first { $0.id == id } }
+    func tab(_ id: UUID) -> BrowserCore.Tab? {
+        session.spaces.flatMap(\.tabs).first { $0.id == id } ?? profileLibraries.compactMap { $0.library.favoriteTabs?.first(where: { $0.id == id }) }.first
+    }
     func view(for id: UUID, configuration: WKWebViewConfiguration? = nil) -> WKWebView {
         if let existing = views[id] { return existing }
         accessOrder.removeAll { $0 == id }; accessOrder.append(id)

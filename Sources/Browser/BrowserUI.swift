@@ -96,13 +96,38 @@ struct BrowserUI: View {
             .onChange(of: store.sidebarVisible) { _, _ in reveal.reset() }
             .sheet(item: $store.presentedPanel) { panel in
                 switch panel {
-                case .library: LibraryPanel(store: store)
+                case .library: LibraryPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .settings: SettingsPanel(store: store, availableHeight: geometry.size.height - 40)
-                case .appearance: AppearancePanel(store: store, availableHeight: geometry.size.height - 40)
-                case .updates: UpdatesPanel(controller: updates, channel: Binding(get: { UpdateChannel(rawValue: store.preferences.updateChannel ?? "preview") ?? .preview }, set: { store.preferences.updateChannel = $0.rawValue; store.save() }), availableHeight: geometry.size.height - 40, onClose: { store.presentedPanel = nil })
+                case .appearance:
+                    if store.canModifyLocalMetadata { AppearancePanel(store: store, availableHeight: geometry.size.height - 40) }
+                    else { lockedAppearancePanel }
+                case .profiles: ProfilesPanel(store: store, availableHeight: geometry.size.height - 40)
+                case .updates: UpdatesPanel(controller: updates, channel: Binding(get: { UpdateChannel(rawValue: store.preferences.updateChannel ?? "preview") ?? .preview }, set: { guard store.canModifyLocalMetadata else { return }; store.preferences.updateChannel = $0.rawValue; store.save() }), availableHeight: geometry.size.height - 40, canModifyChannel: store.canModifyLocalMetadata, onClose: { store.presentedPanel = nil })
                 }
             }
         }
+    }
+    @ViewBuilder private var spaceProfileMenu: some View {
+        if store.isPrivate { Text("Private · Temporary website storage") }
+        else {
+            Menu("Profile: \(store.activeProfile.name)") {
+                ForEach(store.profiles) { profile in
+                    Button { store.requestAssignProfile(profile.id, to: store.space.id) } label: {
+                        if profile.id == store.activeProfileID { Label(profile.name, systemImage: "checkmark") }
+                        else { Text(profile.name) }
+                    }.disabled(!store.canManageProfiles || store.profileUnavailable(profile.id) || store.profileUnavailable(store.activeProfileID) || profile.id == store.activeProfileID)
+                }
+                Divider()
+                Button("Manage Profiles…") { store.profilesVisible = true }
+            }
+        }
+    }
+    private var lockedAppearancePanel: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack { Text("Appearance").font(.title2.bold()); Spacer(); Button("Done") { store.appearanceVisible = false }.keyboardShortcut(.cancelAction) }
+            Text("Unlock local data to save changes to your Space and appearance.").foregroundStyle(.secondary)
+            Button(store.unlocking ? "Unlocking…" : "Unlock Local Data…") { store.unlockLocalData() }.disabled(store.unlocking)
+        }.padding(24).frame(width: 560)
     }
     private var content: some View {
         VStack(spacing: 0) {
@@ -142,7 +167,7 @@ struct BrowserUI: View {
                     ForEach(store.favorites) { tab in
                         Button { store.selectAny(tab.id) } label: {
                             SiteBadge(url: tab.homeURL ?? tab.url, large: true, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil).frame(maxWidth: .infinity).frame(height: 48).background(store.focusedID == tab.id ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: 10))
-                        }.buttonStyle(.plain).help(tab.pinnedTitle ?? tab.title).onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }.contextMenu { Button("Remove from Favorites") { store.toggleFavorite(tab.id) }; Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) } }
+                        }.buttonStyle(.plain).help(tab.pinnedTitle ?? tab.title).onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }.contextMenu { Button("Remove from Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata); Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) }.disabled(!store.canModifyLocalMetadata) }
                     }
                 }
                 }.frame(height: favoritesHeight).padding(.horizontal, 8).padding(.bottom, 12).onDrop(of: [.text], delegate: TabDrop(store: store, section: .favorites))
@@ -151,11 +176,12 @@ struct BrowserUI: View {
                 Text(store.space.name.isEmpty ? "Space" : store.space.name).font(.system(size: 12, weight: .semibold)).opacity(0.5)
                 Spacer()
                 Menu {
-                    Button("New Space…") { store.addSpace() }
-                    Button("Customize…") { store.appearanceVisible = true }
-                    Menu("Theme") { ForEach(SidebarTheme.allCases) { choice in Button(choice.name) { withAnimation(motion) { store.setTheme(choice) } } } }
+                    Button("New Space…") { store.requestNewSpace() }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(store.activeProfileID)))
+                    Button("Customize…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata)
+                    Menu("Theme") { ForEach(SidebarTheme.allCases) { choice in Button(choice.name) { withAnimation(motion) { store.setTheme(choice) } } } }.disabled(!store.canModifyLocalMetadata)
                     Button("Split View") { store.toggleSplit() }
-                    Button("Bookmark Page") { store.addBookmark() }.disabled(store.isPrivate)
+                    Button("Bookmark Page") { store.addBookmark() }.disabled(store.isPrivate || !store.savingEnabled || store.profileUnavailable(store.activeProfileID))
+                    spaceProfileMenu
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("Space settings")
             }.padding(.horizontal, 16).padding(.vertical, 12)
             ScrollView {
@@ -166,7 +192,7 @@ struct BrowserUI: View {
                             var collapsed = store.space.collapsedFolders ?? []; collapsed.removeAll { $0 == folder }; if !expanded { collapsed.append(folder) }; store.session.spaces[store.spaceIndex].collapsedFolders = collapsed; store.save()
                         })) { ForEach(pins.filter { $0.folder == folder }) { row($0) } } label: {
                             Label(folder, systemImage: "folder.fill").font(.system(size: 12 * appearance.textScale, weight: .medium)).lineLimit(1).padding(.vertical, 7).foregroundStyle(theme.accent)
-                        }.tint(theme.ink.opacity(0.4)).padding(.horizontal, 9).onDrop(of: [.text], delegate: TabDrop(store: store, section: .pinned, folder: folder))
+                        }.tint(theme.ink.opacity(0.4)).disabled(!store.canModifyLocalMetadata).padding(.horizontal, 9).onDrop(of: [.text], delegate: TabDrop(store: store, section: .pinned, folder: folder))
                     }
                     Color.clear.frame(height: pins.isEmpty ? 10 : 3).contentShape(Rectangle()).onDrop(of: [.text], delegate: TabDrop(store: store, section: .pinned))
                     Rectangle().fill(theme.ink.opacity(0.12)).frame(height: 0.5).padding(.horizontal, 10).padding(.vertical, 12)
@@ -188,13 +214,13 @@ struct BrowserUI: View {
                             ForEach(Array(store.session.spaces.enumerated()), id: \.element.id) { index, space in
                                 Button { store.selectSpace(space.id) } label: {
                                     Image(systemName: space.icon ?? ["circle.fill", "moon.fill", "leaf.fill", "sun.max.fill", "star.fill", "square.fill"][index % 6]).font(.system(size: 11)).opacity(store.session.selectedSpace == space.id ? 1 : 0.3).frame(width: 19, height: 26)
-                                }.buttonStyle(.plain).help(space.name).id(space.id)
+                                }.buttonStyle(.plain).help(store.isPrivate ? space.name : "\(space.name) · \(store.profiles.first(where: { $0.id == space.effectiveProfileID })?.name ?? "Profile")").id(space.id)
                             }
                         }.frame(minHeight: 26)
                     }.onChange(of: store.session.selectedSpace) { _, id in proxy.scrollTo(id, anchor: .center) }
                 }
                 Spacer(minLength: 0)
-                Menu { Button("New Space…") { store.addSpace() }; Button("Settings…") { store.settingsVisible = true }; Button("Customize…") { store.appearanceVisible = true }; ForEach(store.session.spaces) { s in Button(s.name) { store.selectSpace(s.id) } } } label: { Image(systemName: "plus").font(.system(size: 15)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("More Spaces and settings")
+                Menu { spaceProfileMenu; Button("New Space…") { store.requestNewSpace() }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(store.activeProfileID))); Button("Settings…") { store.settingsVisible = true }; Button("Customize…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata); ForEach(store.session.spaces) { s in Button(s.name) { store.selectSpace(s.id) } } } label: { Image(systemName: "plus").font(.system(size: 15)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("More Spaces and settings")
             }.padding(.horizontal, 14).frame(height: 42)
         }.padding(.bottom, 4)
     }
@@ -250,13 +276,18 @@ struct SidebarTabRow: View {
         .onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }
         .onDrop(of: [.text], delegate: TabDrop(store: store, section: tab.pinned ? .pinned : .today, before: tab.id, folder: tab.folder))
         .contextMenu {
-            Button(tab.pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id) }
-            Button("Add to Favorites") { store.toggleFavorite(tab.id) }
-            Button("Move to Folder…") { store.setFolder(tab.id) }
+            Button(tab.pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id) }.disabled(!store.canModifyLocalMetadata)
+            Button("Add to Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata)
+            Button("Move to Folder…") { store.setFolder(tab.id) }.disabled(!store.canModifyLocalMetadata)
             if tab.id != store.selectedID && !tab.url.isEmpty { Button("Open in Split View") { store.splitID = tab.id } }
-            Menu("Move to Space") { ForEach(store.session.spaces.filter { $0.id != store.space.id }) { s in Button(s.name) { store.move(tab.id, to: s.id) } } }
+            Menu("Move to Space") {
+                ForEach(store.session.spaces.filter { $0.id != store.space.id }) { s in
+                    Button(store.isPrivate ? s.name : "\(s.name) · \(store.profiles.first(where: { $0.id == s.effectiveProfileID })?.name ?? "Profile")") { store.requestMoveTab(tab.id, to: s.id) }
+                        .disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(s.effectiveProfileID)))
+                }
+            }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress)
             Divider()
-            Button(tab.pinned ? "Remove from Sidebar" : "Close Tab") { if tab.pinned { store.removeFromSidebar(tab.id) } else { store.close(tab.id) } }
+            Button(tab.pinned ? "Remove from Sidebar" : "Close Tab") { if tab.pinned { store.removeFromSidebar(tab.id) } else { store.close(tab.id) } }.disabled(tab.pinned && !store.canModifyLocalMetadata)
         }
     }
 }

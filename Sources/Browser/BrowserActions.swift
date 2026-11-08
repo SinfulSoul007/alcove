@@ -16,14 +16,16 @@ extension BrowserStore {
         guard !isPrivate, !savingEnabled, !unlocking else { return false }
         unlocking = true
         let url = sessionURL
+        let previousURL = previousSessionURL
         Task {
             defer { unlocking = false }
             do {
-                let key = try await Task.detached { if let keyProvider { return try keyProvider() }; return try MetadataKey.load(createIfMissing: !FileManager.default.fileExists(atPath: url.path), allowInteraction: true) }.value
+                let key = try await Task.detached { if let keyProvider { return try keyProvider() }; return try MetadataKey.load(createIfMissing: !FileManager.default.fileExists(atPath: url.path) && !FileManager.default.fileExists(atPath: previousURL.path), allowInteraction: true) }.value
                 guard !isShuttingDown else { return }
                 let storage = MetadataStore(url: url, key: key)
                 let pending = makeDocument()
                 var document = try storage.load(BrowserDocument.self)
+                if document == nil { document = try MetadataStore(url: previousURL, key: key).load(BrowserDocument.self) }
                 var migratedLegacyURL: URL?
                 if document == nil {
                     let legacyURL = url.deletingLastPathComponent().appendingPathComponent("session.json")
@@ -36,7 +38,7 @@ extension BrowserStore {
                 }
                 var candidate = document ?? pending
                 if document != nil {
-                    candidate.repairProfiles()
+                    try candidate.repairProfiles()
                     for var space in pending.session.spaces {
                         if let index = candidate.session.spaces.firstIndex(where: { $0.id == space.id && $0.effectiveProfileID == space.effectiveProfileID }) {
                             candidate.session.spaces[index] = space
@@ -64,7 +66,7 @@ extension BrowserStore {
                     if hasSavedDocument { candidate.preferences = pending.preferences }
                     if candidate.preferences.onboardingCompleted == nil { candidate.preferences.onboardingCompleted = true }
                 }
-                candidate.repairProfiles(); candidate.session = Self.repairedSession(candidate.session)
+                try candidate.repairProfiles(); candidate.session = Self.repairedSession(candidate.session)
                 // Commit disk state before publishing a restore. Failed retries leave live tabs intact.
                 try persist(storage, candidate)
                 persistedProfileIDs = Set((candidate.profiles ?? []).map(\.id))
@@ -76,8 +78,8 @@ extension BrowserStore {
                     }
                     splitID = nil; activePaneID = nil; closePeek()
                 }
-                applyDocument(candidate)
-                hasSavedDocument = true; vault = storage; savingEnabled = true
+                try applyDocument(candidate)
+                hasSavedDocument = true; vault = storage; savingEnabled = true; startArchiveTimer()
                 onboardingVisible = OnboardingPolicy.shouldPresent(isPrivate: isPrivate, savingEnabled: savingEnabled, completed: preferences.onboardingCompleted, hasSavedDocument: hasSavedDocument)
                 if let migratedLegacyURL {
                     do { try FileManager.default.removeItem(at: migratedLegacyURL) }

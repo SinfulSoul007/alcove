@@ -1,5 +1,5 @@
 public enum BrowserCommand: String, CaseIterable, Identifiable {
-    case pin, unpin, favorite, unfavorite, sidebar, split, library, settings, copyURL
+    case pin, unpin, favorite, unfavorite, sidebar, split, library, settings, profiles, copyURL
     public func matches(_ query: String) -> Bool {
         let words = title.lowercased().split(whereSeparator: { $0.isWhitespace })
         let queryWords = query.lowercased().split(whereSeparator: { $0.isWhitespace })
@@ -16,6 +16,7 @@ public enum BrowserCommand: String, CaseIterable, Identifiable {
         case .split: return "Toggle Split View"
         case .library: return "Open Library"
         case .settings: return "Open Settings"
+        case .profiles: return "Manage Profiles"
         case .copyURL: return "Copy Current URL"
         }
     }
