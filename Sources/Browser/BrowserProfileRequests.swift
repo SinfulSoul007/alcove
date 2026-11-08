@@ -34,7 +34,7 @@ extension BrowserStore {
         if isPrivate { session.spaces.append(newSpace); selectSpace(newSpace.id) }
         else {
             var candidate = makeDocument(); candidate.session.spaces.append(newSpace); candidate.session.selectedSpace = newSpace.id
-            do { try commitProfileDocument(candidate); closePeek(); splitID = nil; activePaneID = nil }
+            do { try commitProfileDocument(candidate); closePrimaryPeek(); splitID = nil; activePaneID = nil }
             catch { message = error.localizedDescription }
         }
     }

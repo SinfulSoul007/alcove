@@ -73,10 +73,14 @@ extension BrowserStore {
                 if document != nil {
                     for id in Array(views.keys) {
                         let owner = candidate.session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) })
-                        let tab = owner?.tabs.first(where: { $0.id == id })
-                        if owner?.effectiveProfileID != viewProfileIDs[id] || tab?.url != self.tab(id)?.url { discardView(id) }
+                        let quickOwner = candidate.profileLibraries?.first(where: { $0.library.quickPages?.contains(where: { $0.id == id }) == true })
+                        let favoriteOwner = candidate.profileLibraries?.first(where: { $0.library.favoriteTabs?.contains(where: { $0.id == id }) == true })
+                        let tab = owner?.tabs.first(where: { $0.id == id }) ?? quickOwner?.library.quickPages?.first(where: { $0.id == id })?.tab ?? favoriteOwner?.library.favoriteTabs?.first(where: { $0.id == id })
+                        let profile = owner?.effectiveProfileID ?? quickOwner?.profileID ?? favoriteOwner?.profileID
+                        if profile != viewProfileIDs[id] || tab?.url != self.tab(id)?.url { discardView(id) }
                     }
-                    splitID = nil; activePaneID = nil; closePeek()
+                    splitID = nil; activePaneID = nil
+                    if !canRetainPeek(in: candidate) { closePeek() }
                 }
                 try applyDocument(candidate)
                 hasSavedDocument = true; vault = storage; savingEnabled = true; startArchiveTimer()

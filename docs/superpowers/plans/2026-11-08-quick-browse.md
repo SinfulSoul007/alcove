@@ -34,9 +34,9 @@
 **Files:** new QuickBrowseStore.swift; modify BrowserStore.swift, BrowserProfiles.swift, BrowserActions.swift, PeekPanel.swift; new QuickBrowseStoreChecks.swift; extend real website fixture/checks; build.sh.
 **Consumes:** Task 1 models; existing vault/profile registries/view map.
 **Produces:** quickPages(for:), quickPage(_:), quickProfileID(_:), openQuickPage(url:profileID:intendedSpaceID:configuration:), navigateQuickPage(_:input:), closeQuickPage(_:), promoteQuickPage(_:to:allowProfileChange:), changeQuickProfile(_:to:rememberHost:allowReload:), restoreQuickArchive(_:profileID:), archiveInactiveQuickPages(now:), quickPagesDidChange callback, focusedQuickPageID and Peek source context.
-- [ ] Write RED checks for durable creation/reuse, owner lookup, profile reassignment, same-view promotion, consent/failure atomicity, archive/restore, private data, popup/Peek and clear/delete/recovery. Prove an actual fixture DOM/form survives promotion without a reload while cookie stores remain isolated.
-- [ ] Implement transactional normal/in-memory private candidates; route every view/event to its owner; keep quick pages alive during suspension; merge quick records correctly on Unlock. Guard stale callbacks and modal ownership. Extend profile clear/delete and auto-archive timer.
-- [ ] Run focused store/website checks and full suite; expected all pass. Commit and ledger evidence.
+- [x] Write RED checks for durable creation/reuse, owner lookup, profile reassignment, same-view promotion, consent/failure atomicity, archive/restore, private data, popup/Peek and clear/delete/recovery. Prove an actual fixture DOM/form survives promotion without a reload while cookie stores remain isolated.
+- [x] Implement transactional normal/in-memory private candidates; route every view/event to its owner; keep quick pages alive during suspension; merge quick records correctly on Unlock. Guard stale callbacks and modal ownership. Extend profile clear/delete and auto-archive timer.
+- [x] Run focused store/website checks and full suite; expected all pass. Commit and ledger evidence.
 
 ### Task 3: Native compact windows, ownership and release readiness
 

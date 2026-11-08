@@ -4,30 +4,78 @@ import BrowserCore
 
 extension BrowserStore {
     func openPeek(_ url: URL, from source: WKWebView? = nil) {
-        let ownerProfile: UUID; let ownerSpace: UUID
+        let ownerProfile: UUID; let ownerSpace: UUID?; let parent: UUID?
         if let source {
-            guard let profile = profileID(for: source), let space = spaceID(for: source) else { return }
-            ownerProfile = profile; ownerSpace = space
-        } else { ownerProfile = activeProfileID; ownerSpace = space.id }
+            guard let profile = profileID(for: source), !profileUnavailable(profile) else { return }
+            let context = quickContext(for: source); let space = spaceID(for: source)
+            guard space != nil || context != nil else { return }
+            ownerProfile = profile; ownerSpace = space; parent = context?.id
+        } else { ownerProfile = activeProfileID; ownerSpace = space.id; parent = nil }
         closePeek()
         let config = WKWebViewConfiguration()
         config.websiteDataStore = websiteDataStore(forProfile: ownerProfile)
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self; web.uiDelegate = self; web.allowsBackForwardNavigationGestures = true
-        peekView = web; peekProfileID = ownerProfile; peekSpaceID = ownerSpace
+        peekView = web; peekProfileID = ownerProfile; peekSpaceID = ownerSpace; peekParentQuickID = parent
         peekObservations = [web.observe(\.url) { [weak self] _, _ in Task { @MainActor in self?.revision += 1 } }]
         web.load(URLRequest(url: url))
+    }
+    func closePrimaryPeek() { if peekParentQuickID == nil { closePeek() } }
+    func canRetainPeek(in document: BrowserDocument) -> Bool {
+        guard !isPrivate, let web = peekView, let profile = peekProfileID,
+              document.profiles?.contains(where: { $0.id == profile && !$0.isPendingDeletion && !$0.isPendingClear }) == true else { return false }
+        let dataStore = web.configuration.websiteDataStore
+        guard dataStore.isPersistent, dataStore.identifier == (profile == BrowserProfile.defaultID ? nil : profile) else { return false }
+        if let parent = peekParentQuickID { return document.library(for: profile).quickPages?.contains(where: { $0.id == parent }) == true }
+        return document.session.spaces.contains(where: { $0.id == peekSpaceID && $0.effectiveProfileID == profile })
     }
     func closePeek() {
         if let web = peekView {
             if let profile = peekProfileID { closingPages.append(ClosingProfilePage(web, profileID: profile)) }
             web.navigationDelegate = nil; web.uiDelegate = nil; web.stopLoading(); web.loadHTMLString("", baseURL: nil); web.removeFromSuperview()
         }
-        peekView = nil; peekObservations = []; peekProfileID = nil; peekSpaceID = nil
+        peekView = nil; peekObservations = []; peekProfileID = nil; peekSpaceID = nil; peekParentQuickID = nil
     }
     func expandPeek() {
-        guard let url = peekView?.url, ["http", "https"].contains(url.scheme ?? "") else { return }
-        let owner = peekSpaceID; closePeek(); newTab(url: url, in: owner)
+        do { _ = try promotePeek() } catch { message = error.localizedDescription }
+    }
+    @discardableResult func promotePeek(to destination: UUID? = nil, allowProfileChange: Bool = false) throws -> UUID {
+        guard let web = peekView, let owner = peekProfileID, let url = web.url, QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.missing }
+        try requireQuickProfile(owner)
+        var candidate = makeDocument(); var index: Int
+        if let destination {
+            guard let found = candidate.session.spaces.firstIndex(where: { $0.id == destination }) else { throw ProfileError.missing }
+            index = found
+        } else if let found = candidate.session.spaces.firstIndex(where: { $0.id == peekSpaceID && (isPrivate || $0.effectiveProfileID == owner) })
+            ?? candidate.session.spaces.firstIndex(where: { isPrivate || $0.effectiveProfileID == owner }) { index = found }
+        else {
+            var target = Space(name: profiles.first(where: { $0.id == owner })?.name ?? "Personal", tabs: []); target.profileID = owner
+            candidate.session.spaces.append(target); index = candidate.session.spaces.count - 1
+        }
+        let targetProfile = isPrivate ? BrowserProfile.defaultID : candidate.session.spaces[index].effectiveProfileID
+        try requireQuickProfile(targetProfile)
+        let crossing = owner != targetProfile
+        guard !crossing || allowProfileChange else { throw QuickBrowseError.consentRequired }
+        let tab = BrowserCore.Tab(title: web.title ?? url.host ?? "Page", url: url.absoluteString)
+        var discard: [UUID] = []
+        if candidate.session.spaces[index].tabs.count == 1, let blank = candidate.session.spaces[index].tabs.first, blank.url.isEmpty && !blank.pinned {
+            discard.append(blank.id); candidate.session.spaces[index].tabs = []
+        }
+        candidate.session.spaces[index].tabs.append(tab); candidate.session.spaces[index].selected = tab.id
+        candidate.session.selectedSpace = candidate.session.spaces[index].id
+        if !isPrivate {
+            var records = candidate.library(for: targetProfile); records.record(title: tab.title, url: tab.url); candidate.setLibrary(records, for: targetProfile)
+        }
+        try commitQuickDocument(candidate, discarding: discard, beforePublish: {
+            if crossing { self.closePeek() }
+            else {
+                self.peekView = nil; self.peekObservations = []; self.peekProfileID = nil; self.peekSpaceID = nil; self.peekParentQuickID = nil
+                web.removeFromSuperview(); self.registerView(web, for: tab.id, profile: targetProfile)
+            }
+            self.splitID = nil; self.activePaneID = nil
+        })
+        if !crossing { loadSiteIcon(web) }
+        return tab.id
     }
     func loadSiteIcon(_ web: WKWebView) {
         guard let id = views.first(where: { $0.value === web })?.key, let url = web.url, ["http", "https"].contains(url.scheme ?? "") else { return }

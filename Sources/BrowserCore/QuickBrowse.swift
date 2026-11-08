@@ -5,9 +5,10 @@ public struct QuickPage: Codable, Identifiable, Equatable {
     public var intendedSpaceID: UUID?
     public var openedAt: Date
     public var lastActiveAt: Date
+    public var requestedURL: String?
     public var id: UUID { tab.id }
     public init(tab: Tab = Tab(), intendedSpaceID: UUID? = nil, openedAt: Date = Date(), lastActiveAt: Date? = nil) {
-        self.tab = tab; self.intendedSpaceID = intendedSpaceID; self.openedAt = openedAt; self.lastActiveAt = lastActiveAt ?? openedAt
+        self.tab = tab; self.intendedSpaceID = intendedSpaceID; self.openedAt = openedAt; self.lastActiveAt = lastActiveAt ?? openedAt; self.requestedURL = tab.url.isEmpty ? nil : tab.url
     }
 }
 

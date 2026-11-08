@@ -14,26 +14,42 @@ xcrun swiftc "${FLAGS[@]}" -emit-module -emit-library -enable-testing -module-na
 STORE_SOURCES=()
 for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
 run_website_checks() {
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileWebsiteChecks.swift -o "$MANUAL/profile-website-checks"
+    if [[ "${1:-}" != "quick-website-test" ]]; then
+        xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileWebsiteChecks.swift -o "$MANUAL/profile-website-checks"
+    fi
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseWebsiteChecks.swift scripts/OwnedWebsiteStores.swift -o "$MANUAL/quick-website-checks"
     FIXTURE_PORT_FILE="$(mktemp "$MANUAL/profile-fixture.XXXXXX")"
     python3 scripts/ProfileFixture.py "$FIXTURE_PORT_FILE" > "$MANUAL/profile-fixture.log" 2>&1 &
     FIXTURE_PID=$!
     trap 'kill "$FIXTURE_PID" 2>/dev/null || true; wait "$FIXTURE_PID" 2>/dev/null || true; rm -f "$FIXTURE_PORT_FILE"' EXIT
     for attempt in {1..500}; do [[ -s "$FIXTURE_PORT_FILE" ]] && break; kill -0 "$FIXTURE_PID" 2>/dev/null || break; sleep 0.02; done
     [[ -s "$FIXTURE_PORT_FILE" ]] || { cat "$MANUAL/profile-fixture.log"; exit 1; }
-    ALCOVE_PROFILE_FIXTURE_URL="http://127.0.0.1:$(cat "$FIXTURE_PORT_FILE")/" "$MANUAL/profile-website-checks"
+    if [[ "${1:-}" != "quick-website-test" ]]; then
+        ALCOVE_PROFILE_FIXTURE_URL="http://127.0.0.1:$(cat "$FIXTURE_PORT_FILE")/" "$MANUAL/profile-website-checks"
+    fi
+    ALCOVE_PROFILE_FIXTURE_URL="http://127.0.0.1:$(cat "$FIXTURE_PORT_FILE")/" "$MANUAL/quick-website-checks"
     kill "$FIXTURE_PID" 2>/dev/null || true
     wait "$FIXTURE_PID" 2>/dev/null || true
     rm -f "$FIXTURE_PORT_FILE"
     trap - EXIT
 
 }
+if [[ "${1:-}" == "quick-lifecycle-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseLifecycleChecks.swift scripts/OwnedWebsiteStores.swift -o "$MANUAL/quick-lifecycle-checks"
+    "$MANUAL/quick-lifecycle-checks"
+    exit
+fi
+if [[ "${1:-}" == "quick-store-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseStoreChecks.swift scripts/OwnedWebsiteStores.swift -o "$MANUAL/quick-store-checks"
+    "$MANUAL/quick-store-checks"
+    exit
+fi
 if [[ "${1:-}" == "quick-core-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/QuickBrowseCoreChecks.swift -o "$MANUAL/quick-core-checks"
     "$MANUAL/quick-core-checks"
     exit
 fi
-if [[ "${1:-}" == "website-test" ]]; then run_website_checks; exit; fi
+if [[ "${1:-}" == "website-test" || "${1:-}" == "quick-website-test" ]]; then run_website_checks "${1:-}"; exit; fi
 if [[ "${1:-}" == "command-import-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileCommandImportChecks.swift -o "$MANUAL/profile-command-import-checks"
     "$MANUAL/profile-command-import-checks"
@@ -56,6 +72,10 @@ if [[ "${1:-}" == "test" ]]; then
     "$MANUAL/store-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileStoreChecks.swift -o "$MANUAL/profile-store-checks"
     "$MANUAL/profile-store-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseLifecycleChecks.swift scripts/OwnedWebsiteStores.swift -o "$MANUAL/quick-lifecycle-checks"
+    "$MANUAL/quick-lifecycle-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseStoreChecks.swift scripts/OwnedWebsiteStores.swift -o "$MANUAL/quick-store-checks"
+    "$MANUAL/quick-store-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileCommandImportChecks.swift -o "$MANUAL/profile-command-import-checks"
     "$MANUAL/profile-command-import-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileFavoriteChecks.swift -o "$MANUAL/profile-favorite-checks"

@@ -21,6 +21,11 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var onboardingVisible = false
     var hasSavedDocument = false
     var onboardingDidFinish: (() -> Void)?
+    var quickPagesDidChange: (() -> Void)?
+    var quickPageRequested: ((UUID) -> Void)?
+    var focusedQuickPageID: UUID?
+    var quickActivityTimes: [UUID: Date] = [:]
+    var quickArchiveProbeID: UUID?
     var automaticUpdatesDidChange: (() -> Void)?
     func setAutomaticUpdateChecks(_ enabled: Bool) { preferences.automaticUpdateChecks = enabled; save(); automaticUpdatesDidChange?() }
     var appearance: AppearanceSettings {
@@ -62,6 +67,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var peekObservations: [NSKeyValueObservation] = []
     var peekProfileID: UUID?
     var peekSpaceID: UUID?
+    var peekParentQuickID: UUID?
     @Published var siteIcons: [UUID: NSImage] = [:]
     let isPrivate: Bool
     let privateDataStore: WKWebsiteDataStore?
@@ -135,8 +141,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         if hasSavedDocument && preferences.onboardingCompleted == nil { preferences.onboardingCompleted = true }
     }
     func startArchiveTimer() {
-        guard !isPrivate, !isShuttingDown, archiveTimer?.isValid != true else { return }
-        archiveTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in Task { @MainActor in self?.archiveOldTabs() } }
+        guard !isShuttingDown, archiveTimer?.isValid != true, !isPrivate || !allQuickPages.isEmpty else { return }
+        archiveTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.archiveOldTabs(); self?.archiveInactiveQuickPages() }
+        }
     }
     func repairSession() {
         session = Self.repairedSession(session)
@@ -167,7 +175,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
-        flush(); isShuttingDown = true; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
+        flush(); isShuttingDown = true; quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closePeek(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
     }
@@ -182,7 +190,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func selectSpace(_ id: UUID) {
         guard session.spaces.contains(where: { $0.id == id }) else { return }
-        closePeek(); activePaneID = nil; splitID = nil; session.selectedSpace = id; save()
+        closePrimaryPeek(); activePaneID = nil; splitID = nil; session.selectedSpace = id; save()
     }
     func addSpace() {
         let alert = NSAlert(); alert.messageText = "Create a Space"; alert.informativeText = "Give this collection of tabs a name."
@@ -204,6 +212,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return tab.id
     }
     func close(_ id: UUID) {
+        if quickPage(id) != nil { do { try closeQuickPage(id) } catch { message = error.localizedDescription }; return }
         if !session.spaces.contains(where: { $0.tabs.contains(where: { $0.id == id }) }), let favorite = tab(id), favorite.favorite == true {
             update(id) { $0.url = $0.homeURL ?? $0.url; $0.title = $0.pinnedTitle ?? $0.title }; discardView(id); return
         }
@@ -294,6 +303,14 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func update(_ id: UUID, change: (inout BrowserCore.Tab) -> Void) {
         guard let profile = profileID(for: id), var value = tab(id) else { return }
         change(&value)
+        if let page = quickPage(id) {
+            mutateLibrary(for: profile) { records in
+                guard let index = records.quickPages?.firstIndex(where: { $0.id == id }) else { return }
+                records.quickPages?[index].tab = value
+                if page.requestedURL == nil, let url = URL(string: value.url), QuickBrowseRouting.host(for: url) != nil { records.quickPages?[index].requestedURL = value.url }
+            }
+            save(); return
+        }
         for s in session.spaces.indices {
             if let t = session.spaces[s].tabs.firstIndex(where: { $0.id == id }) { session.spaces[s].tabs[t] = value; break }
         }
@@ -304,16 +321,30 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         mutateLibrary(for: profile) { $0.favoriteTabs = shelf }; save()
     }
     func tab(_ id: UUID) -> BrowserCore.Tab? {
-        session.spaces.flatMap(\.tabs).first { $0.id == id } ?? profileLibraries.compactMap { $0.library.favoriteTabs?.first(where: { $0.id == id }) }.first
+        session.spaces.flatMap(\.tabs).first { $0.id == id } ?? profileLibraries.compactMap { $0.library.favoriteTabs?.first(where: { $0.id == id }) }.first ?? quickPage(id)?.tab
     }
     func view(for id: UUID, configuration: WKWebViewConfiguration? = nil) -> WKWebView {
         if let existing = views[id] { return existing }
-        accessOrder.removeAll { $0 == id }; accessOrder.append(id)
         let config = configuration ?? WKWebViewConfiguration()
-        let profile = profileID(for: id) ?? activeProfileID
+        guard let profile = profileID(for: id) else {
+            config.websiteDataStore = .nonPersistent()
+            let unknown = WKWebView(frame: .zero, configuration: config); unknown.navigationDelegate = self
+            return unknown
+        }
         config.websiteDataStore = websiteDataStore(forProfile: profile)
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         let web = WKWebView(frame: .zero, configuration: config)
+        registerView(web, for: id, profile: profile)
+        if !profileUnavailable(profile), let value = tab(id)?.url, !value.isEmpty, let url = URL(string: value) { web.load(URLRequest(url: url)) }
+        // Keep active and split panes alive; suspended tabs retain their last URL, but lose in-memory page state.
+        while preferences.suspendTabs && views.count > 6, let victim = accessOrder.first(where: { $0 != id && $0 != selectedID && $0 != splitID && quickPage($0) == nil && views[$0]?.isLoading == false }) {
+            discardView(victim)
+        }
+        return web
+    }
+    func registerView(_ web: WKWebView, for id: UUID, profile: UUID) {
+        if let previous = views[id], previous !== web { discardView(id) }
+        accessOrder.removeAll { $0 == id }; accessOrder.append(id)
         web.allowsBackForwardNavigationGestures = true
         web.isInspectable = false
         web.navigationDelegate = self; web.uiDelegate = self
@@ -329,15 +360,15 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             web.observe(\.url, options: [.new]) { [weak self] web, _ in
                 Task { @MainActor in guard let self, self.views[id] === web else { return }; if let url = web.url { self.update(id) { $0.url = url.absoluteString } } }
             },
+            web.observe(\.cameraCaptureState, options: [.new]) { [weak self] web, _ in
+                Task { @MainActor in guard let self, self.views[id] === web else { return }; self.revision += 1 }
+            },
+            web.observe(\.microphoneCaptureState, options: [.new]) { [weak self] web, _ in
+                Task { @MainActor in guard let self, self.views[id] === web else { return }; self.revision += 1 }
+            },
             web.observe(\.estimatedProgress, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.revision += 1 } },
             web.observe(\.isLoading, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.revision += 1 } }
         ]
-        if !profileUnavailable(profile), let value = tab(id)?.url, !value.isEmpty, let url = URL(string: value) { web.load(URLRequest(url: url)) }
-        // Keep active and split panes alive; suspended tabs retain their last URL, but lose in-memory page state.
-        while preferences.suspendTabs && views.count > 6, let victim = accessOrder.first(where: { $0 != id && $0 != selectedID && $0 != splitID && views[$0]?.isLoading == false }) {
-            discardView(victim)
-        }
-        return web
     }
     func toggleSplit() {
         if splitID != nil { splitID = nil; return }
@@ -345,7 +376,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         if splitID == nil { message = "Open a second website, then choose Split View." }
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        guard let url = action.request.url else { decisionHandler(.cancel); return }
+        guard let owner = profileID(for: webView), !profileUnavailable(owner), let url = action.request.url else { decisionHandler(.cancel); return }
         guard ["https", "http", "about", "blob", "data"].contains(url.scheme?.lowercased() ?? "") else {
             decisionHandler(.cancel); message = "This prototype only opens web links (http and https)."; return
         }
@@ -355,6 +386,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         decisionHandler(action.shouldPerformDownload ? .download : .allow)
     }
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        guard let owner = profileID(for: webView), !profileUnavailable(owner) else { decisionHandler(.cancel); return }
         decisionHandler(response.canShowMIMEType ? .allow : .download)
     }
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
