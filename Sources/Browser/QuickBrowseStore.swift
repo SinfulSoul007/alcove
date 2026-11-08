@@ -194,7 +194,9 @@ extension BrowserStore {
         guard !isShuttingDown, !profileUnavailable(item.profileID), quickProfileID(item.id) == item.profileID,
               let page = quickPage(item.id), page.tab.url == item.url, page.lastActiveAt == item.lastActiveAt,
               page.lastActiveAt < cutoff, item.id != focusedQuickPageID,
-              views[item.id]?.window?.isKeyWindow != true, views[item.id]?.isLoading != true, quickPeek(item.id)?.isLoading != true else { return false }
+              views[item.id]?.window?.isKeyWindow != true, views[item.id]?.window?.attachedSheet == nil,
+              quickPeek(item.id)?.window?.attachedSheet == nil,
+              views[item.id]?.isLoading != true, quickPeek(item.id)?.isLoading != true else { return false }
         return views[item.id].map(ObjectIdentifier.init) == item.viewID && quickPeek(item.id).map(ObjectIdentifier.init) == item.peekID
     }
     private func commitQuickArchive(_ snapshots: [QuickArchiveSnapshot], cutoff: Date, now: Date) {
@@ -227,7 +229,9 @@ extension BrowserStore {
         let owners = isPrivate ? [BrowserProfile.defaultID] : profileLibraries.map(\.profileID)
         for owner in owners where !profileUnavailable(owner) {
             for page in quickPages(for: owner) where page.lastActiveAt < cutoff && page.id != focusedQuickPageID {
-                guard views[page.id]?.window?.isKeyWindow != true, views[page.id]?.isLoading != true, quickPeek(page.id)?.isLoading != true else { continue }
+                guard views[page.id]?.window?.isKeyWindow != true, views[page.id]?.window?.attachedSheet == nil,
+                      quickPeek(page.id)?.window?.attachedSheet == nil,
+                      views[page.id]?.isLoading != true, quickPeek(page.id)?.isLoading != true else { continue }
                 if quickHasCapture(page.id) { touchQuickPage(page.id, now: now); continue }
                 let item = QuickArchiveSnapshot(id: page.id, profileID: owner, url: page.tab.url, lastActiveAt: page.lastActiveAt,
                                                 viewID: views[page.id].map(ObjectIdentifier.init), peekID: quickPeek(page.id).map(ObjectIdentifier.init))

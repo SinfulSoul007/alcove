@@ -1,6 +1,6 @@
 # Security policy
 
-Alcove 0.5 is an unsigned experimental preview, not an independently audited or stable browser. No release is currently represented as suitable for all sensitive browsing. Keep macOS updated: Alcove uses system WebKit.
+Alcove is an unsigned experimental preview, not an independently audited or stable browser. No release is currently represented as suitable for all sensitive browsing. Keep macOS updated: Alcove uses system WebKit.
 
 ## Boundaries
 
@@ -12,8 +12,9 @@ Alcove 0.5 is an unsigned experimental preview, not an independently audited or 
 - Persistent profile transitions save metadata before replacing live pages. Pending deletion/data-clear markers survive interruption, block browsing with that store, and support retry. Per-profile operations are coordinated across window closure/reopening.
 - Private windows use nonpersistent WebKit storage, do not ask for a metadata key, and never write a session/library. Downloads deliberately saved to a chosen path remain on disk. OS artifacts, swap, screenshots and remote observations are not prevented.
 - TLS validation uses WebKit defaults. Release views are not inspectable through Web Inspector. Unsupported external app schemes are blocked rather than silently opened.
-- Media permission grants are request-specific, for the focused HTTPS origin, with a user prompt and an origin recheck before granting. No persistent allow-list exists in this preview.
-- Shift-click Peek uses the window’s normal or private WebKit data store, is not added to saved session metadata, and is stopped when its window closes. Same-origin favicon data stays in memory; layout preferences such as sidebar width are ordinary local defaults.
+- Quick Browse records and exact-host profile choices are encrypted in normal metadata. One normal writer is leased by primary/compact windows; private owners remain independent and ephemeral. Destructive quick transitions persist before native teardown. Auto-archive keeps focused/loading/capturing/playing pages and native sheets, with stale/unknown SDK replies unable to close a changed page.
+- Media permission grants are request-specific, for the foreground primary/compact/Peek HTTPS origin, with a user prompt and ownership/origin/focus rechecks before granting. No persistent allow-list exists in this preview.
+- Shift-click Peek uses its originating page’s captured profile or temporary private store. An unpromoted Peek is not added to saved session metadata and closes with its originating page/window. Same-profile promotion keeps its live page; cross-profile handoff requires a reload. Same-origin favicon data stays in memory; layout preferences such as sidebar width are ordinary local defaults.
 - No passwords are stored by Alcove. There is no analytics, sync service or remote suggestion service. Update checks are manual or opt-in, use an ephemeral credential-free GitHub metadata request, validate release version/asset URLs, and never install or launch an update. Published checksums do not authenticate the developer.
 
 ## Recovery and known limitations
@@ -22,7 +23,7 @@ Lost Keychain keys make existing metadata unreadable. Do not delete keys to fix 
 
 Sandboxed first releases cannot silently read unsandboxed prototype data. Import is an explicit user-selected JSON operation; source JSON remains on disk. Website-data clearing is logical deletion, not a claim of secure physical erasure or removal from backups.
 
-Profiles are not an access-control boundary between people using the same unlocked Mac account. Profile-enabled metadata uses `session-v2.sealed`. Encrypted `session.sealed` is retained unchanged for migration/recovery, so older previews cannot overwrite the new registry. Changes in an older preview are not merged into the new file. Unsupported future format versions disable saving before publishing their data. Clearing current history does not erase the retained migration copy, filesystem snapshots or backups.
+Profiles are not an access-control boundary between people using the same unlocked Mac account. Profile-enabled metadata uses `session-v2.sealed`; Quick Browse advances the document format to 3 within that compatibility filename. A 0.5 reader rejects format 3 before changing its data. Encrypted `session.sealed` is retained unchanged for migration/recovery, so older previews cannot overwrite the new registry. Changes in an older preview are not merged into the new file. Unsupported future format versions disable saving before publishing their data. Clearing current history does not erase the retained migration copy, filesystem snapshots or backups.
 
 This preview lacks a Safe Browsing service, complete website-permission controls, a password manager, extensions and a signed automatic-update channel. Location and notifications are unsupported. We have not established safety of every complex auth/DRM/WebRTC scenario or benchmarked energy efficiency against Safari. Follow the project’s release notes before updating.
 

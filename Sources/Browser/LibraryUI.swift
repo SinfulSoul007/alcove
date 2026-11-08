@@ -20,6 +20,9 @@ struct LibraryPanel: View {
     var availableHeight: Double = 480
     @State private var section = "Bookmarks"
     @State private var search = ""
+    @State private var archiveFilter = "All"
+    @State private var archiveError: String?
+    private var archivedTabs: [BrowserCore.Tab] { store.library.archive.filter { archiveFilter == "All" || $0.archiveSource == "quickBrowse" } }
     var records: [PageRecord] {
         (section == "Bookmarks" ? store.library.bookmarks : store.library.history).filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.url.localizedCaseInsensitiveContains(search) }
     }
@@ -48,14 +51,36 @@ struct LibraryPanel: View {
                 }
                 if section == "History" { Button("Clear History and Archive") { store.clearHistory() }.disabled(!store.canModifyLocalMetadata || (!store.isPrivate && store.profileUnavailable(store.activeProfileID))) }
             } else if section == "Archive" {
-                if store.library.archive.isEmpty { empty("Archived tabs will appear here.") }
-                else { List(store.library.archive) { tab in HStack { Text(tab.title).lineLimit(1); Spacer(); Button("Restore") { store.restoreArchived(tab.id); store.libraryVisible = false }.disabled(!store.canModifyLocalMetadata || (!store.isPrivate && store.profileUnavailable(store.activeProfileID))) } } }
+                Picker("Archive source", selection: $archiveFilter) { Text("All Tabs").tag("All"); Text("Quick Browse").tag("Quick Browse") }.pickerStyle(.segmented)
+                if let archiveError { Text(archiveError).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
+                if archivedTabs.isEmpty { empty(archiveFilter == "All" ? "Archived tabs will appear here." : "Archived Quick Browse pages will appear here.") }
+                else { List(archivedTabs) { tab in archiveRow(tab, profileID: store.activeProfileID) } }
             } else {
                 if store.downloads.isEmpty { empty("Downloads from this window will appear here.") }
                 else { List(store.downloads) { item in VStack(alignment: .leading, spacing: 4) { Text(item.name); Text(item.status).font(.caption).foregroundStyle(.secondary) } } }
                 Text("Downloaded files stay on disk, including files saved from private windows. This list is kept only for this window’s lifetime.").font(.caption).foregroundStyle(.secondary)
             }
         }.padding(24).frame(width: 640, height: min(520, max(360, availableHeight)))
+    }
+    private func archiveRow(_ tab: BrowserCore.Tab, profileID: UUID) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(tab.title).lineLimit(1)
+                Text(tab.url).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                if tab.archiveSource == "quickBrowse" { Text("Quick Browse").font(.caption2).foregroundStyle(.secondary) }
+            }
+            Spacer(minLength: 8)
+            if tab.archiveSource == "quickBrowse" {
+                Button("Quick Browse") {
+                    do { _ = try store.restoreQuickArchive(tab.id, profileID: profileID); store.libraryVisible = false }
+                    catch { archiveError = error.localizedDescription }
+                }.help("Restore in a compact window")
+                Button("Open in Space") {
+                    do { _ = try store.restoreQuickArchiveInSpace(tab.id, profileID: profileID); store.libraryVisible = false }
+                    catch { archiveError = error.localizedDescription }
+                }
+            } else { Button("Restore") { store.restoreArchived(tab.id); store.libraryVisible = false } }
+        }.padding(.vertical, 4).disabled(!store.canModifyLocalMetadata || store.profileUnavailable(profileID))
     }
     private func empty(_ text: String) -> some View { VStack { Spacer(); Text(text).foregroundStyle(.secondary); Spacer() }.frame(maxWidth: .infinity) }
 }
@@ -106,6 +131,30 @@ struct SettingsPanel: View {
                     Text("Pinned tabs and each Space’s selected tab are kept. Restore archived tabs from the Library.").font(.caption).foregroundStyle(.secondary)
                 }.padding(8)
             }.disabled(store.isPrivate || !store.savingEnabled)
+            GroupBox("Quick Browse") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Open links from other apps in compact windows", isOn: Binding(get: { store.preferences.quickBrowseExternalLinks ?? true }, set: { store.preferences.quickBrowseExternalLinks = $0; store.save() }))
+                        .disabled(store.isPrivate)
+                    Text("Uses your normal profile or the profile remembered for that exact hostname. Select Alcove as your default web browser in macOS to receive other apps’ web links.").font(.caption).foregroundStyle(.secondary)
+                    Picker("Auto-archive inactive quick pages", selection: Binding(get: { let value = store.preferences.quickBrowseArchiveHours ?? 6; return [0, 6, 12, 24].contains(value) ? value : 6 }, set: { store.preferences.quickBrowseArchiveHours = $0; store.save() })) {
+                        Text("Off").tag(0); Text("After 6 hours").tag(6); Text("After 12 hours").tag(12); Text("After 24 hours").tag(24)
+                    }
+                    Text("Keeps focused or loading pages, active playback/capture and open dialogs. Archiving closes the live page and can discard unsaved forms. Restore it from Library → Archive → Quick Browse, or choose Off to keep pages open.").font(.caption).foregroundStyle(.secondary)
+                    if !store.isPrivate, let choices = store.preferences.quickDomainChoices, !choices.isEmpty {
+                        Divider()
+                        Text("Remembered profiles").font(.system(size: 12, weight: .medium))
+                        ForEach(choices) { choice in
+                            HStack {
+                                Text(choice.host).lineLimit(1).truncationMode(.middle)
+                                Spacer()
+                                Text(store.profiles.first { $0.id == choice.profileID }?.name ?? "Unavailable").foregroundStyle(.secondary).lineLimit(1)
+                                Button("Forget") { store.preferences.quickDomainChoices?.removeAll { $0.host == choice.host }; store.save() }.help("Forget the profile for \(choice.host)")
+                            }.font(.system(size: 12))
+                        }
+                    }
+                    if store.isPrivate { Text("Quick Browse settings and archived pages in this private owner are temporary.").font(.caption).foregroundStyle(.secondary) }
+                }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
+            }.disabled(!store.canModifyLocalMetadata)
             GroupBox("Updates") {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("Check for updates automatically", isOn: Binding(get: { store.preferences.automaticUpdateChecks ?? false }, set: { store.setAutomaticUpdateChecks($0) }))

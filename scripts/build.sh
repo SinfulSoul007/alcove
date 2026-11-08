@@ -34,6 +34,16 @@ run_website_checks() {
     trap - EXIT
 
 }
+if [[ "${1:-}" == "quick-native-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseNativeChecks.swift -o "$MANUAL/quick-native-checks"
+    "$MANUAL/quick-native-checks"
+    exit
+fi
+if [[ "${1:-}" == "quick-window-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseWindowChecks.swift -o "$MANUAL/quick-window-checks"
+    "$MANUAL/quick-window-checks"
+    exit
+fi
 if [[ "${1:-}" == "quick-lifecycle-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseLifecycleChecks.swift scripts/OwnedWebsiteStores.swift -o "$MANUAL/quick-lifecycle-checks"
     "$MANUAL/quick-lifecycle-checks"
@@ -76,6 +86,10 @@ if [[ "${1:-}" == "test" ]]; then
     "$MANUAL/quick-lifecycle-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseStoreChecks.swift scripts/OwnedWebsiteStores.swift -o "$MANUAL/quick-store-checks"
     "$MANUAL/quick-store-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseWindowChecks.swift -o "$MANUAL/quick-window-checks"
+    "$MANUAL/quick-window-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseNativeChecks.swift -o "$MANUAL/quick-native-checks"
+    "$MANUAL/quick-native-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileCommandImportChecks.swift -o "$MANUAL/profile-command-import-checks"
     "$MANUAL/profile-command-import-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileFavoriteChecks.swift -o "$MANUAL/profile-favorite-checks"

@@ -82,6 +82,7 @@ import BrowserCore
         check(exposedPopupConfiguration == "AlcoveQuickPopupFixture", "A popup's WebKit configuration is installed before window observers can render it")
         store.openPeek(URL(string: "about:blank")!, from: parentView!)
         check(store.peekProfileID == work && store.peekParentQuickID == parent && store.peekSpaceID == nil && store.peekView?.configuration.websiteDataStore.identifier == work, "Peek belongs to its quick source even when that profile has no remaining Space")
+        check(store.primaryPeekView == nil, "A quick window's Peek cannot also mount in the main window")
         var peekPopup: WKWebView?
         if let peek = store.peekView { peekPopup = store.createPopup(from: peek, configuration: WKWebViewConfiguration()) }
         let peekPopupID = store.views.first(where: { $0.value === peekPopup })?.key

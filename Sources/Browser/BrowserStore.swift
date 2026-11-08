@@ -252,7 +252,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     var profileTabs: [BrowserCore.Tab] {
         let local = session.spaces.filter { isPrivate || $0.effectiveProfileID == activeProfileID }.flatMap(\.tabs)
-        let ids = Set(local.map(\.id)); return local + favorites.filter { !ids.contains($0.id) }
+        let ids = Set(local.map(\.id))
+        return local + favorites.filter { !ids.contains($0.id) } + quickPages(for: activeProfileID).map(\.tab)
     }
     var favorites: [BrowserCore.Tab] { favorites(for: activeProfileID) }
     /// Mount a shared Favorite in this Space without changing its profile or native page.
@@ -267,6 +268,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return true
     }
     func selectAny(_ id: UUID) {
+        if let profile = quickProfileID(id) {
+            guard profile == activeProfileID, !profileUnavailable(profile) else { return }
+            touchQuickPage(id); quickPageRequested?(id); return
+        }
         if favorites.contains(where: { $0.id == id }) { if materializeFavorite(id) { select(id) }; return }
         if let owner = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) }) {
             if owner.id != space.id { selectSpace(owner.id) }; select(id)

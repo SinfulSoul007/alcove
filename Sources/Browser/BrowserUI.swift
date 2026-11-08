@@ -71,7 +71,7 @@ struct BrowserUI: View {
                     .animation(motion, value: shown)
                 Color.clear.frame(width: 8).contentShape(Rectangle()).allowsHitTesting(!store.sidebarVisible && !shown)
                     .onHover { inside in guard !store.sidebarVisible else { return }; if inside { reveal.edgeEntered() } else if !reveal.revealed { reveal.reset() } }
-                if store.peekView != nil {
+                if store.primaryPeekView != nil {
                     Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { store.closePeek() }
                     PeekPanel(store: store).frame(width: min(1000, geometry.size.width - 96), height: geometry.size.height - 96).frame(maxWidth: .infinity, maxHeight: .infinity).transition(.opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.98)))
                 }
@@ -92,7 +92,7 @@ struct BrowserUI: View {
             .frame(minWidth: 800, minHeight: 540).ignoresSafeArea()
             .preferredColorScheme(theme.isDark ? .dark : .light)
             .animation(motion, value: store.commandVisible)
-            .animation(motion, value: store.peekView != nil)
+            .animation(motion, value: store.primaryPeekView != nil)
             .onChange(of: store.sidebarVisible) { _, _ in reveal.reset() }
             .sheet(item: $store.presentedPanel) { panel in
                 switch panel {
@@ -311,7 +311,8 @@ struct CommandPanel: View {
             }
             if store.commandOpensNewTab || !query.contains("://") {
                 for tab in store.profileTabs.filter({ !$0.url.isEmpty && ($0.title.localizedCaseInsensitiveContains(query) || $0.url.localizedCaseInsensitiveContains(query)) }).prefix(5) {
-                    results.append(CommandResult(id: tab.id.uuidString, title: "Switch to \(tab.pinnedTitle ?? tab.title)", icon: "rectangle.on.rectangle", run: { store.selectAny(tab.id); store.commandVisible = false; store.commandOpensNewTab = false }))
+                    let quick = store.quickPage(tab.id) != nil
+                    results.append(CommandResult(id: tab.id.uuidString, title: "\(quick ? "Quick Browse" : "Switch to") \(tab.pinnedTitle ?? tab.title)", icon: quick ? "arrow.up.forward.square" : "rectangle.on.rectangle", run: { store.selectAny(tab.id); store.commandVisible = false; store.commandOpensNewTab = false }))
                 }
             }
         }

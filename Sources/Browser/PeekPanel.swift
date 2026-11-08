@@ -17,7 +17,11 @@ extension BrowserStore {
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self; web.uiDelegate = self; web.allowsBackForwardNavigationGestures = true
         peekView = web; peekProfileID = ownerProfile; peekSpaceID = ownerSpace; peekParentQuickID = parent
-        peekObservations = [web.observe(\.url) { [weak self] _, _ in Task { @MainActor in self?.revision += 1 } }]
+        let changed: () -> Void = { [weak self, weak web] in
+            Task { @MainActor in guard let self, let web, self.peekView === web else { return }; self.revision += 1 }
+        }
+        peekObservations = [web.observe(\.url) { _, _ in changed() }, web.observe(\.isLoading) { _, _ in changed() },
+                            web.observe(\.cameraCaptureState) { _, _ in changed() }, web.observe(\.microphoneCaptureState) { _, _ in changed() }]
         web.load(URLRequest(url: url))
     }
     func closePrimaryPeek() { if peekParentQuickID == nil { closePeek() } }

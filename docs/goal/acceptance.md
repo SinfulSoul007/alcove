@@ -2,7 +2,7 @@
 
 The active user goal remains: a fully built browser with regular updates, Arc's full feature set and visually correct behavior, extensive themes/customization, a polished first-launch animation, and a smooth sidebar. A passing preview or a partial feature list does not complete this goal.
 
-Published 0.4 artifacts and public update selection have been verified. Current 0.5 work adds isolated profiles and profile-owned Favorites; the full goal remains in progress.
+Published 0.4 artifacts and public update selection have been verified. Published 0.5 adds isolated profiles and profile-owned Favorites; current 0.6 work adds Quick Browse; the full goal remains in progress.
 
 ## Acceptance areas
 
@@ -15,7 +15,7 @@ Published 0.4 artifacts and public update selection have been verified. Current 
 | First-run experience | Animated native introduction, theme/setup steps, skip/replay and reduced motion | Migration/private/locked/retry tests pass; native animation and keyboard QA pending |
 | Tabs / pins / Favorites / folders | 0.3 behavioral and native checks | More edge-case QA; nested folders and richer organization remain |
 | Spaces / isolated profiles | Named WebKit stores, encrypted profile libraries, durable clear/delete recovery and shared profile Favorites | Real cookie/localStorage, relaunch, clear and deletion isolation checks pass; native profile controls/confirmation/keyboard QA pending |
-| Peek / Little Arc | Shift-click Peek implemented | Little Arc external-link windows missing; complete routing and lifecycle |
+| Peek / Little Arc | Shift-click Peek plus current 0.6 Quick Browse compact windows, profile memory, live handoff and recovery | Native visual/keyboard/animation verification and broader routing/gesture fidelity remain open |
 | Split view | Two panes with focus routing | More panes, resizing/split lifecycle and full native QA |
 | Air Traffic Control / site search | None | Implement routing rules and keyword site search |
 | Boosts / Easels / capture | None | Implement website customization and a local canvas/capture workflow |
@@ -37,3 +37,5 @@ Full parity inventory reference: official Arc desktop feature resources and rele
 - 0.5 profile increment: 264 browser checks pass, including real named WebKit storage separation and clear/delete isolation. A fresh whole-branch review found two command/import paths; both have failing-before/passing-after regressions. Universal ZIP/DMG built and mounted locally. Native visual/keyboard QA remains pending; the full goal is active.
 
 - 0.5 published at b7139e5: CI 42462909134 and release 42463181857 passed. Public ZIP/DMG were downloaded back, checksums/signature/universal slices/mounted contents verified, and the live 0.4 update client selected and verified 0.5. See docs/releases/0.5.0-verification.md for evidence and recorded decisions. Native visual QA and the broader goal remain open.
+
+- 0.6 development: profile-owned Quick Browse metadata/lifecycle passed 365 checks before window integration. Compact native ownership, command search, archive/filter/settings and permission-sheet guards are now integrated. Focused hidden-window and real-page checks cover lifecycle and state preservation; full final suite/build/review/publication are pending. Hidden-window checks do not establish visual/animation/keyboard fidelity.

@@ -207,8 +207,9 @@ extension BrowserStore {
         panel.begin { result in completionHandler(result == .OK ? panel.urls : nil) }
     }
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
-        // Prompt only for the focused tab's secure top-level origin, never grant in the background.
-        guard webView === currentView, origin.protocol == "https", origin.host == webView.url?.host,
+        // Resolve the actual foreground page, including compact windows and their Peek.
+        guard isFocusedWebsite(webView), webView.window?.attachedSheet == nil,
+              origin.protocol == "https", origin.host == webView.url?.host,
               (origin.port == 0 ? 443 : origin.port) == (webView.url?.port ?? 443),
               frame.securityOrigin.host == origin.host, frame.securityOrigin.protocol == origin.protocol,
               frame.securityOrigin.port == origin.port else { decisionHandler(.deny); return }
@@ -220,7 +221,7 @@ extension BrowserStore {
         guard let window = webView.window else { decisionHandler(.deny); return }
         let requestedURL = webView.url
         alert.beginSheetModal(for: window) { [weak self, weak webView] result in
-            let stillCurrent = webView != nil && webView === self?.currentView && webView?.url == requestedURL
+            let stillCurrent = webView.map { self?.isFocusedWebsite($0) == true && $0.url == requestedURL } ?? false
             decisionHandler(result == .alertSecondButtonReturn && stillCurrent ? .grant : .deny)
         }
     }
