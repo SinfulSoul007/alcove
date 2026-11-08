@@ -4,6 +4,13 @@ import WebKit
 import Combine
 import BrowserCore
 
+@MainActor final class ChromeFixtureWindow: NSWindow {
+    var fixtureKey = false
+    var pointer = NSPoint(x: -1000, y: -1000)
+    override var isKeyWindow: Bool { fixtureKey }
+    override var mouseLocationOutsideOfEventStream: NSPoint { pointer }
+}
+
 /// Actual SwiftUI rows in owned, never-shown windows. No real profile or device access.
 @main struct ChromeChecks {
     @MainActor static func main() async throws {
@@ -31,8 +38,8 @@ import BrowserCore
             if !result { print("Geometry:", "native", native, "rows", visible.map { $0.convert($0.bounds, to: nil) }) }
             return result
         }
-        func newWindow(width: CGFloat = 1260, height: CGFloat = 820) -> NSWindow {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        func newWindow(width: CGFloat = 1260, height: CGFloat = 820) -> ChromeFixtureWindow {
+            let w = ChromeFixtureWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
             w.isReleasedWhenClosed = false; w.titlebarAppearsTransparent = true; w.titleVisibility = .hidden
             return w
         }
@@ -93,6 +100,35 @@ import BrowserCore
         main.setContentSize(NSSize(width: 1100, height: 720)); await settle()
         check(invalidations == 0 && aligned(main), "Native resize updates geometry without publishing browser-state changes")
         subscription.cancel()
+
+        func tracking(_ view: NSView) -> [SidebarTracking.Host] {
+            (view as? SidebarTracking.Host).map { [$0] } ?? view.subviews.flatMap(tracking)
+        }
+        func floatingVisible() -> Bool {
+            tracking(hosting).contains {
+                let rect = $0.convert($0.bounds, to: nil)
+                return rect.width > 16 && rect.minX >= -0.5 && rect.intersects(hosting.convert(hosting.bounds, to: nil))
+            }
+        }
+        store.sidebarVisible = false; main.fixtureKey = true; main.pointer = NSPoint(x: 4, y: 100)
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: main)
+        await settle(); await settle()
+        check(floatingVisible() && store.views[pageID] === web && web.window === main,
+              "The actual browser root reveals its floating sidebar while preserving the mounted website")
+        if let root = hosting.superview {
+            let frame = web.convert(web.bounds, to: nil)
+            let hit = root.hitTest(root.convert(NSPoint(x: frame.midX, y: frame.maxY - 3), from: nil))
+            check(hit === web || hit?.isDescendant(of: web) == true, "Floating-sidebar tracking preserves page clicks outside the panel")
+        } else { check(false, "Floating page hit-test fixture is mounted") }
+        store.commandVisible = true; await settle()
+        check(!floatingVisible(), "The actual command overlay suppresses floating sidebar reveal")
+        store.commandVisible = false; await settle(); await settle()
+        check(floatingVisible(), "Closing the command overlay restores edge tracking for a stationary pointer")
+        main.pointer = NSPoint(x: 600, y: 100)
+        tracking(hosting).forEach { $0.updateTrackingAreas() }
+        await settle(); await settle(); await settle()
+        check(!floatingVisible() && store.views[pageID] === web, "Leaving the actual floating panel hides it without replacing its website")
+        main.fixtureKey = false; store.sidebarVisible = true; await settle()
 
         let owner = BrowserWindowOwner(store: store); let primaryLease = try owner.acquirePrimary()
         // Register a real nonpersistent native view before mounting the HTTP metadata;

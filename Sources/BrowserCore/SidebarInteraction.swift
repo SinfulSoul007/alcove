@@ -3,7 +3,10 @@ public struct SidebarResizeState {
     private var startingWidth = 236.0
     public init() {}
     public mutating func begin(at width: Double) { startingWidth = width; temporaryWidth = width }
-    public mutating func drag(by delta: Double, windowWidth: Double) { temporaryWidth = SidebarSizing.width(saved: startingWidth + delta, windowWidth: windowWidth) }
+    public mutating func drag(by delta: Double, windowWidth: Double) {
+        guard temporaryWidth != nil else { return }
+        temporaryWidth = SidebarSizing.width(saved: startingWidth + delta, windowWidth: windowWidth)
+    }
     public mutating func finish() -> Double? { let result = temporaryWidth; temporaryWidth = nil; return result }
     public mutating func cancel() { temporaryWidth = nil }
 }

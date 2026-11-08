@@ -94,6 +94,15 @@ import BrowserCore
         check(trackingHover.revealed, "Tracking-area geometry updates reconcile a pointer already inside the edge")
         trackOwner.pointer = NSPoint(x: 100, y: 100); edge.updateTrackingAreas(); await pause()
         check(!trackingHover.revealed, "Geometry changes reconcile an exited pointer without a missing-event gap")
+        func trackingEvent(_ kind: NSEvent.EventType, x: Double) -> NSEvent {
+            NSEvent.enterExitEvent(with: kind, location: NSPoint(x: x, y: 100), modifierFlags: [], timestamp: 0,
+                                  windowNumber: trackOwner.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)!
+        }
+        edge.mouseEntered(with: trackingEvent(.mouseEntered, x: 4)); await pause(130)
+        check(!trackingHover.revealed, "A stale entered event cannot reopen the sidebar after the pointer has left")
+        trackOwner.pointer = NSPoint(x: 4, y: 100); edge.updateTrackingAreas(); await pause(130)
+        edge.mouseExited(with: trackingEvent(.mouseExited, x: 100)); await pause()
+        check(trackingHover.revealed, "A stale exited event cannot hide the sidebar beneath the current pointer")
         trackOwner.pointer = NSPoint(x: 4, y: 100); edge.updateTrackingAreas(); await pause(130)
         let detachMenu = NSMenu(title: "Detach fixture")
         NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: detachMenu)
@@ -114,6 +123,93 @@ import BrowserCore
         check(!trackingHover.revealed, "The replacement window owns floating-state teardown")
         for c in [hover, menuHover, trackingHover] { c.reset() }
         for w in [menuOwner, trackOwner, next] { w.contentView = nil; w.close() }
+
+        var width = SidebarResizeState()
+        width.begin(at: 236); width.cancel(); width.drag(by: 50, windowWidth: 1000)
+        check(width.temporaryWidth == nil, "Cancelled width state rejects a late drag update")
+        width.begin(at: 236); _ = width.finish(); width.drag(by: 50, windowWidth: 1000)
+        check(width.temporaryWidth == nil, "Completed width state rejects a late drag update")
+        let resizeWindow = window(), replacementWindow = window()
+        let resizeParent = NSView(); resizeWindow.contentView = resizeParent
+        let replacementParent = NSView(); replacementWindow.contentView = replacementParent
+        let handle = SidebarResizeHandle.Handle(frame: NSRect(x: 0, y: 0, width: 6, height: 300))
+        resizeParent.addSubview(handle)
+        var storedWidth = 236.0, begins = 0, ends = 0, cancels = 0, resets = 0
+        handle.begin = { begins += 1; width.begin(at: storedWidth) }
+        handle.drag = { width.drag(by: $0, windowWidth: 1000) }
+        handle.end = { ends += 1; if let value = width.finish() { storedWidth = value } }
+        handle.cancel = { cancels += 1; width.cancel() }
+        handle.reset = { resets += 1; width.cancel(); storedWidth = 236 }
+        func mouse(_ type: NSEvent.EventType, x: Double, clicks: Int = 1, owner: NSWindow) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 80), modifierFlags: [], timestamp: 0,
+                               windowNumber: owner.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 0)!
+        }
+        func key(_ code: UInt16, owner: NSWindow) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: owner.windowNumber,
+                             context: nil, characters: code == 53 ? "\u{1b}" : "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)!
+        }
+        handle.mouseDown(with: mouse(.leftMouseDown, x: 200, owner: resizeWindow))
+        handle.mouseDragged(with: mouse(.leftMouseDragged, x: 250, owner: resizeWindow))
+        check(width.temporaryWidth == 286 && storedWidth == 236, "Mouse resize changes only transient width before release")
+        handle.mouseUp(with: mouse(.leftMouseUp, x: 250, owner: resizeWindow))
+        handle.mouseUp(with: mouse(.leftMouseUp, x: 250, owner: resizeWindow))
+        check(storedWidth == 286 && ends == 1 && width.temporaryWidth == nil, "Mouse release commits the width exactly once")
+        handle.mouseDown(with: mouse(.leftMouseDown, x: 200, owner: resizeWindow))
+        handle.mouseDragged(with: mouse(.leftMouseDragged, x: 250, owner: resizeWindow))
+        handle.keyDown(with: key(53, owner: resizeWindow))
+        handle.mouseDragged(with: mouse(.leftMouseDragged, x: 300, owner: resizeWindow))
+        handle.mouseUp(with: mouse(.leftMouseUp, x: 300, owner: resizeWindow))
+        check(cancels == 1 && ends == 1 && storedWidth == 286 && width.temporaryWidth == nil, "Escape cancels once and late drag/up events cannot persist the abandoned width")
+        handle.mouseDown(with: mouse(.leftMouseDown, x: 200, owner: resizeWindow))
+        handle.mouseDragged(with: mouse(.leftMouseDragged, x: 230, owner: resizeWindow))
+        check(SidebarResizeHandle.cancelActiveResize(in: resizeWindow) && !SidebarResizeHandle.cancelActiveResize(in: resizeWindow),
+              "The browser Escape router consumes only an active resize, once")
+        check(cancels == 2 && storedWidth == 286 && width.temporaryWidth == nil, "Browser-level cancellation preserves the original saved width")
+        handle.mouseDown(with: mouse(.leftMouseDown, x: 100, clicks: 2, owner: resizeWindow))
+        let beforeDoubleBegin = begins, beforeDoubleEnd = ends
+        handle.mouseDragged(with: mouse(.leftMouseDragged, x: 400, owner: resizeWindow))
+        handle.mouseUp(with: mouse(.leftMouseUp, x: 400, owner: resizeWindow))
+        check(resets == 1 && storedWidth == 236 && begins == beforeDoubleBegin && ends == beforeDoubleEnd && width.temporaryWidth == nil,
+              "Double-click reset cannot reuse a prior drag origin or commit a phantom gesture")
+        handle.keyDown(with: key(124, owner: resizeWindow))
+        check(storedWidth == 248 && ends == beforeDoubleEnd + 1 && width.temporaryWidth == nil, "An idle arrow-key step commits one bounded width change")
+        handle.mouseDown(with: mouse(.leftMouseDown, x: 200, owner: resizeWindow))
+        handle.mouseDragged(with: mouse(.leftMouseDragged, x: 220, owner: resizeWindow))
+        let beforeHeldArrow = ends
+        handle.keyDown(with: key(124, owner: resizeWindow))
+        check(ends == beforeHeldArrow && storedWidth == 248 && width.temporaryWidth == 268, "Arrow keys cannot prematurely commit a held mouse gesture")
+        resizeWindow.fixtureKey = false
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: resizeWindow)
+        handle.mouseUp(with: mouse(.leftMouseUp, x: 220, owner: resizeWindow))
+        check(cancels == 3 && storedWidth == 248 && ends == beforeHeldArrow && width.temporaryWidth == nil,
+              "Key-window loss cancels the resize without saving its transient width")
+        resizeWindow.fixtureKey = true
+        handle.mouseDown(with: mouse(.leftMouseDown, x: 200, owner: resizeWindow))
+        handle.mouseDragged(with: mouse(.leftMouseDragged, x: 300, owner: resizeWindow))
+        handle.removeFromSuperview()
+        check(cancels == 4 && storedWidth == 248 && width.temporaryWidth == nil, "Detaching an active resize handle cancels once")
+        replacementParent.addSubview(handle)
+        handle.mouseDown(with: mouse(.leftMouseDown, x: 100, owner: replacementWindow))
+        handle.mouseDragged(with: mouse(.leftMouseDragged, x: 120, owner: replacementWindow))
+        let beforeOldInputEnd = ends
+        handle.mouseDragged(with: mouse(.leftMouseDragged, x: 350, owner: resizeWindow))
+        handle.mouseUp(with: mouse(.leftMouseUp, x: 350, owner: resizeWindow))
+        check(width.temporaryWidth == 268 && storedWidth == 248 && ends == beforeOldInputEnd,
+              "Old-window mouse input cannot mutate or commit a replacement window's resize")
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: resizeWindow)
+        check(cancels == 4 && width.temporaryWidth == 268, "An old window cannot cancel a handle after reattachment")
+        NotificationCenter.default.post(name: NSWindow.willCloseNotification, object: replacementWindow)
+        handle.mouseUp(with: mouse(.leftMouseUp, x: 120, owner: replacementWindow))
+        check(cancels == 5 && storedWidth == 248 && width.temporaryWidth == nil, "The current window closes and cancels its active resize without committing")
+        let focusWindow = window(), focusParent = NSView(); focusWindow.contentView = focusParent; focusParent.addSubview(handle)
+        handle.mouseDown(with: mouse(.leftMouseDown, x: 100, owner: focusWindow))
+        handle.mouseDragged(with: mouse(.leftMouseDragged, x: 110, owner: focusWindow))
+        let beforeFocusCancel = cancels
+        focusWindow.makeFirstResponder(nil)
+        handle.mouseUp(with: mouse(.leftMouseUp, x: 110, owner: focusWindow))
+        check(cancels == beforeFocusCancel + 1 && storedWidth == 248 && width.temporaryWidth == nil,
+              "Moving keyboard focus away from an active grip cancels its transient resize")
+        for w in [resizeWindow, replacementWindow, focusWindow] { w.contentView = nil; w.close() }
         if failures > 0 { exit(1) }
     }
 }

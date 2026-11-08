@@ -71,10 +71,10 @@ struct SidebarTracking: NSViewRepresentable {
         }
         override func mouseEntered(with event: NSEvent) {
             guard enabled, let window, window.isKeyWindow, event.windowNumber == window.windowNumber else { return }
-            send(inside: true)
+            synchronizePointer()
         }
         override func mouseExited(with event: NSEvent) {
-            guard event.windowNumber == window?.windowNumber else { return }; send(inside: false)
+            guard event.windowNumber == window?.windowNumber else { return }; synchronizePointer()
         }
         deinit { observations.forEach(NotificationCenter.default.removeObserver) }
     }

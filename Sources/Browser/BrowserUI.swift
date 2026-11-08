@@ -66,9 +66,14 @@ struct BrowserUI: View {
                     .clipShape(RoundedRectangle(cornerRadius: store.sidebarVisible ? 0 : appearance.cornerRadius + 4))
                     .shadow(color: .black.opacity(!store.sidebarVisible && shown ? 0.25 : 0), radius: 20, x: 8, y: 0)
                     .overlay(alignment: .trailing) {
-                        SidebarResizeHandle(onBegin: { reveal.beginResize(); resize.begin(at: width) }, onDrag: { resize.drag(by: $0, windowWidth: geometry.size.width) }, onEnd: {
+                        SidebarResizeHandle(onBegin: {
+                            reveal.beginResize()
+                            resize.begin(at: SidebarSizing.width(saved: sidebarWidth, windowWidth: geometry.size.width))
+                        }, onDrag: { resize.drag(by: $0, windowWidth: geometry.size.width) }, onEnd: {
                             if let value = resize.finish() { sidebarWidth = value }
                             reveal.endResize()
+                        }, onCancel: {
+                            resize.cancel(); reveal.endResize()
                         }, onReset: { resize.cancel(); sidebarWidth = 236; reveal.endResize() }).frame(width: 6)
                     }
                     .offset(x: shown ? 0 : -width - 16)
@@ -100,7 +105,7 @@ struct BrowserUI: View {
             .animation(motion, value: store.primaryPeekView != nil)
             .onAppear { reveal.setEnabled(floatingAllowed) }
             .onChange(of: floatingAllowed) { _, value in reveal.setEnabled(value) }
-            .onChange(of: store.sidebarVisible) { _, _ in resize.cancel() }
+            .onChange(of: store.sidebarVisible) { _, _ in resize.cancel(); reveal.endResize() }
             .sheet(item: $store.presentedPanel) { panel in
                 switch panel {
                 case .library: LibraryPanel(store: store, availableHeight: geometry.size.height - 40)

@@ -46,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53, let self else { return event }
+            if SidebarResizeHandle.cancelActiveResize(in: event.window) { return nil }
             if let quick = self.activeQuick, event.window === quick.window,
                quick.state.findVisible || quick.state.isEditingAddress || quick.store.quickPeekView(quick.pageID) != nil {
                 quick.escape(); return nil

@@ -46,3 +46,7 @@ Every behavior the reviewer declined to judge stays an open acceptance gate:
 
 - Count native measurement executions, in addition to published changes, to directly verify work coalescing/stopping. Source inspection and current tests show equality-gated publication; they do not measure the work count. This is optional coverage, with no concrete runaway loop observed.
 - Extend the automated responsive matrix around the 680pt breakpoint, long profile names and noncompact maximum text. Current automation covers all densities and type extremes at wide/small windows; the separately inspected 760pt/text1.35 render covers the large noncompact case. Further combinations remain part of visual QA.
+
+## GitHub verification of the source increment
+
+[CI42518774377](https://github.com/SinfulSoul007/alcove/actions/runs/42518774377) completed successfully at `a3eb2c0`. Its macOS job passed 457 browser checks plus two ZIP-verifier checks, both architecture builds and universal ZIP/DMG verification with zero compiler diagnostics. These are CI artifacts of that source, not a new public release or native onscreen certification.
