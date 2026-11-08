@@ -41,6 +41,7 @@ public struct Space: Codable, Identifiable {
     public var customTheme: CustomTheme?
     public var icon: String?
     public var collapsedFolders: [String]?
+    public var profileID: UUID?
     public var tabs: [Tab]
     public var selected: UUID?
     public init(name: String, tabs: [Tab] = [Tab()]) {

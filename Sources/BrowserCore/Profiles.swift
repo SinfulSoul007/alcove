@@ -1,0 +1,94 @@
+import Foundation
+
+public struct BrowserProfile: Codable, Identifiable, Equatable {
+    public static let defaultID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    public static let zeroID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+    public static var defaultProfile: BrowserProfile { BrowserProfile(id: defaultID, name: "Default") }
+    public var id: UUID
+    public var name: String
+    public var icon: String
+    public var pendingDeletion: Bool?
+    public var isDefault: Bool { id == Self.defaultID }
+    public var isPendingDeletion: Bool { pendingDeletion == true }
+    public init(id: UUID = UUID(), name: String, icon: String = "person.crop.circle") {
+        self.id = id; self.name = Self.cleanedName(name); self.icon = icon; pendingDeletion = false
+    }
+    public static func cleanedName(_ name: String) -> String {
+        let trimmed = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        return trimmed.isEmpty ? "Profile" : trimmed
+    }
+}
+
+public struct ProfileLibrary: Codable, Identifiable {
+    public var profileID: UUID
+    public var library: BrowserLibrary
+    public var id: UUID { profileID }
+    public init(profileID: UUID, library: BrowserLibrary = BrowserLibrary()) { self.profileID = profileID; self.library = library }
+}
+
+extension Space {
+    public var effectiveProfileID: UUID { profileID ?? BrowserProfile.defaultID }
+}
+
+extension BrowserDocument {
+    public func library(for profileID: UUID) -> BrowserLibrary {
+        profileLibraries?.first(where: { $0.profileID == profileID })?.library ?? (profileID == BrowserProfile.defaultID ? library : BrowserLibrary())
+    }
+    public mutating func setLibrary(_ value: BrowserLibrary, for profileID: UUID) {
+        var entries = profileLibraries ?? []
+        if let index = entries.firstIndex(where: { $0.profileID == profileID }) { entries[index].library = value }
+        else { entries.append(ProfileLibrary(profileID: profileID, library: value)) }
+        profileLibraries = entries
+        if profileID == BrowserProfile.defaultID { library = value }
+    }
+    /// Repair metadata without moving an existing valid profile to another cookie store.
+    public mutating func repairProfiles() {
+        let replacementForZero = UUID()
+        func valid(_ id: UUID) -> UUID { id == BrowserProfile.zeroID ? replacementForZero : id }
+        var registry = profiles ?? []
+        for index in registry.indices { registry[index].id = valid(registry[index].id); registry[index].name = BrowserProfile.cleanedName(registry[index].name) }
+        for index in session.spaces.indices {
+            if let id = session.spaces[index].profileID { session.spaces[index].profileID = valid(id) }
+        }
+        var entries = profileLibraries ?? []
+        for index in entries.indices { entries[index].profileID = valid(entries[index].profileID) }
+        let referenced = [BrowserProfile.defaultID] + registry.map(\.id) + session.spaces.map(\.effectiveProfileID) + entries.map(\.profileID)
+        var ids: [UUID] = []
+        for id in referenced where !ids.contains(id) { ids.append(id) }
+        profiles = ids.map { id in
+            var result = registry.first(where: { $0.id == id }) ?? (id == BrowserProfile.defaultID ? .defaultProfile : BrowserProfile(id: id, name: "Recovered Profile"))
+            if registry.contains(where: { $0.id == id && $0.isPendingDeletion }) { result.pendingDeletion = true }
+            return result
+        }
+        profileLibraries = ids.map { id in
+            let matching = entries.filter { $0.profileID == id }
+            var result = matching.first?.library ?? (id == BrowserProfile.defaultID ? library : BrowserLibrary())
+            for duplicate in matching.dropFirst() { result.mergePreservingRecords(duplicate.library) }
+            return ProfileLibrary(profileID: id, library: result)
+        }
+        library = self.library(for: BrowserProfile.defaultID)
+    }
+}
+
+extension BrowserLibrary {
+    public mutating func mergePreservingRecords(_ other: BrowserLibrary) {
+        func pages(_ current: [PageRecord], _ incoming: [PageRecord]) -> [PageRecord] {
+            var result = current
+            for var record in incoming where !result.contains(record) {
+                if result.contains(where: { $0.id == record.id }) { record.id = UUID() }
+                result.append(record)
+            }
+            return result
+        }
+        func tabs(_ current: [Tab], _ incoming: [Tab]) -> [Tab] {
+            var result = current
+            for var tab in incoming where !result.contains(tab) {
+                if result.contains(where: { $0.id == tab.id }) { tab.id = UUID() }
+                result.append(tab)
+            }
+            return result
+        }
+        bookmarks = pages(bookmarks, other.bookmarks); history = pages(history, other.history)
+        closedTabs = tabs(closedTabs, other.closedTabs); archive = tabs(archive, other.archive)
+    }
+}

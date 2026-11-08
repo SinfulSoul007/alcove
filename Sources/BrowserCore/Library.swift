@@ -38,5 +38,9 @@ public struct BrowserDocument: Codable {
     public var session: Session
     public var library: BrowserLibrary
     public var preferences: Preferences
-    public init(session: Session = Session(), library: BrowserLibrary = BrowserLibrary(), preferences: Preferences = Preferences()) { self.session = session; self.library = library; self.preferences = preferences }
+    public var profiles: [BrowserProfile]?
+    public var profileLibraries: [ProfileLibrary]?
+    public init(session: Session = Session(), library: BrowserLibrary = BrowserLibrary(), preferences: Preferences = Preferences(), profiles: [BrowserProfile]? = nil, profileLibraries: [ProfileLibrary]? = nil) {
+        self.session = session; self.library = library; self.preferences = preferences; self.profiles = profiles; self.profileLibraries = profileLibraries
+    }
 }
