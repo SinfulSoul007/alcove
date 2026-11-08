@@ -60,12 +60,16 @@ import BrowserCore
             }
         }
         let store = BrowserStore(isPrivate: true)
+        let suiteName = "Alcove.ChromeChecks.\(UUID().uuidString)"
+        let sidebarDefaults = UserDefaults(suiteName: suiteName)!
+        defer { sidebarDefaults.removePersistentDomain(forName: suiteName) }
+        sidebarDefaults.set(236.0, forKey: "sidebarWidth")
         store.onboardingVisible = false
         var a = store.appearance; a.animationsEnabled = false; store.appearance = a
         let pageID = store.selectedID!
         store.update(pageID) { $0.url = "about:blank" }
         let web = store.view(for: pageID)
-        let hosting = NSHostingView(rootView: BrowserUI(store: store).environmentObject(UpdateController(installedTag: "test")))
+        let hosting = NSHostingView(rootView: BrowserUI(store: store, sidebarDefaults: sidebarDefaults).environmentObject(UpdateController(installedTag: "test")))
         hosting.safeAreaRegions = []; hosting.sizingOptions = []
         let main = newWindow(); main.contentView = hosting
         await settle()
@@ -130,6 +134,52 @@ import BrowserCore
         check(!floatingVisible() && store.views[pageID] === web, "Leaving the actual floating panel hides it without replacing its website")
         main.fixtureKey = false; store.sidebarVisible = true; await settle()
 
+        func grips(_ view: NSView) -> [SidebarResizeHandle.Handle] {
+            (view as? SidebarResizeHandle.Handle).map { [$0] } ?? view.subviews.flatMap(grips)
+        }
+        func mouse(_ kind: NSEvent.EventType, x: CGFloat) -> NSEvent {
+            NSEvent.mouseEvent(with: kind, location: NSPoint(x: x, y: 100), modifierFlags: [], timestamp: 0,
+                               windowNumber: main.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)!
+        }
+        for pinned in [true, false] {
+            for overlay in ["Peek", "command", "onboarding"] {
+                store.closePrimaryPeek(); store.commandVisible = false; store.onboardingVisible = false
+                sidebarDefaults.set(236.0, forKey: "sidebarWidth"); store.sidebarVisible = pinned
+                main.fixtureKey = true; main.pointer = NSPoint(x: 4, y: 100)
+                NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: main)
+                await settle(); await settle()
+                guard let grip = grips(hosting).first else { check(false, "Actual browser resize grip exists"); continue }
+                let origin = grip.convert(grip.bounds, to: nil).midX
+                main.pointer = NSPoint(x: origin + 25, y: 100)
+                grip.mouseDown(with: mouse(.leftMouseDown, x: origin))
+                grip.mouseDragged(with: mouse(.leftMouseDragged, x: origin + 25)); await settle()
+                check(grip.convert(grip.bounds, to: nil).midX > origin + 20 && sidebarDefaults.double(forKey: "sidebarWidth") == 236,
+                      "Actual \(pinned ? "pinned" : "floating") resizing is available before the \(overlay) overlay and remains transient")
+                switch overlay {
+                case "Peek": store.openPeek(URL(string: "about:blank")!, from: web)
+                case "command": store.commandVisible = true
+                default: store.onboardingVisible = true
+                }
+                await settle()
+                check(!grip.cancelResize(), "The \(overlay) overlay proactively cancels the native \(pinned ? "pinned" : "floating") gesture before late input")
+                grip.mouseDragged(with: mouse(.leftMouseDragged, x: origin + 60))
+                grip.mouseUp(with: mouse(.leftMouseUp, x: origin + 60)); await settle()
+                check(sidebarDefaults.double(forKey: "sidebarWidth") == 236,
+                      "The actual \(overlay) overlay revokes \(pinned ? "pinned" : "floating") resizing before late input can save a width")
+                grip.cancelResize()
+            }
+        }
+        store.closePrimaryPeek(); store.commandVisible = false; store.onboardingVisible = false
+        store.sidebarVisible = true; main.fixtureKey = false; await settle()
+        // Inspect the same production gate without presenting a native sheet from a hidden test window.
+        let sheetStore = BrowserStore(isPrivate: true)
+        let sheetView = BrowserUI(store: sheetStore, sidebarDefaults: sidebarDefaults)
+        for pinned in [true, false] {
+            sheetStore.sidebarVisible = pinned; sheetStore.presentedPanel = .library
+            check(sheetView.sidebarInteractionBlocked, "A presented sheet blocks the production \(pinned ? "pinned" : "floating") sidebar-interaction gate")
+        }
+        sheetStore.shutdown()
+
         let owner = BrowserWindowOwner(store: store); let primaryLease = try owner.acquirePrimary()
         // Register a real nonpersistent native view before mounting the HTTP metadata;
         // view(for:) then reuses it without making any external request.
@@ -167,6 +217,10 @@ import BrowserCore
         changes.cancel()
         next.contentView = nil; next.close()
         quick.close(); main.contentView = nil; main.close(); owner.release(primaryLease)
-        if failures > 0 { exit(1) }
+        if failures > 0 {
+            // exit bypasses defer; remove only this test's unique preference domain.
+            sidebarDefaults.removePersistentDomain(forName: suiteName)
+            exit(1)
+        }
     }
 }

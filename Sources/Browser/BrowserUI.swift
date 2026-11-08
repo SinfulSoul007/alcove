@@ -37,6 +37,13 @@ struct BrowserUI: View {
     @StateObject private var chrome = NativeWindowChrome()
     @State private var resize = SidebarResizeState()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    init(store: BrowserStore, sidebarDefaults: UserDefaults? = nil) {
+        self.store = store
+        _sidebarWidth = AppStorage(wrappedValue: 236.0, "sidebarWidth", store: sidebarDefaults)
+    }
+    var sidebarInteractionBlocked: Bool {
+        store.commandVisible || store.onboardingVisible || store.primaryPeekView != nil || store.presentedPanel != nil
+    }
     var theme: AppearanceTheme { store.activeTheme }
     var appearance: AppearanceSettings { store.appearance }
     var motion: Animation? { reduceMotion || !appearance.animationsEnabled ? nil : .spring(response: 0.28, dampingFraction: 0.88) }
@@ -46,7 +53,7 @@ struct BrowserUI: View {
         GeometryReader { geometry in
             let width = SidebarSizing.width(saved: resize.temporaryWidth ?? sidebarWidth, windowWidth: geometry.size.width)
             let shown = store.sidebarVisible || reveal.revealed
-            let floatingAllowed = !store.sidebarVisible && !store.commandVisible && !store.onboardingVisible && store.primaryPeekView == nil && store.presentedPanel == nil
+            let floatingAllowed = !store.sidebarVisible && !sidebarInteractionBlocked
             ZStack(alignment: .leading) {
                 // Keep web content and sidebar mounted; transitions change layout, not view ownership.
                 content.padding(8).padding(.leading, store.sidebarVisible ? width : 0)
@@ -66,7 +73,7 @@ struct BrowserUI: View {
                     .clipShape(RoundedRectangle(cornerRadius: store.sidebarVisible ? 0 : appearance.cornerRadius + 4))
                     .shadow(color: .black.opacity(!store.sidebarVisible && shown ? 0.25 : 0), radius: 20, x: 8, y: 0)
                     .overlay(alignment: .trailing) {
-                        SidebarResizeHandle(onBegin: {
+                        SidebarResizeHandle(interactionEnabled: !sidebarInteractionBlocked && shown, onBegin: {
                             reveal.beginResize()
                             resize.begin(at: SidebarSizing.width(saved: sidebarWidth, windowWidth: geometry.size.width))
                         }, onDrag: { resize.drag(by: $0, windowWidth: geometry.size.width) }, onEnd: {
