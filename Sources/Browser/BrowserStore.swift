@@ -3,6 +3,7 @@ import SwiftUI
 import WebKit
 import BrowserCore
 import CryptoKit
+import Combine
 
 enum BrowserPanel: String, Identifiable { case library, settings, appearance, updates; var id: String { rawValue } }
 
@@ -53,6 +54,9 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var findResult = ""
     @Published var downloads: [DownloadItem] = []
     @Published var clearingData = false
+    @Published var clearingProfileID: UUID?
+    @Published var deletingProfileID: UUID?
+    var isShuttingDown = false
     @Published var peekView: WKWebView?
     var peekObservations: [NSKeyValueObservation] = []
     var peekProfileID: UUID?
@@ -69,9 +73,11 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var viewProfileIDs: [UUID: UUID] = [:]
     var namedDataStores: [UUID: WKWebsiteDataStore] = [:]
     var persistedProfileIDs: Set<UUID> = [BrowserProfile.defaultID]
+    var closingPages: [ClosingProfilePage] = []
     var accessOrder: [UUID] = []
     var observations: [UUID: [NSKeyValueObservation]] = [:]
     private var saveTask: Task<Void, Never>?
+    private var profileOperationSubscription: AnyCancellable?
     let sessionURL: URL
     var spaceIndex: Int { session.spaces.firstIndex { $0.id == session.selectedSpace } ?? 0 }
     var space: Space { session.spaces[spaceIndex] }
@@ -88,6 +94,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         sessionURL = root.appendingPathComponent("session.sealed")
         super.init()
         guard !isPrivate else { return }
+        profileOperationSubscription = ProfileDataOperations.shared.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         do {
             let exists = FileManager.default.fileExists(atPath: sessionURL.path)
             let key = try keyProvider(!exists)
@@ -136,7 +143,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return value
     }
     func save() {
-        guard !isPrivate, savingEnabled else { return }
+        guard !isPrivate, savingEnabled, !isShuttingDown else { return }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(350))
@@ -145,9 +152,15 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         }
     }
     func flush() {
-        guard !isPrivate, savingEnabled else { return }
-        do { try vault?.save(makeDocument()) }
+        guard !isPrivate, savingEnabled, !isShuttingDown else { return }
+        do { if let vault { try vault.save(makeDocument()); hasSavedDocument = true } }
         catch { savingEnabled = false; message = "Couldn’t save your data. Existing data is preserved. \(error.localizedDescription)" }
+    }
+    func shutdown() {
+        guard !isShuttingDown else { return }
+        flush(); isShuttingDown = true; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
+        profileOperationSubscription?.cancel(); profileOperationSubscription = nil
+        closePeek(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
     }
     func select(_ id: UUID) {
         guard session.spaces[spaceIndex].tabs.contains(where: { $0.id == id }) else { return }
@@ -238,6 +251,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func navigate(_ input: String) {
         guard let url = Address.resolve(input) else { return }
+        guard !profileUnavailable(activeProfileID) else { message = "This profile is busy or unavailable. Try again after its data operation finishes."; return }
         commandVisible = false
         let id = commandOpensNewTab && selectedTab?.url.isEmpty != true ? newTab() : (focusedID ?? newTab())
         commandOpensNewTab = false
@@ -278,7 +292,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             web.observe(\.estimatedProgress, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.revision += 1 } },
             web.observe(\.isLoading, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.revision += 1 } }
         ]
-        if let value = tab(id)?.url, !value.isEmpty, let url = URL(string: value) { web.load(URLRequest(url: url)) }
+        if !profileUnavailable(profile), let value = tab(id)?.url, !value.isEmpty, let url = URL(string: value) { web.load(URLRequest(url: url)) }
         // Keep active and split panes alive; suspended tabs retain their last URL, but lose in-memory page state.
         while preferences.suspendTabs && views.count > 6, let victim = accessOrder.first(where: { $0 != id && $0 != selectedID && $0 != splitID && views[$0]?.isLoading == false }) {
             discardView(victim)

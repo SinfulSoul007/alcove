@@ -19,7 +19,11 @@ extension BrowserStore {
         web.load(URLRequest(url: url))
     }
     func closePeek() {
-        peekView?.navigationDelegate = nil; peekView?.uiDelegate = nil; peekView?.stopLoading(); peekView = nil; peekObservations = []; peekProfileID = nil; peekSpaceID = nil
+        if let web = peekView {
+            if let profile = peekProfileID { closingPages.append(ClosingProfilePage(web, profileID: profile)) }
+            web.navigationDelegate = nil; web.uiDelegate = nil; web.stopLoading(); web.loadHTMLString("", baseURL: nil); web.removeFromSuperview()
+        }
+        peekView = nil; peekObservations = []; peekProfileID = nil; peekSpaceID = nil
     }
     func expandPeek() {
         guard let url = peekView?.url, ["http", "https"].contains(url.scheme ?? "") else { return }
@@ -34,9 +38,15 @@ extension BrowserStore {
                 const candidate = document.querySelector('link[rel~="icon"]');
                 let url = new URL(candidate ? candidate.href : '/favicon.ico', location.href);
                 if (url.origin !== location.origin) url = new URL('/favicon.ico', location.href);
-                const response = await fetch(url.href, {credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store'});
-                const blob = await response.blob();
-                if (!response.ok || blob.size > 262144) return null;
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 2000);
+                let blob;
+                try {
+                    const response = await fetch(url.href, {credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', redirect: 'error', signal: controller.signal});
+                    if (!response.ok || Number(response.headers.get('content-length')) > 262144) return null;
+                    blob = await response.blob();
+                } finally { clearTimeout(timeout); controller.abort(); }
+                if (blob.size > 262144) return null;
                 const bitmap = await createImageBitmap(blob);
                 const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 32;
                 canvas.getContext('2d').drawImage(bitmap, 0, 0, 32, 32); bitmap.close();

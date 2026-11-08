@@ -66,8 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         if let store = windows.removeValue(forKey: window) {
-            store.flush(); store.archiveTimer?.invalidate(); store.closePeek()
-            for id in Array(store.views.keys) { store.discardView(id) }
+            store.shutdown(); window.contentView = nil
         }
         if normalWindow === window { normalWindow = nil }
     }

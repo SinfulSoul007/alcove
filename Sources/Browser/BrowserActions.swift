@@ -20,6 +20,7 @@ extension BrowserStore {
             defer { unlocking = false }
             do {
                 let key = try await Task.detached { if let keyProvider { return try keyProvider() }; return try MetadataKey.load(createIfMissing: !FileManager.default.fileExists(atPath: url.path), allowInteraction: true) }.value
+                guard !isShuttingDown else { return }
                 let storage = MetadataStore(url: url, key: key)
                 let pending = makeDocument()
                 var document = try storage.load(BrowserDocument.self)
@@ -35,22 +36,46 @@ extension BrowserStore {
                 }
                 var candidate = document ?? pending
                 if document != nil {
-                    for var space in pending.session.spaces where space.tabs.contains(where: { !$0.url.isEmpty }) {
-                        space.id = UUID(); space.name = "Unsaved " + space.name
-                        for i in space.tabs.indices { space.tabs[i].id = UUID() }; space.selected = space.tabs.first?.id
-                        candidate.session.spaces.append(space)
+                    candidate.repairProfiles()
+                    for var space in pending.session.spaces {
+                        if let index = candidate.session.spaces.firstIndex(where: { $0.id == space.id && $0.effectiveProfileID == space.effectiveProfileID }) {
+                            candidate.session.spaces[index] = space
+                            if pending.session.selectedSpace == space.id { candidate.session.selectedSpace = space.id }
+                        } else {
+                            guard space.tabs.contains(where: { !$0.url.isEmpty }) else { continue }
+                            let oldID = space.id; let oldSelected = space.selected
+                            if candidate.session.spaces.contains(where: { $0.id == space.id }) { space.id = UUID() }
+                            space.name = "Unsaved " + space.name
+                            for i in space.tabs.indices where candidate.session.spaces.flatMap(\.tabs).contains(where: { $0.id == space.tabs[i].id }) {
+                                let previousID = space.tabs[i].id; space.tabs[i].id = UUID()
+                                if oldSelected == previousID { space.selected = space.tabs[i].id }
+                            }
+                            candidate.session.spaces.append(space)
+                            if pending.session.selectedSpace == oldID { candidate.session.selectedSpace = space.id }
+                        }
                     }
                     candidate.profiles = (candidate.profiles ?? [.defaultProfile]) + (pending.profiles ?? []).filter { profile in !(candidate.profiles ?? [.defaultProfile]).contains(where: { $0.id == profile.id }) }
                     for entry in pending.profileLibraries ?? [ProfileLibrary(profileID: BrowserProfile.defaultID, library: pending.library)] {
-                        var value = candidate.library(for: entry.profileID); value.mergePreservingRecords(entry.library); candidate.setLibrary(value, for: entry.profileID)
+                        var value = candidate.library(for: entry.profileID)
+                        if hasSavedDocument && persistedProfileIDs.contains(entry.profileID) { value = entry.library }
+                        else { value.mergePreservingRecords(entry.library) }
+                        candidate.setLibrary(value, for: entry.profileID)
                     }
+                    if hasSavedDocument { candidate.preferences = pending.preferences }
                     if candidate.preferences.onboardingCompleted == nil { candidate.preferences.onboardingCompleted = true }
                 }
                 candidate.repairProfiles(); candidate.session = Self.repairedSession(candidate.session)
                 // Commit disk state before publishing a restore. Failed retries leave live tabs intact.
                 try persist(storage, candidate)
                 persistedProfileIDs = Set((candidate.profiles ?? []).map(\.id))
-                if document != nil { for id in Array(views.keys) { discardView(id) }; splitID = nil; closePeek() }
+                if document != nil {
+                    for id in Array(views.keys) {
+                        let owner = candidate.session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) })
+                        let tab = owner?.tabs.first(where: { $0.id == id })
+                        if owner?.effectiveProfileID != viewProfileIDs[id] || tab?.url != self.tab(id)?.url { discardView(id) }
+                    }
+                    splitID = nil; activePaneID = nil; closePeek()
+                }
                 applyDocument(candidate)
                 hasSavedDocument = true; vault = storage; savingEnabled = true
                 onboardingVisible = OnboardingPolicy.shouldPresent(isPrivate: isPrivate, savingEnabled: savingEnabled, completed: preferences.onboardingCompleted, hasSavedDocument: hasSavedDocument)
@@ -132,28 +157,26 @@ extension BrowserStore {
     }
     func clearHistory() { library.history.removeAll(); library.closedTabs.removeAll(); library.archive.removeAll(); save() }
     func clearWebsiteData() {
+        let profileID = activeProfileID
         let alert = NSAlert(); alert.messageText = "Clear website data and history?"
-        alert.informativeText = "This signs you out of websites and closes this window’s tabs. Bookmarks are kept. Downloaded files are kept."
+        alert.informativeText = "This signs you out and closes tabs, pins and Favorites in \(isPrivate ? "this private window" : activeProfile.name + " profile"). Other profiles, bookmarks and downloaded files are kept."
         alert.addButton(withTitle: "Clear Data"); alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        clearingData = true; closePeek(); siteIcons.removeAll()
-        for id in Array(views.keys) { discardView(id) }
-        session = Session(); splitID = nil; clearHistory(); flush()
-        let dataStore = privateDataStore ?? WKWebsiteDataStore.default()
-        dataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) { [weak self] in
-            self?.clearingData = false; self?.message = "Website data and history cleared. Bookmarks and downloaded files were kept."
-        }
+        Task { do { try await clearProfileData(profileID) } catch { message = error.localizedDescription } }
     }
     func discardView(_ id: UUID) {
         guard let web = views.removeValue(forKey: id) else { return }
+        closingPages.removeAll { $0.webView == nil }
+        if let profile = viewProfileIDs[id] { closingPages.append(ClosingProfilePage(web, profileID: profile)) }
         web.navigationDelegate = nil; web.uiDelegate = nil; web.stopLoading()
+        web.loadHTMLString("", baseURL: nil); web.removeFromSuperview()
         observations.removeValue(forKey: id); accessOrder.removeAll { $0 == id }
         viewProfileIDs.removeValue(forKey: id); siteIcons.removeValue(forKey: id)
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard views.values.contains(where: { $0 === webView }) else { return }
         loadSiteIcon(webView)
-        if !isPrivate && !clearingData, let url = webView.url?.absoluteString, let owner = profileID(for: webView) {
+        if !isPrivate, let url = webView.url?.absoluteString, let owner = profileID(for: webView), clearingProfileID != owner {
             mutateLibrary(for: owner) { $0.record(title: webView.title ?? url, url: url) }; save()
         }
         revision += 1

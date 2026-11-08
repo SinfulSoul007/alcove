@@ -8,10 +8,12 @@ public struct BrowserProfile: Codable, Identifiable, Equatable {
     public var name: String
     public var icon: String
     public var pendingDeletion: Bool?
+    public var pendingDataClear: Bool?
     public var isDefault: Bool { id == Self.defaultID }
     public var isPendingDeletion: Bool { pendingDeletion == true }
+    public var isPendingClear: Bool { pendingDataClear == true }
     public init(id: UUID = UUID(), name: String, icon: String = "person.crop.circle") {
-        self.id = id; self.name = Self.cleanedName(name); self.icon = icon; pendingDeletion = false
+        self.id = id; self.name = Self.cleanedName(name); self.icon = icon; pendingDeletion = false; pendingDataClear = false
     }
     public static func cleanedName(_ name: String) -> String {
         let trimmed = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
@@ -71,6 +73,8 @@ extension BrowserDocument {
         profiles = ids.map { id in
             var result = registry.first(where: { $0.id == id }) ?? (id == BrowserProfile.defaultID ? .defaultProfile : BrowserProfile(id: id, name: "Recovered Profile"))
             if registry.contains(where: { $0.id == id && $0.isPendingDeletion }) { result.pendingDeletion = true }
+            if registry.contains(where: { $0.id == id && $0.isPendingClear }) { result.pendingDataClear = true }
+            if id == BrowserProfile.defaultID { result.pendingDeletion = false }
             return result
         }
         profileLibraries = ids.map { id in

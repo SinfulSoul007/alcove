@@ -11,21 +11,45 @@ MANUAL="$PWD/.build/manual/$ARCH"
 FLAGS=(-sdk "$SDK" -module-cache-path "$PWD/.build/cache" -target "$ARCH-apple-macosx14.0")
 mkdir -p "$MANUAL" "$OUT/Contents/MacOS"
 xcrun swiftc "${FLAGS[@]}" -emit-module -emit-library -enable-testing -module-name BrowserCore Sources/BrowserCore/*.swift -o "$MANUAL/libBrowserCore.dylib" -emit-module-path "$MANUAL/BrowserCore.swiftmodule"
+STORE_SOURCES=()
+for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
+run_website_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileWebsiteChecks.swift -o "$MANUAL/profile-website-checks"
+    FIXTURE_PORT_FILE="$(mktemp "$MANUAL/profile-fixture.XXXXXX")"
+    python3 scripts/ProfileFixture.py "$FIXTURE_PORT_FILE" > "$MANUAL/profile-fixture.log" 2>&1 &
+    FIXTURE_PID=$!
+    trap 'kill "$FIXTURE_PID" 2>/dev/null || true; wait "$FIXTURE_PID" 2>/dev/null || true; rm -f "$FIXTURE_PORT_FILE"' EXIT
+    for attempt in {1..500}; do [[ -s "$FIXTURE_PORT_FILE" ]] && break; kill -0 "$FIXTURE_PID" 2>/dev/null || break; sleep 0.02; done
+    [[ -s "$FIXTURE_PORT_FILE" ]] || { cat "$MANUAL/profile-fixture.log"; exit 1; }
+    ALCOVE_PROFILE_FIXTURE_URL="http://127.0.0.1:$(cat "$FIXTURE_PORT_FILE")/" "$MANUAL/profile-website-checks"
+    kill "$FIXTURE_PID" 2>/dev/null || true
+    wait "$FIXTURE_PID" 2>/dev/null || true
+    rm -f "$FIXTURE_PORT_FILE"
+    trap - EXIT
+
+}
+if [[ "${1:-}" == "website-test" ]]; then run_website_checks; exit; fi
+if [[ "${1:-}" == "lifecycle-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileLifecycleChecks.swift -o "$MANUAL/profile-lifecycle-checks"
+    "$MANUAL/profile-lifecycle-checks"
+    exit
+fi
 if [[ "${1:-}" == "test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/CoreChecks.swift -o "$MANUAL/checks"
     "$MANUAL/checks"
-    STORE_SOURCES=()
-    for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/StoreChecks.swift -o "$MANUAL/store-checks"
     "$MANUAL/store-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileStoreChecks.swift -o "$MANUAL/profile-store-checks"
     "$MANUAL/profile-store-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileLifecycleChecks.swift -o "$MANUAL/profile-lifecycle-checks"
+    "$MANUAL/profile-lifecycle-checks"
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/AppearanceChecks.swift -o "$MANUAL/appearance-checks"
     "$MANUAL/appearance-checks"
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/ProfileChecks.swift -o "$MANUAL/profile-checks"
     "$MANUAL/profile-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/UpdateController.swift scripts/UpdateChecks.swift -o "$MANUAL/update-checks"
     "$MANUAL/update-checks"
+    run_website_checks
     exit
 fi
 xcrun swiftc "${FLAGS[@]}" -O -parse-as-library -whole-module-optimization -emit-object -module-name BrowserCore Sources/BrowserCore/*.swift -o "$MANUAL/BrowserCore.o"

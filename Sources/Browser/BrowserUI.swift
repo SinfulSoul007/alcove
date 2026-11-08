@@ -203,7 +203,10 @@ struct BrowserUI: View {
     }
     private func row(_ tab: BrowserCore.Tab) -> some View { SidebarTabRow(tab: tab, store: store, theme: theme, appearance: appearance, motion: motion) }
     @ViewBuilder private func pane(_ id: UUID?) -> some View {
-        if let id, let tab = store.tab(id), !tab.url.isEmpty { WebPane(webView: store.view(for: id)).id(id).frame(minWidth: 160) }
+        if let id, let profile = store.profileID(for: id), store.profileUnavailable(profile) {
+            VStack(spacing: 12) { if store.clearingProfileID == profile { ProgressView(); Text("Clearing this profile’s website data…") } else { Text("This profile is unavailable. Unlock local data or finish its pending operation.") } }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        else if let id, let tab = store.tab(id), !tab.url.isEmpty { WebPane(webView: store.view(for: id)).id(id).frame(minWidth: 160) }
         else {
             VStack(spacing: 10) {
                 Spacer()
