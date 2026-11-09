@@ -5,7 +5,7 @@ import BrowserCore
 import CryptoKit
 import Combine
 
-enum BrowserPanel: String, Identifiable { case library, settings, appearance, updates, profiles, siteSearch; var id: String { rawValue } }
+enum BrowserPanel: String, Identifiable { case library, settings, appearance, updates, profiles, siteSearch, links; var id: String { rawValue } }
 
 @MainActor
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
@@ -40,6 +40,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var focusedQuickPageID: UUID?
     var quickActivityTimes: [UUID: Date] = [:]
     var quickArchiveProbeID: UUID?
+    var linkReloadRequests: [ObjectIdentifier: LinkReloadRequest] = [:]
     var automaticUpdatesDidChange: (() -> Void)?
     func setAutomaticUpdateChecks(_ enabled: Bool) { preferences.automaticUpdateChecks = enabled; save(); automaticUpdatesDidChange?() }
     var appearance: AppearanceSettings {
@@ -193,7 +194,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
-        flush(); isShuttingDown = true; quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
+        flush(); isShuttingDown = true; cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
     }

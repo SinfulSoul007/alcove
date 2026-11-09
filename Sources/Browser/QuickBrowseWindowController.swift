@@ -144,9 +144,10 @@ import BrowserCore
         }
         if crossing { confirmReload("Move this page to another profile?", completion: apply) } else { apply() }
     }
-    private func promotePeek() {
-        guard store.quickPeekView(pageID) != nil else { return }
-        requestPrimary()
-        do { _ = try store.promotePeek(in: .quick(pageID)) } catch { state.navigationError = error.localizedDescription; surface() }
+    func promotePeek() {
+        store.requestExpandPeek(in: .quick(pageID), onComplete: { [weak self] id in
+            guard let self else { return }
+            if self.store.quickProfileID(id) == nil { self.requestPrimary() }
+        }, onError: { [weak self] error in self?.state.navigationError = error.localizedDescription })
     }
 }

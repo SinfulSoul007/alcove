@@ -87,7 +87,7 @@ extension BrowserStore {
         page.spaceID = spaceID; page.web.removeFromSuperview(); peekPages[.primary] = page
     }
     func expandPeek(in context: PeekContext) {
-        do { _ = try promotePeek(in: context) } catch { message = error.localizedDescription }
+        requestExpandPeek(in: context)
     }
     @discardableResult func promotePeek(in context: PeekContext, to destination: UUID? = nil, allowProfileChange: Bool = false) throws -> UUID {
         try performPeekPromotion(preparePeekPromotion(in: context, to: destination), allowProfileChange: allowProfileChange)
@@ -133,7 +133,7 @@ struct PeekPanel: View {
                 Spacer()
                 Text(store.primaryPeekView?.url?.host ?? "Loading…").font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Spacer()
-                Button("Open in Tab") { store.expandPeek(in: .primary) }
+                Button(store.peekOpenTitle(in: .primary)) { store.expandPeek(in: .primary) }
             }.buttonStyle(.plain).padding(14).background(.regularMaterial)
             if let web = store.primaryPeekView { WebPane(webView: web) }
         }.background(.background).clipShape(RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.12))).shadow(color: .black.opacity(0.4), radius: 35, y: 15)

@@ -118,6 +118,7 @@ struct BrowserUI: View {
                 case .library: LibraryPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .settings: SettingsPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .siteSearch: SiteSearchPanel(store: store, availableHeight: geometry.size.height - 40)
+                case .links: LinkRoutingPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .appearance:
                     if store.canModifyLocalMetadata { AppearancePanel(store: store, availableHeight: geometry.size.height - 40) }
                     else { lockedAppearancePanel }

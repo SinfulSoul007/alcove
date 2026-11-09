@@ -151,6 +151,11 @@ enum QuickWebsiteError: Error { case fixtureMissing, timedOut }
         let peekURL = URL(string: "?context=Quick-A-peek", relativeTo: fixture)!.absoluteURL
         store.openPeek(peekURL, from: sourceWeb!)
         var peek: WKWebView? = store.quickPeekView(source); try await ready(peek!, url: peekURL)
+        // expandPeek is now a window-bound UI request; mount this owned real page without showing a window.
+        let peekWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [], backing: .buffered, defer: false)
+        peekWindow.isReleasedWhenClosed = false
+        let peekHost = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600)); peekWindow.contentView = peekHost
+        peekHost.addSubview(peek!)
         _ = try await peek!.evaluateJavaScript("window.alcovePeekToken='peek-form-token';const input=document.createElement('input');input.id='peek-unsaved';input.value='keep the peek form';document.body.appendChild(input);true")
         let beforeFailedPeek = try Data(contentsOf: store.sessionURL)
         store.vault = MetadataStore(url: root, key: key); store.expandPeek(in: .quick(source))
@@ -162,6 +167,7 @@ enum QuickWebsiteError: Error { case fixtureMissing, timedOut }
         check(store.savingEnabled && store.quickPeekView(source) === peek && recoveredPeekForm, "Unlock preserves a real still-owned Peek form after a failed handoff")
         if store.quickPeekView(source) == nil {
             store.openPeek(peekURL, from: sourceWeb!); peek = store.quickPeekView(source); try await ready(peek!, url: peekURL)
+            peekHost.addSubview(peek!)
             _ = try await peek!.evaluateJavaScript("window.alcovePeekToken='peek-form-token';const input=document.createElement('input');input.id='peek-unsaved';input.value='keep the peek form';document.body.appendChild(input);true")
         }
         var atomicPeekExposure = false
@@ -208,6 +214,7 @@ enum QuickWebsiteError: Error { case fixtureMissing, timedOut }
         webA = nil; sourceWeb = nil; peek = nil; adoptedPeek = nil; deletionWeb = nil; probe = nil
         try await store.deleteProfile(a)
         check(!(await WKWebsiteDataStore.allDataStoreIdentifiers).contains(a) && store.quickProfileID(source) == b, "Deleting an unused profile with a live quick page actually removes only its named WebKit store")
+        peekWindow.contentView = nil; peekWindow.close()
         store.shutdown(); privateStore.shutdown(); crossed = nil; webB = nil; privateWeb = nil
         let clock = ContinuousClock(); let deadline = clock.now.advanced(by: .seconds(5))
         while store.closingPages.contains(where: { $0.webView != nil }) && clock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }

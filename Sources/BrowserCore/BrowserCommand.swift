@@ -1,7 +1,8 @@
 public enum BrowserCommand: String, CaseIterable, Identifiable {
-    case pin, unpin, favorite, unfavorite, sidebar, split, library, settings, profiles, copyURL, siteSearch
+    case pin, unpin, favorite, unfavorite, sidebar, split, library, settings, profiles, copyURL, siteSearch, linkRouting
     public func matches(_ query: String) -> Bool {
-        let words = title.lowercased().split(whereSeparator: { $0.isWhitespace })
+        let searchable = self == .linkRouting ? title + " Link Preferences Air Traffic Control" : title
+        let words = searchable.lowercased().split(whereSeparator: { $0.isWhitespace })
         let queryWords = query.lowercased().split(whereSeparator: { $0.isWhitespace })
         return !queryWords.isEmpty && queryWords.allSatisfy { term in words.contains(where: { $0.hasPrefix(term) }) }
     }
@@ -19,6 +20,7 @@ public enum BrowserCommand: String, CaseIterable, Identifiable {
         case .profiles: return "Manage Profiles"
         case .copyURL: return "Copy Current URL"
         case .siteSearch: return "Site Search Settings"
+        case .linkRouting: return "Link Routing Settings"
         }
     }
 }

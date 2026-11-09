@@ -96,6 +96,7 @@ struct SettingsPanel: View {
             HStack {
                 Button("Customize Appearance…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata)
                 Button("Site Search…") { store.presentedPanel = .siteSearch }
+                Button("Links…") { store.presentedPanel = .links }.accessibilityIdentifier("link-routing-settings")
                 Button("Welcome Tour") { store.presentedPanel = nil; store.onboardingVisible = true }.disabled(store.isPrivate || !store.savingEnabled)
                 Spacer()
                 Button("Updates…") { store.updatesVisible = true }
@@ -134,8 +135,8 @@ struct SettingsPanel: View {
             }.disabled(store.isPrivate || !store.savingEnabled)
             GroupBox("Quick Browse") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Toggle("Open links from other apps in compact windows", isOn: Binding(get: { store.preferences.quickBrowseExternalLinks ?? true }, set: { store.preferences.quickBrowseExternalLinks = $0; store.save() }))
-                        .disabled(store.isPrivate)
+                    Toggle("Open links from other apps in compact windows", isOn: Binding(get: { store.effectiveDefaultLinkDestination == .quickBrowse }, set: { value in do { try store.setDefaultLinkDestination(value ? .quickBrowse : .mostRecentSpace) } catch { store.message = error.localizedDescription } }))
+                        .disabled(!store.canEditLinkRules)
                     Text("Uses your normal profile or the profile remembered for that exact hostname. Select Alcove as your default web browser in macOS to receive other apps’ web links.").font(.caption).foregroundStyle(.secondary)
                     Picker("Auto-archive inactive quick pages", selection: Binding(get: { let value = store.preferences.quickBrowseArchiveHours ?? 6; return [0, 6, 12, 24].contains(value) ? value : 6 }, set: { store.preferences.quickBrowseArchiveHours = $0; store.save() })) {
                         Text("Off").tag(0); Text("After 6 hours").tag(6); Text("After 12 hours").tag(12); Text("After 24 hours").tag(24)

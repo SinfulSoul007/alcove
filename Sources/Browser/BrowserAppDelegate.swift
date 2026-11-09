@@ -216,6 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let app = submenu("Alcove")
         add(app, "About Alcove", #selector(about), ""); add(app, "Settings…", #selector(settings), ",")
         add(app, "Site Search Settings…", #selector(siteSearchSettings), "")
+        add(app, "Link Routing Settings…", #selector(linkRoutingSettings), "")
         add(app, "Customize…", #selector(customize), ",", [.command, .shift])
         add(app, "Manage Profiles…", #selector(manageProfiles), "")
         add(app, "Check for Updates…", #selector(checkUpdates), "")
@@ -257,7 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let target = outputTarget(in: activeBrowserWindow) else { return false }
             return pageOutput.canBegin(web: target.web, store: target.store, window: target.window)
         }
-        let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings), #selector(customize), #selector(checkUpdates), #selector(siteSearchSettings)]
+        let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings), #selector(customize), #selector(checkUpdates), #selector(siteSearchSettings), #selector(linkRoutingSettings)]
         if let action = menuItem.action, general.contains(action) { return true }
         guard let store = activeStore else { return menuItem.action == #selector(newTab) || menuItem.action == #selector(newQuick) || menuItem.action == #selector(location) }
         let quick = activeQuick
@@ -360,6 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func settings() { primaryForActive().settingsVisible = true }
     @objc func siteSearchSettings() { primaryForActive().presentedPanel = .siteSearch }
+    @objc func linkRoutingSettings() { primaryForActive().presentedPanel = .links }
     @objc func customize() { primaryForActive().appearanceVisible = true }
     @objc func manageProfiles() {
         openWindow(isPrivate: false)

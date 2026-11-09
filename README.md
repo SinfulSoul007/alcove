@@ -61,9 +61,15 @@ Exported PDF/WebArchive files, printer output and print-system artifacts are out
 
 ## Site search (source development)
 
-The developing 0.6.3 source adds configured site shortcuts; the public download above remains 0.6.2. Type `yt`, `wiki` or `gh` in the command bar or Quick Browse address field, press Tab, then type a query and press Return. Empty Backspace restores the shortcut; the pill's close button leaves site mode and keeps your query. Normal Return behavior stays unchanged until you select a site.
+The developing 0.6.4 source includes configured site shortcuts; the public download above remains 0.6.2. Type `yt`, `wiki` or `gh` in the command bar or Quick Browse address field, press Tab, then type a query and press Return. Empty Backspace restores the shortcut; the pill's close button leaves site mode and keeps your query. Normal Return behavior stays unchanged until you select a site.
 
 Use **Alcove → Site Search Settings…**, Settings, or the command list to add, edit, disable or remove shortcuts. A search URL uses one `%s` for the query, with complete URL escapes for other literal percent signs. Path templates reject queries that would become dot-only path segments. Matching stays local and sends nothing before submission. Normal profiles share encrypted shortcut settings; searches use the current page's actual profile. Private windows start with presets and keep changes temporary. Editing or removing a selected provider requires selecting it again before submission. Automatic site discovery is still pending.
+
+## Link routing (source development)
+
+Developing 0.6.4 adds **Alcove → Link Routing Settings…** (also Settings → Links, or “Link Preferences”/“Air Traffic Control” in the command list). Add ordered Contains/Equals URL conditions and choose Quick Browse, Most Recent Space or a named Space. The first enabled match wins. The default applies to links from other apps; routing and its test-URL preview stay local. Named Spaces select their own profile; Quick Browse/recent routes retain the source or remembered account. An unavailable matching destination blocks the opening until edited.
+
+Archive restoration follows matching routes, otherwise its original same-profile Space. Opening a Peek within its profile keeps its live page state; changing profiles asks to reload with separate website logins. Cancellation, a changed route/document or a failed metadata write preserves the original preview. Private windows ignore normal link rules. See the [source verification record](docs/goal/link-routing-verification.md) for evidence and remaining native QA. The public downloadable preview remains 0.6.2.
 
 ## Privacy and security
 
@@ -144,7 +150,7 @@ This runs core/store/profile/window-lifecycle/real-website/appearance/update che
 
 Broader website/login/media/download compatibility testing; accessibility and keyboard polish; permission revocation UI; authenticated update signing; password-manager integration; independent security review; performance/energy benchmarks; phishing/malware protection strategy; full bookmark import/export, broader profile lifecycle testing and multiple normal windows. WebKit does not automatically make Chrome extensions compatible.
 
-Arc-inspired next steps include more gesture/animation fidelity, automatic site-search discovery, richer routing rules, Boosts and Easels/capture. Quick Browse supplies the Little Arc-style external-link workflow. Favorites, drag organization and Shift-click Peek are implemented; full Arc parity is not claimed. Sync and AI features are intentionally outside the preview. No Safari-equivalent speed or complete-security claim is made.
+Arc-inspired next steps include more gesture/animation fidelity, automatic site-search discovery, live routing/gesture fidelity, Boosts and Easels/capture. Quick Browse supplies the Little Arc-style external-link workflow. Favorites, drag organization and Shift-click Peek are implemented; full Arc parity is not claimed. Sync and AI features are intentionally outside the preview. No Safari-equivalent speed or complete-security claim is made.
 
 Optional tab suspension can stop background media and lose unsaved page state. Optional archive preserves pinned tabs and each Space’s selected tab, and offers restore from the Library. Those Space-tab controls require deliberate opt-in; Quick Browse has its own default six-hour policy and can be turned Off.
 

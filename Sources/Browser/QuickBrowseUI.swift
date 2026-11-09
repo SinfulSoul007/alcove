@@ -428,7 +428,7 @@ struct QuickBrowseUI: View {
                     }
                     Text(web.url?.host ?? "Peek").font(.system(size: 12 * appearance.textScale, weight: .medium))
                         .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Open in Space", action: onPromotePeek).font(.system(size: 11 * appearance.textScale))
+                    Button(store.peekOpenTitle(in: .quick(id)), action: onPromotePeek).font(.system(size: 11 * appearance.textScale))
                         .disabled(!canMove).help("Move the Peek page into a Space")
                 }.padding(10).background(theme.gradient)
                 WebPane(webView: web).id(ObjectIdentifier(web))
