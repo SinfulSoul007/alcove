@@ -81,15 +81,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53, let self else { return event }
-            if SidebarResizeHandle.cancelActiveResize(in: event.window) { return nil }
-            if let quick = self.activeQuick, event.window === quick.window,
-               quick.state.findVisible || quick.state.isEditingAddress || quick.store.quickPeekView(quick.pageID) != nil {
-                quick.escape(); return nil
-            }
-            guard let window = event.window, let store = self.windows[window],
-                  store.presentedPanel != nil || store.primaryPeekView != nil || store.commandVisible || store.findVisible else { return event }
-            self.closePeek(); return nil
+            return self.handleEscape(in: event.window) ? nil : event
         }
+    }
+    @discardableResult func handleEscape(in window: NSWindow?) -> Bool {
+        guard let window, (window.firstResponder as? NSTextView)?.hasMarkedText() != true else { return false }
+        if SidebarResizeHandle.cancelActiveResize(in: window) { return true }
+        if let quick = quickWindows.values.first(where: { $0.window === window }),
+           quick.state.findVisible || quick.state.isEditingAddress || quick.store.quickPeekView(quick.pageID) != nil { quick.escape(); return true }
+        guard let store = windows[window] else { return false }
+        if store.presentedPanel != nil { store.presentedPanel = nil }
+        else if store.commandVisible { store.dismissCommand() }
+        else if store.findVisible { store.findVisible = false }
+        else if store.primaryPeekView != nil { store.closePrimaryPeek() }
+        else { return false }
+        return true
     }
     func makeOwner(_ store: BrowserStore) -> BrowserWindowOwner {
         let owner = BrowserWindowOwner(store: store) { [weak self, weak store] in
@@ -206,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         let app = submenu("Alcove")
         add(app, "About Alcove", #selector(about), ""); add(app, "Settings…", #selector(settings), ",")
+        add(app, "Site Search Settings…", #selector(siteSearchSettings), "")
         add(app, "Customize…", #selector(customize), ",", [.command, .shift])
         add(app, "Manage Profiles…", #selector(manageProfiles), "")
         add(app, "Check for Updates…", #selector(checkUpdates), "")
@@ -241,12 +248,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.mainMenu = main
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(closePeek), (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true { return false }
         let outputActions: Set<Selector> = [#selector(printPage), #selector(exportPDF), #selector(savePage)]
         if let action = menuItem.action, outputActions.contains(action) {
             guard let target = outputTarget(in: activeBrowserWindow) else { return false }
             return pageOutput.canBegin(web: target.web, store: target.store, window: target.window)
         }
-        let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings), #selector(customize), #selector(checkUpdates)]
+        let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings), #selector(customize), #selector(checkUpdates), #selector(siteSearchSettings)]
         if let action = menuItem.action, general.contains(action) { return true }
         guard let store = activeStore else { return menuItem.action == #selector(newTab) || menuItem.action == #selector(newQuick) || menuItem.action == #selector(location) }
         let quick = activeQuick
@@ -348,6 +356,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         do { try store.bookmarkWebsite(web) } catch { store.message = error.localizedDescription }
     }
     @objc func settings() { primaryForActive().settingsVisible = true }
+    @objc func siteSearchSettings() { primaryForActive().presentedPanel = .siteSearch }
     @objc func customize() { primaryForActive().appearanceVisible = true }
     @objc func manageProfiles() {
         openWindow(isPrivate: false)

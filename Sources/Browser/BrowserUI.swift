@@ -94,7 +94,7 @@ struct BrowserUI: View {
                 }
                 if store.commandVisible {
                     Color.black.opacity(0.25).ignoresSafeArea().onTapGesture { store.commandVisible = false }
-                    CommandPanel(store: store).frame(width: min(600, geometry.size.width - 64)).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, min(140, geometry.size.height * 0.18)).transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : -8)))
+                    CommandPanel(store: store, availableHeight: geometry.size.height - min(140, geometry.size.height * 0.18) - 40).frame(width: min(600, geometry.size.width - 64)).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, min(140, geometry.size.height * 0.18)).transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : -8)))
                 }
                 if let message = store.message {
                     VStack { Spacer(); HStack {
@@ -117,6 +117,7 @@ struct BrowserUI: View {
                 switch panel {
                 case .library: LibraryPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .settings: SettingsPanel(store: store, availableHeight: geometry.size.height - 40)
+                case .siteSearch: SiteSearchPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .appearance:
                     if store.canModifyLocalMetadata { AppearancePanel(store: store, availableHeight: geometry.size.height - 40) }
                     else { lockedAppearancePanel }
@@ -312,18 +313,23 @@ struct SidebarTabRow: View {
     }
 }
 
-private struct CommandResult: Identifiable {
+@MainActor struct CommandResult: Identifiable {
     let id: String
     let title: String
     let icon: String
-    let run: () -> Void
+    let run: @MainActor () -> Void
 }
 
-struct CommandPanel: View {
+@MainActor struct CommandPanel: View {
     @ObservedObject var store: BrowserStore
+    var availableHeight: CGFloat = 480
     @State private var resultIndex = 0
-    private var results: [CommandResult] {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    static func options(for store: BrowserStore) -> [CommandResult] {
         let query = store.command.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let site = store.commandSiteSearch {
+            return [CommandResult(id: "search", title: query.isEmpty ? "Enter a query to search \(site.name)" : "Search \(site.name) for “\(query)”", icon: "magnifyingglass", run: { store.submitCommandInput() })]
+        }
         var results: [CommandResult] = []
         if query.count > 1 {
             for command in store.availableCommands where command.matches(query) {
@@ -332,29 +338,69 @@ struct CommandPanel: View {
             if store.commandOpensNewTab || !query.contains("://") {
                 for tab in store.profileTabs.filter({ !$0.url.isEmpty && ($0.title.localizedCaseInsensitiveContains(query) || $0.url.localizedCaseInsensitiveContains(query)) }).prefix(5) {
                     let quick = store.quickPage(tab.id) != nil
-                    results.append(CommandResult(id: tab.id.uuidString, title: "\(quick ? "Quick Browse" : "Switch to") \(tab.pinnedTitle ?? tab.title)", icon: quick ? "arrow.up.forward.square" : "rectangle.on.rectangle", run: { store.selectAny(tab.id); store.commandVisible = false; store.commandOpensNewTab = false }))
+                    results.append(CommandResult(id: tab.id.uuidString, title: "\(quick ? "Quick Browse" : "Switch to") \(tab.pinnedTitle ?? tab.title)", icon: quick ? "arrow.up.forward.square" : "rectangle.on.rectangle", run: { store.selectAny(tab.id); store.dismissCommand() }))
                 }
             }
         }
-        results.append(CommandResult(id: "search", title: query.isEmpty ? "Search the web or enter a URL" : query, icon: "magnifyingglass", run: { store.navigate(store.command) }))
+        results.append(CommandResult(id: "search", title: query.isEmpty ? "Search the web or enter a URL" : query, icon: "magnifyingglass", run: { store.submitCommandInput() }))
+        for site in store.siteSearchCatalog.matches(query).prefix(5) {
+            results.append(CommandResult(id: "site-search-" + site.id.uuidString, title: "Search \(site.name) · \(site.keyword)", icon: "globe", run: { _ = store.activateCommandSiteSearch(site) }))
+        }
         return results
     }
+    private var results: [CommandResult] { Self.options(for: store) }
+    private var scale: Double { store.appearance.textScale }
+    private var rowHeight: CGFloat { max(38, 42 * scale) }
+    private var scrollHeight: CGFloat { min(CGFloat(results.count) * rowHeight, max(80, min(320, availableHeight - max(130, 140 * scale)))) }
+    private var motion: Animation? { reduceMotion || !store.appearance.animationsEnabled ? nil : .easeInOut(duration: 0.14) }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                Image(systemName: "magnifyingglass").opacity(0.4)
-                FocusedInput(text: $store.command, placeholder: "Search or Enter URL…", selectAll: true, onSubmit: submit, onCancel: { store.commandVisible = false }, onMove: { delta in resultIndex = min(results.count - 1, max(0, resultIndex + delta)) }).frame(height: 28)
-            }.padding(22)
+                if let site = store.commandSiteSearch {
+                    SiteSearchPill(site: site, scale: scale, fill: store.activeTheme.selected) { store.leaveCommandSiteSearch(restoreKeyword: false) }
+                } else { Image(systemName: "magnifyingglass").opacity(0.4) }
+                FocusedInput(text: $store.command, placeholder: store.commandSiteSearch.map { "Search \($0.name)" } ?? "Search or Enter URL…", size: 20 * scale, selectAll: true, focusRequest: store.commandFocusRequest,
+                             onSubmit: submit, onCancel: { store.dismissCommand() },
+                             onMove: { delta in resultIndex = min(results.count - 1, max(0, resultIndex + delta)) },
+                             onTab: { store.activatePreferredCommandSiteSearch() }, onEmptyDelete: { store.deleteEmptyCommandSiteSearch() })
+                    .frame(minWidth: 80, maxWidth: .infinity).frame(height: max(30, 32 * scale))
+                if store.commandSiteSearch == nil, let site = store.siteSearchCatalog.preferredMatch(store.command) {
+                    Text("⇥").font(.system(size: 12 * scale)).opacity(0.5).help("Press Tab to search \(site.name)").accessibilityLabel("Press Tab to search \(site.name)")
+                }
+            }.padding(20)
             Divider().opacity(0.4)
-            ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
-                Button(action: result.run) { HStack(spacing: 12) {
-                    Image(systemName: result.icon).opacity(0.6).frame(width: 16)
-                    Text(result.title).lineLimit(1); Spacer()
-                    if index == resultIndex { Text("↵").opacity(0.4) }
-                }.font(.system(size: 13)).padding(.horizontal, 18).padding(.vertical, 13).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()).background(resultIndex == index ? Color.primary.opacity(0.07) : .clear) }.buttonStyle(.plain)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
+                            Button(action: result.run) { HStack(spacing: 12) {
+                                Image(systemName: result.icon).opacity(0.6).frame(width: 16)
+                                Text(result.title).lineLimit(1); Spacer()
+                                if index == resultIndex { Text("↵").opacity(0.4) }
+                            }.font(.system(size: 13 * scale)).padding(.horizontal, 18).frame(height: rowHeight).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()).background(resultIndex == index ? store.activeTheme.selected : .clear) }
+                                .buttonStyle(.plain).id(result.id)
+                        }
+                    }
+                }.frame(height: scrollHeight)
+                .onChange(of: resultIndex) { _, index in
+                    guard results.indices.contains(index) else { return }
+                    withAnimation(motion) { proxy.scrollTo(results[index].id, anchor: .center) }
+                }
             }
-        }.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14)).overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.08))).shadow(color: .black.opacity(0.3), radius: 35, y: 15)
-        .onChange(of: store.command) { _, _ in resultIndex = 0 }
+            if let error = store.commandError {
+                Text(error).font(.system(size: 11 * scale)).foregroundStyle(.red).lineLimit(2).padding(.horizontal, 18).padding(.vertical, 10)
+            }
+        }.foregroundStyle(store.activeTheme.ink)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: store.appearance.cornerRadius + 4))
+            .overlay(RoundedRectangle(cornerRadius: store.appearance.cornerRadius + 4).stroke(.white.opacity(0.08)))
+            .shadow(color: .black.opacity(0.3), radius: 35, y: 15)
+            .preferredColorScheme(store.activeTheme.isDark ? .dark : .light)
+            .onChange(of: store.command) { _, _ in
+                resultIndex = 0
+                if store.commandError != nil { store.commandError = nil }
+            }
+            .onChange(of: store.commandSiteSearch?.id) { _, _ in resultIndex = 0 }
+            .animation(motion, value: store.commandSiteSearch?.id)
     }
     private func submit() { let options = results; options[min(resultIndex, options.count - 1)].run() }
 }

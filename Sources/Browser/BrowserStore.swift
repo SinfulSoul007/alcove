@@ -5,7 +5,7 @@ import BrowserCore
 import CryptoKit
 import Combine
 
-enum BrowserPanel: String, Identifiable { case library, settings, appearance, updates, profiles; var id: String { rawValue } }
+enum BrowserPanel: String, Identifiable { case library, settings, appearance, updates, profiles, siteSearch; var id: String { rawValue } }
 
 @MainActor
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
@@ -26,6 +26,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var commandContext: SearchInputContext?
     @Published var commandError: String?
     var commandOpensNewTab = false
+    private(set) var commandFocusRequest = 0
     @Published var sidebarVisible = true
     @Published var presentedPanel: BrowserPanel?
     var appearanceVisible: Bool { get { presentedPanel == .appearance } set { if newValue { presentedPanel = .appearance } else if appearanceVisible { presentedPanel = nil } } }
@@ -316,6 +317,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return placeTab(id, in: destination, section: source.favorite == true ? .favorites : (source.pinned ? .pinned : .today), folder: source.folder, allowProfileChange: allowProfileChange)
     }
     func showCommand(new: Bool = false) {
+        commandFocusRequest += 1
         commandOpensNewTab = new
         commandSiteSearch = nil; commandError = nil; commandContext = searchInputContext()
         command = new ? "" : (primaryPeekView?.url?.absoluteString ?? currentView?.url?.absoluteString ?? selectedTab?.url ?? ""); commandVisible = true

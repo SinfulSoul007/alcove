@@ -95,6 +95,7 @@ struct SettingsPanel: View {
             VStack(alignment: .leading, spacing: 18) {
             HStack {
                 Button("Customize Appearance…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata)
+                Button("Site Search…") { store.presentedPanel = .siteSearch }
                 Button("Welcome Tour") { store.presentedPanel = nil; store.onboardingVisible = true }.disabled(store.isPrivate || !store.savingEnabled)
                 Spacer()
                 Button("Updates…") { store.updatesVisible = true }

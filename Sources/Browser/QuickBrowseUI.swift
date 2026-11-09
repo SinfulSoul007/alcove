@@ -42,6 +42,14 @@ final class QuickBrowseWindowState: ObservableObject {
         if restoreKeyword, let siteSearch { addressText = siteSearch.keyword }
         siteSearch = nil; navigationError = nil
     }
+    @discardableResult func activatePreferredSiteSearch(catalog: SiteSearchCatalog, context: SearchInputContext?) -> Bool {
+        guard siteSearch == nil, let context, let site = catalog.preferredMatch(addressText) else { return false }
+        return activateSiteSearch(site, context: context)
+    }
+    @discardableResult func deleteEmptySiteSearch() -> Bool {
+        guard siteSearch != nil, addressText.isEmpty else { return false }
+        leaveSiteSearch(restoreKeyword: true); return true
+    }
     func syncLocation(currentURL: String) {
         locationURL = currentURL
         if !isEditingAddress { addressText = currentURL }
@@ -197,6 +205,7 @@ struct QuickBrowseUI: View {
             .onChange(of: ownPeek?.microphoneCaptureState) { _, _ in refreshMediaStatus() }
             .onChange(of: ownerID) { _, _ in
                 rememberHost = false
+                state.cancelLocation(currentURL: currentURL)
                 state.dismissFind()
                 state.clearMediaStatus()
             }
@@ -262,18 +271,28 @@ struct QuickBrowseUI: View {
 
     private var addressField: some View {
         HStack(spacing: 7) {
-            if state.isEditingAddress { Image(systemName: "magnifyingglass").font(.system(size: 11)).opacity(0.65) }
+            if state.isEditingAddress, let site = state.siteSearch {
+                SiteSearchPill(site: site, maximumWidth: 92, scale: appearance.textScale, fill: theme.selected) { state.leaveSiteSearch(restoreKeyword: false) }
+                    .layoutPriority(2)
+            }
+            else if state.isEditingAddress { Image(systemName: "magnifyingglass").font(.system(size: 11)).opacity(0.65) }
             else { SiteBadge(url: currentURL, image: appearance.showFavicons ? store.siteIcons[id] : nil) }
-            QuickBrowseInput(text: $state.addressText, placeholder: "Search or enter a URL",
+            QuickBrowseInput(text: $state.addressText, placeholder: state.siteSearch.map { "Search \($0.name)" } ?? "Search or enter a URL",
                              size: 12 * appearance.textScale, ink: NSColor(theme.ink),
                              focusRequest: state.locationFocusRequest, selectAll: true,
                              resignFocus: !state.isEditingAddress,
                              onBeginEditing: { state.beginLocation(context: store.searchInputContext(quickID: id)) },
                              onEndEditing: { state.cancelLocation(currentURL: currentURL) },
                              onSubmit: navigate,
-                             onCancel: { state.cancelLocation(currentURL: currentURL); focusPage() })
-                .frame(minWidth: 0, maxWidth: .infinity).frame(height: 24)
+                             onCancel: { state.cancelLocation(currentURL: currentURL); focusPage() },
+                             onTab: { state.activatePreferredSiteSearch(catalog: store.siteSearchCatalog, context: store.searchInputContext(quickID: id)) },
+                             onEmptyDelete: { state.deleteEmptySiteSearch() })
+                .frame(minWidth: 80, maxWidth: .infinity).frame(height: 24).layoutPriority(1)
                 .disabled(!ownerAvailable || page == nil)
+            if state.isEditingAddress, state.siteSearch == nil, let site = store.siteSearchCatalog.preferredMatch(state.addressText) {
+                Text("⇥").font(.system(size: 11 * appearance.textScale)).opacity(0.55)
+                    .help("Press Tab to search \(site.name)").accessibilityLabel("Press Tab to search \(site.name)")
+            }
             if state.mediaStatus != nil {
                 Image(systemName: "speaker.wave.2.fill").font(.system(size: 10))
                     .help(state.mediaStatus ?? "").accessibilityLabel(state.mediaStatus ?? "Media active")
@@ -283,6 +302,7 @@ struct QuickBrowseUI: View {
         .background(state.isEditingAddress ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: appearance.cornerRadius))
         .overlay(RoundedRectangle(cornerRadius: appearance.cornerRadius).stroke(theme.ink.opacity(state.isEditingAddress ? 0.22 : 0.06), lineWidth: 1))
         .help(currentURL.isEmpty ? "Search or enter a URL (⌘L)" : currentURL)
+        .animation(motion, value: state.siteSearch?.id)
     }
 
     @ViewBuilder private var statusBanners: some View {
@@ -513,7 +533,7 @@ private struct QuickBrowsePageContent: View {
 
 /// Repeated focus requests select this window's field without remounting any web content.
 @MainActor
-private struct QuickBrowseInput: NSViewRepresentable {
+struct QuickBrowseInput: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
     let size: CGFloat
@@ -526,6 +546,8 @@ private struct QuickBrowseInput: NSViewRepresentable {
     let onSubmit: () -> Void
     let onCancel: () -> Void
     var onMove: (Int) -> Void = { _ in }
+    var onTab: () -> Bool = { false }
+    var onEmptyDelete: () -> Bool = { false }
 
     final class Field: NSTextField {
         var pendingFocus = false
@@ -561,6 +583,7 @@ private struct QuickBrowseInput: NSViewRepresentable {
             if let field = notification.object as? NSTextField { parent.text = field.stringValue }
         }
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            guard !textView.hasMarkedText() else { return false }
             switch NSStringFromSelector(selector) {
             case "insertNewline:": parent.onSubmit(); return true
             case "cancelOperation:":
@@ -569,8 +592,16 @@ private struct QuickBrowseInput: NSViewRepresentable {
                 return true
             case "moveUp:": parent.onMove(-1); return true
             case "moveDown:": parent.onMove(1); return true
+            case "insertTab:":
+                guard parent.onTab() else { return false }; sync(control, editor: textView); return true
+            case "deleteBackward:":
+                guard parent.text.isEmpty, parent.onEmptyDelete() else { return false }; sync(control, editor: textView); return true
             default: return false
             }
+        }
+        @MainActor private func sync(_ control: NSControl, editor: NSTextView) {
+            (control as? NSTextField)?.stringValue = parent.text; editor.string = parent.text
+            editor.setSelectedRange(NSRange(location: (parent.text as NSString).length, length: 0))
         }
     }
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -591,6 +622,7 @@ private struct QuickBrowseInput: NSViewRepresentable {
         context.coordinator.parent = self
         field.isEnabled = context.environment.isEnabled
         field.font = .systemFont(ofSize: size); field.textColor = ink
+        field.placeholderString = placeholder; field.setAccessibilityLabel(placeholder)
         if field.stringValue != text { field.stringValue = text }
         if resignFocus, field.currentEditor() != nil { field.window?.makeFirstResponder(nil) }
         if context.coordinator.lastFocusRequest != focusRequest {

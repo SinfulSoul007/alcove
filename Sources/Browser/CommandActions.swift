@@ -31,6 +31,7 @@ extension BrowserStore {
         case .library: libraryVisible = true
         case .settings: settingsVisible = true
         case .profiles: if !isPrivate { profilesVisible = true }
+        case .siteSearch: presentedPanel = .siteSearch
         case .copyURL:
             if let url = currentView?.url { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(url.absoluteString, forType: .string) }
         }

@@ -59,9 +59,15 @@ Quick pages and their archive are encrypted with their owning profile’s metada
 
 Exported PDF/WebArchive files, printer output and print-system artifacts are outside Alcove's metadata encryption. They can contain sensitive page content and metadata, including from private windows. Saved archives are not yet opened through Alcove's UI, and website print buttons using `window.print()` are not wired to native printing yet. Native dialog/printer testing remains pending.
 
+## Site search (source development)
+
+The developing 0.6.3 source adds configured site shortcuts; the public download above remains 0.6.2. Type `yt`, `wiki` or `gh` in the command bar or Quick Browse address field, press Tab, then type a query and press Return. Empty Backspace restores the shortcut; the pill's close button leaves site mode and keeps your query. Normal Return behavior stays unchanged until you select a site.
+
+Use **Alcove → Site Search Settings…**, Settings, or the command list to add, edit, disable or remove shortcuts. A search URL uses one `%s` for the query. Matching stays local and sends nothing before submission. Normal profiles share encrypted shortcut settings; searches use the current page's actual profile. Private windows start with presets and keep changes temporary. Editing or removing a selected provider requires selecting it again before submission. Automatic site discovery is still pending.
+
 ## Privacy and security
 
-Alcove has no analytics, sync server or account service. Sites you visit receive their normal web requests; searches go to DuckDuckGo. No remote search suggestions are sent while you type.
+Alcove has no analytics, sync server or account service. Sites you visit receive their normal web requests; ordinary web searches go to DuckDuckGo; configured site searches in developing source go to the selected site. No remote search suggestions are sent while you type.
 
 Profiles separate website storage and organization within one Mac account; they are not separate user accounts or protection against someone using the unlocked app.
 
@@ -138,7 +144,7 @@ This runs core/store/profile/window-lifecycle/real-website/appearance/update che
 
 Broader website/login/media/download compatibility testing; accessibility and keyboard polish; permission revocation UI; authenticated update signing; password-manager integration; independent security review; performance/energy benchmarks; phishing/malware protection strategy; full bookmark import/export, broader profile lifecycle testing and multiple normal windows. WebKit does not automatically make Chrome extensions compatible.
 
-Arc-inspired next steps include more gesture/animation fidelity, site search, richer routing rules, Boosts and Easels/capture. Quick Browse supplies the Little Arc-style external-link workflow. Favorites, drag organization and Shift-click Peek are implemented; full Arc parity is not claimed. Sync and AI features are intentionally outside the preview. No Safari-equivalent speed or complete-security claim is made.
+Arc-inspired next steps include more gesture/animation fidelity, automatic site-search discovery, richer routing rules, Boosts and Easels/capture. Quick Browse supplies the Little Arc-style external-link workflow. Favorites, drag organization and Shift-click Peek are implemented; full Arc parity is not claimed. Sync and AI features are intentionally outside the preview. No Safari-equivalent speed or complete-security claim is made.
 
 Optional tab suspension can stop background media and lose unsaved page state. Optional archive preserves pinned tabs and each Space’s selected tab, and offers restore from the Library. Those Space-tab controls require deliberate opt-in; Quick Browse has its own default six-hour policy and can be turned Off.
 

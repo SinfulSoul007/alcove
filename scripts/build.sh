@@ -58,6 +58,11 @@ run_site_search_checks() {
     rm -f "$search_port_file"
     trap - EXIT
 }
+if [[ "${1:-}" == "site-search-input-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/SiteSearchInputChecks.swift -o "$MANUAL/site-search-input-checks"
+    "$MANUAL/site-search-input-checks"
+    exit
+fi
 if [[ "${1:-}" == "site-search-website-test" ]]; then
     run_site_search_checks website
     exit
@@ -138,6 +143,8 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/SiteSearchInputChecks.swift -o "$MANUAL/site-search-input-checks"
+    "$MANUAL/site-search-input-checks"
     run_site_search_checks store
     run_site_search_checks website
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/SiteSearchCoreChecks.swift -o "$MANUAL/site-search-core-checks"

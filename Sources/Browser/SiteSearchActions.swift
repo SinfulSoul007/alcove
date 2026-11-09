@@ -62,6 +62,15 @@ extension BrowserStore {
         if restoreKeyword, let site = commandSiteSearch { command = site.keyword }
         commandSiteSearch = nil; commandError = nil
     }
+    @discardableResult func activatePreferredCommandSiteSearch() -> Bool {
+        guard commandSiteSearch == nil, let site = siteSearchCatalog.preferredMatch(command) else { return false }
+        return activateCommandSiteSearch(site)
+    }
+    @discardableResult func deleteEmptyCommandSiteSearch() -> Bool {
+        guard command.isEmpty, commandSiteSearch != nil else { return false }
+        leaveCommandSiteSearch(restoreKeyword: true); return true
+    }
+    func submitCommandInput() { if commandVisible { navigate(command) } }
     func dismissCommand() {
         guard commandVisible || commandSiteSearch != nil || commandContext != nil || commandError != nil || !command.isEmpty || commandOpensNewTab else { return }
         commandVisible = false
