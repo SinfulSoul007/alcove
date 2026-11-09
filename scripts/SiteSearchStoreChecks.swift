@@ -70,8 +70,8 @@ enum SiteSearchStoreCheckError: Error { case failed, fixtureMissing }
         splitStore.showCommand(); _ = splitStore.activateCommandSiteSearch(site); splitStore.command = "stale peek"
         let peekContext = splitStore.commandContext!
         splitStore.closePrimaryPeek(); let requests = right.requests.count
-        splitStore.navigate(splitStore.command)
-        check(!splitStore.matchesSearchInputContext(peekContext) && right.requests.count == requests && splitStore.commandError != nil, "Closing a Peek during input cannot redirect its draft into the parent")
+        splitStore.submitCommandInput()
+        check(!splitStore.matchesSearchInputContext(peekContext) && right.requests.count == requests && !splitStore.commandVisible && splitStore.commandContext == nil, "Closing a Peek clears its draft without redirecting into the parent")
         splitStore.dismissCommand()
         splitStore.showCommand(); _ = splitStore.activateCommandSiteSearch(site); splitStore.command = "old Space draft"
         let oldContext = splitStore.commandContext!, oldSpace = splitStore.space.id
@@ -81,6 +81,26 @@ enum SiteSearchStoreCheckError: Error { case failed, fixtureMissing }
         splitStore.selectSpace(oldSpace)
         check(!splitStore.commandVisible && splitStore.command.isEmpty, "Returning to a Space does not resurrect its cancelled query")
 
+        let invalidTemplateFixture = try fixture()
+        let beforeInvalidTemplate = try Data(contentsOf: invalidTemplateFixture.store.sessionURL)
+        rejects("Interactive settings reject a malformed literal percent escape") { try invalidTemplateFixture.store.saveSiteSearch(SiteSearch(name: "Malformed", keyword: "bad", template: origin + "search?q=%%s")) }
+        let afterInvalidTemplate = try Data(contentsOf: invalidTemplateFixture.store.sessionURL)
+        check(beforeInvalidTemplate == afterInvalidTemplate && invalidTemplateFixture.store.siteSearchCatalog.preferredMatch("bad") == nil, "A malformed template save preserves encrypted bytes and live configuration")
+        let lifetime = try fixture(), lifetimeStore = lifetime.store
+        try lifetimeStore.saveSiteSearch(site)
+        let reusedWeb = lifetime.anotherWeb(UUID())
+        lifetimeStore.peekPages[.primary] = PeekState(web: reusedWeb, profileID: lifetime.profile, spaceID: lifetimeStore.space.id)
+        lifetimeStore.showCommand(); _ = lifetimeStore.activateCommandSiteSearch(site); lifetimeStore.command = "retired preview query"
+        let retired = lifetimeStore.commandContext!
+        lifetimeStore.closePrimaryPeek()
+        check(!lifetimeStore.commandVisible && lifetimeStore.command.isEmpty && lifetimeStore.commandContext == nil, "Closing a primary Peek synchronously cancels its pending search draft")
+        lifetimeStore.peekPages[.primary] = PeekState(web: reusedWeb, profileID: lifetime.profile, spaceID: lifetimeStore.space.id)
+        check(!lifetimeStore.matchesSearchInputContext(retired), "A new Peek lifetime rejects a retired context even when native object identity is reused")
+        let quickLifetimeID = try lifetimeStore.openQuickPage(profileID: lifetime.profile)
+        lifetimeStore.peekPages[.quick(quickLifetimeID)] = PeekState(web: reusedWeb, profileID: lifetime.profile, spaceID: lifetimeStore.space.id)
+        let retiredQuick = lifetimeStore.searchInputContext(quickID: quickLifetimeID)!
+        lifetimeStore.peekPages[.quick(quickLifetimeID)] = PeekState(web: reusedWeb, profileID: lifetime.profile, spaceID: lifetimeStore.space.id)
+        check(!lifetimeStore.matchesSearchInputContext(retiredQuick), "Compact Peek replacement rejects the old lifetime independently of native object identity")
         let changed = try fixture(), changedStore = changed.store
         try changedStore.saveSiteSearch(site); changedStore.showCommand(); _ = changedStore.activateCommandSiteSearch(site); changedStore.command = "kept query"
         var edited = site; edited.template = origin + "other?q=%s"; try changedStore.saveSiteSearch(edited)

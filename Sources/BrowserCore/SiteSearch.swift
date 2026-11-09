@@ -1,12 +1,13 @@
 import Foundation
 
 public enum SiteSearchError: LocalizedError {
-    case invalidName, invalidKeyword, invalidTemplate, emptyQuery, disabled, duplicateKeyword, tooManySites, configurationChanged
+    case invalidName, invalidKeyword, invalidTemplate, unsupportedQuery, emptyQuery, disabled, duplicateKeyword, tooManySites, configurationChanged
     public var errorDescription: String? {
         switch self {
         case .invalidName: return "Enter a site name using 1–80 characters."
         case .invalidKeyword: return "Use 1–32 shortcut characters without spaces or URL delimiters."
-        case .invalidTemplate: return "Use an HTTP or HTTPS search URL with one %s after the hostname and no sign-in credentials."
+        case .invalidTemplate: return "Use an HTTP or HTTPS search URL with one %s after the hostname, valid percent escapes and no sign-in credentials."
+        case .unsupportedQuery: return "This path search URL cannot represent a dot-only segment. Change the query or use a search URL with a query parameter."
         case .emptyQuery: return "Enter a query to search this site."
         case .disabled: return "This search shortcut is disabled. Choose a site again."
         case .duplicateKeyword: return "Another search shortcut uses this keyword."
@@ -32,6 +33,33 @@ public struct SiteSearch: Codable, Equatable, Identifiable, Sendable {
         let forbidden = CharacterSet.whitespacesAndNewlines.union(.controlCharacters).union(CharacterSet(charactersIn: ":/?#@%"))
         return (1...32).contains(text.count) && !text.unicodeScalars.contains(where: forbidden.contains)
     }
+    private static func hasValidEscapes(_ text: Substring) -> Bool {
+        let bytes = Array(text.utf8)
+        func hex(_ byte: UInt8) -> Bool {
+            (byte >= 48 && byte <= 57) || (byte >= 65 && byte <= 70) || (byte >= 97 && byte <= 102)
+        }
+        var index = 0
+        while index < bytes.count {
+            if bytes[index] == 37 {
+                guard index + 2 < bytes.count, hex(bytes[index + 1]), hex(bytes[index + 2]) else { return false }
+                index += 3
+            } else { index += 1 }
+        }
+        return true
+    }
+    private static func formsDotPathSegment(in template: String, query: String) -> Bool {
+        guard let marker = template.range(of: "%s"), let separator = template.range(of: "://"),
+              let pathStart = template[separator.upperBound...].firstIndex(where: { "/?#".contains($0) }),
+              template[pathStart] == "/" else { return false }
+        let pathEnd = template[pathStart...].firstIndex(where: { "?#".contains($0) }) ?? template.endIndex
+        guard marker.lowerBound < pathEnd,
+              let slash = template[..<marker.lowerBound].lastIndex(of: "/") else { return false }
+        let segmentStart = template.index(after: slash)
+        let segmentEnd = template[marker.upperBound..<pathEnd].firstIndex(of: "/") ?? pathEnd
+        let segment = String(template[segmentStart..<marker.lowerBound]) + query + template[marker.upperBound..<segmentEnd]
+        let decoded = segment.removingPercentEncoding
+        return decoded == "." || decoded == ".."
+    }
     public func validated() throws -> SiteSearch {
         var value = self
         value.name = name.trimmingCharacters(in: .whitespacesAndNewlines).precomposedStringWithCanonicalMapping
@@ -44,6 +72,8 @@ public struct SiteSearch: Codable, Equatable, Identifiable, Sendable {
         guard text.utf8.count <= 8192, !text.unicodeScalars.contains(where: forbidden.contains),
               text.components(separatedBy: "%s").count == 2, let placeholder = text.range(of: "%s"),
               let separator = text.range(of: "://") else { throw SiteSearchError.invalidTemplate }
+        guard Self.hasValidEscapes(text[..<placeholder.lowerBound]),
+              Self.hasValidEscapes(text[placeholder.upperBound...]) else { throw SiteSearchError.invalidTemplate }
         let authorityEnd = text[separator.upperBound...].firstIndex(where: { "/?#".contains($0) }) ?? text.endIndex
         guard placeholder.lowerBound >= authorityEnd,
               let parts = URLComponents(string: text.replacingOccurrences(of: "%s", with: "alcove-query-token")),
@@ -58,8 +88,9 @@ public struct SiteSearch: Codable, Equatable, Identifiable, Sendable {
         guard site.enabled else { throw SiteSearchError.disabled }
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw SiteSearchError.emptyQuery }
-        guard let escaped = text.addingPercentEncoding(withAllowedCharacters: Self.queryCharacters),
-              let result = URL(string: site.template.replacingOccurrences(of: "%s", with: escaped)),
+        guard let escaped = text.addingPercentEncoding(withAllowedCharacters: Self.queryCharacters) else { throw SiteSearchError.invalidTemplate }
+        guard !Self.formsDotPathSegment(in: site.template, query: escaped) else { throw SiteSearchError.unsupportedQuery }
+        guard let result = URL(string: site.template.replacingOccurrences(of: "%s", with: escaped)),
               let origin = URL(string: site.template.replacingOccurrences(of: "%s", with: "alcove-query-token")),
               result.scheme?.lowercased() == origin.scheme?.lowercased(), result.host?.lowercased() == origin.host?.lowercased(), result.port == origin.port,
               result.user == nil, result.password == nil else { throw SiteSearchError.invalidTemplate }

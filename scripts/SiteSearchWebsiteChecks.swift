@@ -124,6 +124,16 @@ enum SiteSearchWebsiteError: Error { case missingFixture, timedOut, invalidPage,
         let createdResult = try await record(created)
         check(createdResult.query["q"] == ["created tab"] && createdResult.cookie.contains("account=ALPHA"), "A newly created search tab uses the captured normal profile")
         check(try await count("/search") == beforeNewTab + 1, "One explicit new-tab submission causes one site search request")
+        let beforeUnsafe = try await count()
+        let unsafePath = SiteSearch(name: "Path fixture", keyword: "path", template: origin + "find/%s")
+        try store.saveSiteSearch(unsafePath)
+        store.showCommand(); _ = store.activateCommandSiteSearch(unsafePath); store.command = ".."; store.submitCommandInput()
+        try await Task.sleep(for: .milliseconds(150))
+        check(try await count() == beforeUnsafe && store.command == ".." && store.commandError != nil, "A dot-only path query is rejected locally without a real WebKit request")
+        store.dismissCommand()
+        var malformedRejected = false
+        do { try store.saveSiteSearch(SiteSearch(name: "Bad escape", keyword: "bad", template: origin + "search?q=%2%s")) } catch { malformedRejected = true }
+        check(try await count() == beforeUnsafe && malformedRejected && store.siteSearchCatalog.preferredMatch("bad") == nil, "Malformed site settings cannot become a real navigation action")
         return failures
     }
     @MainActor static func main() async throws {

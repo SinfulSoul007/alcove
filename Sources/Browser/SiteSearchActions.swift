@@ -2,8 +2,8 @@ import WebKit
 import BrowserCore
 
 enum SearchInputContext: Equatable {
-    case primary(spaceID: UUID, profileID: UUID, tabID: UUID?, peekID: ObjectIdentifier?)
-    case quick(pageID: UUID, profileID: UUID, peekID: ObjectIdentifier?)
+    case primary(spaceID: UUID, profileID: UUID, tabID: UUID?, peekID: UUID?)
+    case quick(pageID: UUID, profileID: UUID, peekID: UUID?)
 }
 enum SearchInputError: LocalizedError {
     case contextChanged
@@ -32,12 +32,12 @@ extension BrowserStore {
             guard let profile = quickProfileID(id), !profileUnavailable(profile) else { return nil }
             let peek = peekPages[.quick(id)]
             guard peek == nil || peek?.profileID == profile else { return nil }
-            return .quick(pageID: id, profileID: profile, peekID: peek.map { ObjectIdentifier($0.web) })
+            return .quick(pageID: id, profileID: profile, peekID: peek?.id)
         }
         let profile = activeProfileID, peek = peekPages[.primary]
         guard !profileUnavailable(profile), peek == nil || (peek?.profileID == profile && peek?.spaceID == space.id) else { return nil }
         guard peek != nil || focusedID.flatMap({ profileID(for: $0) }) == profile else { return nil }
-        return .primary(spaceID: space.id, profileID: profile, tabID: focusedID, peekID: peek.map { ObjectIdentifier($0.web) })
+        return .primary(spaceID: space.id, profileID: profile, tabID: focusedID, peekID: peek?.id)
     }
     func matchesSearchInputContext(_ context: SearchInputContext) -> Bool {
         switch context {

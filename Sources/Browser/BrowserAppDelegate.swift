@@ -84,8 +84,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return self.handleEscape(in: event.window) ? nil : event
         }
     }
+    func hasMarkedText(in window: NSWindow?) -> Bool {
+        (window?.firstResponder as? NSTextInputClient)?.hasMarkedText() == true
+    }
     @discardableResult func handleEscape(in window: NSWindow?) -> Bool {
-        guard let window, (window.firstResponder as? NSTextView)?.hasMarkedText() != true else { return false }
+        guard let window, !hasMarkedText(in: window) else { return false }
         if SidebarResizeHandle.cancelActiveResize(in: window) { return true }
         if let quick = quickWindows.values.first(where: { $0.window === window }),
            quick.state.findVisible || quick.state.isEditingAddress || quick.store.quickPeekView(quick.pageID) != nil { quick.escape(); return true }
@@ -248,7 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.mainMenu = main
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(closePeek), (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true { return false }
+        if menuItem.action == #selector(closePeek), hasMarkedText(in: NSApp.keyWindow) { return false }
         let outputActions: Set<Selector> = [#selector(printPage), #selector(exportPDF), #selector(savePage)]
         if let action = menuItem.action, outputActions.contains(action) {
             guard let target = outputTarget(in: activeBrowserWindow) else { return false }

@@ -5,6 +5,20 @@ import BrowserCore
 
 enum SiteSearchInputCheckError: Error { case failed, timeout }
 @MainActor final class SiteInputWindow: NSWindow {}
+@MainActor final class SiteCompositionClient: NSView, NSTextInputClient {
+    var marked = true
+    override var acceptsFirstResponder: Bool { true }
+    func insertText(_ string: Any, replacementRange: NSRange) {}
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) { marked = true }
+    func unmarkText() { marked = false }
+    func selectedRange() -> NSRange { NSRange(location: 0, length: 0) }
+    func markedRange() -> NSRange { marked ? NSRange(location: 0, length: 1) : NSRange(location: NSNotFound, length: 0) }
+    func hasMarkedText() -> Bool { marked }
+    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect { .zero }
+    func characterIndex(for point: NSPoint) -> Int { 0 }
+}
 @main struct SiteSearchInputChecks {
     @MainActor static func until(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
@@ -90,6 +104,27 @@ enum SiteSearchInputCheckError: Error { case failed, timeout }
         check(!delegate.handleEscape(in: editingWindow) && store.commandVisible, "The app-level Escape handler also preserves active IME composition")
         editor.unmarkText()
         check(delegate.handleEscape(in: editingWindow) && !store.commandVisible, "Escape closes an owned command after composition is committed")
+        let protocolWindow = window(NSSize(width: 500, height: 160)), protocolClient = SiteCompositionClient(frame: .zero)
+        protocolWindow.contentView = protocolClient; _ = protocolWindow.makeFirstResponder(protocolClient)
+        let protocolFixture = try fixture()
+        delegate.windows[protocolWindow] = protocolFixture.store
+        protocolFixture.store.peekPages[.primary] = PeekState(web: protocolFixture.web, profileID: protocolFixture.profile, spaceID: protocolFixture.store.space.id)
+        check(protocolWindow.firstResponder === protocolClient && protocolClient.hasMarkedText(), "The owned first responder composes through NSTextInputClient without NSTextView")
+        check(!delegate.handleEscape(in: protocolWindow) && protocolFixture.store.primaryPeekView === protocolFixture.web, "App Escape preserves composition in non-NSTextView text clients")
+        protocolFixture.store.peekPages[.primary] = PeekState(web: protocolFixture.web, profileID: protocolFixture.profile, spaceID: protocolFixture.store.space.id)
+        protocolClient.unmarkText()
+        check(delegate.handleEscape(in: protocolWindow) && protocolFixture.store.primaryPeekView == nil, "Committed non-NSTextView clients can close their own Peek with Escape")
+        let editorFixture = try fixture(), editorStore = editorFixture.store
+        let originalEntry = editorStore.siteSearchCatalog.entries[0]
+        var draft = originalEntry, toggled = originalEntry
+        draft.name = "Changed while disabling"; toggled.enabled = false; try editorStore.saveSiteSearch(toggled)
+        try SiteSearchPanel.saveDraft(draft, in: editorStore)
+        check(editorStore.siteSearchCatalog.entries.first?.enabled == false && editorStore.siteSearchCatalog.entries.first?.name == draft.name, "Saving edited fields preserves a newer disabled toggle")
+        toggled = editorStore.siteSearchCatalog.entries[0]; toggled.enabled = false; try editorStore.saveSiteSearch(toggled)
+        draft = editorStore.siteSearchCatalog.entries[0]; draft.name = "Changed while enabling"
+        toggled = draft; toggled.enabled = true; try editorStore.saveSiteSearch(toggled)
+        try SiteSearchPanel.saveDraft(draft, in: editorStore)
+        check(editorStore.siteSearchCatalog.entries.first?.enabled == true && editorStore.siteSearchCatalog.entries.first?.name == draft.name, "Saving edited fields preserves a newer enabled toggle")
         store.showCommand(); store.command = "yt"
         let normalOptions = CommandPanel.options(for: store)
         normalOptions[0].run()
@@ -133,6 +168,21 @@ enum SiteSearchInputCheckError: Error { case failed, timeout }
             check(uiState.siteSearch?.keyword == "yt" && uiState.isEditingAddress, "Selected compact mode survives native layout without a focus transition")
             check(web.window === w && s.views[id] === web, "Selecting compact site mode preserves the mounted native page")
             try render(host, name: "quick-\(Int(width))-large-text")
+            if width == 480 {
+                let preview = q.anotherWeb(UUID())
+                s.peekPages[.quick(id)] = PeekState(web: preview, profileID: q.profile, spaceID: s.space.id)
+                for _ in 0..<12 { try await Task.sleep(for: .milliseconds(10)); host.layoutSubtreeIfNeeded() }
+                uiState.requestLocation(currentURL: preview.fixtureURL.absoluteString, context: s.searchInputContext(quickID: id))
+                uiState.addressText = "yt"; _ = uiState.activatePreferredSiteSearch(catalog: s.siteSearchCatalog, context: s.searchInputContext(quickID: id))
+                uiState.addressText = "old preview draft"
+                s.peekPages[.quick(id)] = PeekState(web: preview, profileID: q.profile, spaceID: s.space.id)
+                for _ in 0..<12 { try await Task.sleep(for: .milliseconds(10)); host.layoutSubtreeIfNeeded() }
+                check(uiState.siteSearch == nil && uiState.locationContext == nil && !uiState.isEditingAddress, "Replacing a compact Peek lifetime cancels input even with the same native view")
+                s.closeQuickPeek(id)
+                for _ in 0..<12 { try await Task.sleep(for: .milliseconds(10)); host.layoutSubtreeIfNeeded() }
+                uiState.requestLocation(currentURL: "about:blank", context: s.searchInputContext(quickID: id)); uiState.addressText = "yt"
+                _ = uiState.activatePreferredSiteSearch(catalog: s.siteSearchCatalog, context: s.searchInputContext(quickID: id))
+            }
             uiState.addressText = "must not follow another account"
             let newOwner = try s.createProfile(name: "Another owned fixture")
             s.namedDataStores[newOwner] = .nonPersistent()

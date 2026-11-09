@@ -63,7 +63,7 @@ Exported PDF/WebArchive files, printer output and print-system artifacts are out
 
 The developing 0.6.3 source adds configured site shortcuts; the public download above remains 0.6.2. Type `yt`, `wiki` or `gh` in the command bar or Quick Browse address field, press Tab, then type a query and press Return. Empty Backspace restores the shortcut; the pill's close button leaves site mode and keeps your query. Normal Return behavior stays unchanged until you select a site.
 
-Use **Alcove → Site Search Settings…**, Settings, or the command list to add, edit, disable or remove shortcuts. A search URL uses one `%s` for the query. Matching stays local and sends nothing before submission. Normal profiles share encrypted shortcut settings; searches use the current page's actual profile. Private windows start with presets and keep changes temporary. Editing or removing a selected provider requires selecting it again before submission. Automatic site discovery is still pending.
+Use **Alcove → Site Search Settings…**, Settings, or the command list to add, edit, disable or remove shortcuts. A search URL uses one `%s` for the query, with complete URL escapes for other literal percent signs. Path templates reject queries that would become dot-only path segments. Matching stays local and sends nothing before submission. Normal profiles share encrypted shortcut settings; searches use the current page's actual profile. Private windows start with presets and keep changes temporary. Editing or removing a selected provider requires selecting it again before submission. Automatic site discovery is still pending.
 
 ## Privacy and security
 

@@ -78,7 +78,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var clearingProfileID: UUID?
     @Published var deletingProfileID: UUID?
     var isShuttingDown = false
-    @Published var peekPages: [PeekContext: PeekState] = [:]
+    @Published var peekPages: [PeekContext: PeekState] = [:] { didSet { reconcileSearchInputContext() } }
     @Published var siteIcons: [UUID: NSImage] = [:]
     let isPrivate: Bool
     let privateDataStore: WKWebsiteDataStore?

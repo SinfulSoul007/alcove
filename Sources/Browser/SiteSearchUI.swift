@@ -27,7 +27,6 @@ struct SiteSearchPill: View {
     @State private var name = ""
     @State private var keyword = ""
     @State private var template = ""
-    @State private var enabled = true
     @State private var error: String?
     private var scale: Double { store.appearance.textScale }
     var body: some View {
@@ -97,11 +96,16 @@ struct SiteSearchPill: View {
             .tint(store.activeTheme.accent).preferredColorScheme(store.activeTheme.isDark ? .dark : .light)
     }
     private func edit(_ site: SiteSearch, isNew: Bool = false) {
-        editingID = isNew ? nil : site.id; name = site.name; keyword = site.keyword; template = site.template; enabled = site.enabled; error = nil
+        editingID = isNew ? nil : site.id; name = site.name; keyword = site.keyword; template = site.template; error = nil
     }
-    private func clearEditor() { editingID = nil; name = ""; keyword = ""; template = ""; enabled = true; error = nil }
+    private func clearEditor() { editingID = nil; name = ""; keyword = ""; template = ""; error = nil }
+    static func saveDraft(_ draft: SiteSearch, in store: BrowserStore) throws {
+        var value = draft
+        if let current = store.siteSearchCatalog.entries.first(where: { $0.id == draft.id }) { value.enabled = current.enabled }
+        try store.saveSiteSearch(value)
+    }
     private func save() {
-        do { try store.saveSiteSearch(SiteSearch(id: editingID ?? UUID(), name: name, keyword: keyword, template: template, enabled: enabled)); clearEditor() }
+        do { try Self.saveDraft(SiteSearch(id: editingID ?? UUID(), name: name, keyword: keyword, template: template), in: store); clearEditor() }
         catch { self.error = error.localizedDescription }
     }
     private func remove(_ site: SiteSearch) {

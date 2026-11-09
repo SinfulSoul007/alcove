@@ -5,6 +5,7 @@ import BrowserCore
 enum PeekContext: Hashable { case primary, quick(UUID) }
 
 @MainActor final class PeekState {
+    let id = UUID()
     let web: WKWebView
     let profileID: UUID
     var spaceID: UUID?

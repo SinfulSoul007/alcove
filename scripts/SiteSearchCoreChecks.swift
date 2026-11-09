@@ -32,6 +32,22 @@ let invalidTemplates = ["javascript:alert('%s')", "file:///tmp/%s", "data:text/h
 for template in invalidTemplates {
     reject("Invalid or authority-changing template is rejected: " + template.debugDescription) { _ = try SiteSearch(name: "Invalid", keyword: "bad", template: template).validated() }
 }
+let malformedEscapes = ["https://example.test/?q=%%s", "https://example.test/?q=%2%s", "https://example.test/?q=%G1%s", "https://example.test/?q=%s%", "https://example.test/?q=%s%0", "https://example.test/?q=%s%GG"]
+for template in malformedEscapes {
+    let malformed = SiteSearch(name: "Bad escape", keyword: "escape", template: template)
+    reject("Malformed literal percent escape is rejected: " + template) { _ = try malformed.validated() }
+    check(SiteSearchCatalog([malformed]).entries.isEmpty, "Saved catalog repair drops a malformed percent escape: " + template)
+}
+for dot in [".", ".."] {
+    reject("A path query cannot become a normalized dot segment: " + dot) { _ = try path.url(for: dot) }
+    check(try search.url(for: dot).absoluteString == "https://example.test/search?q=" + dot + "&fixed=1", "Dot-only queries remain usable in a query parameter: " + dot)
+}
+for template in ["https://example.test/find/.%s", "https://example.test/find/%2e%s", "https://example.test/find/%s.", "https://example.test/find/%s%2E"] {
+    reject("Literal and query dots cannot combine into a path traversal segment: " + template) { _ = try SiteSearch(name: "Dot", keyword: "dot", template: template).url(for: ".") }
+}
+let literalEscapes = SiteSearch(name: "Escapes", keyword: "esc", template: "https://example.test/find/%41%s?fixed=%25#%2e")
+check(try literalEscapes.url(for: "café").absoluteString == "https://example.test/find/%41caf%C3%A9?fixed=%25#%2e", "Complete literal escapes and Unicode query bytes remain intact")
+check(try SiteSearch(name: "Suffix", keyword: "suffix", template: "https://example.test/find/%s.html").url(for: "..").absoluteString == "https://example.test/find/...html", "A fixed path suffix can represent an otherwise dot-only query")
 let clean = try SiteSearch(name: "  Café  ", keyword: "  Cafe\u{301}.COM  ", template: "  https://example.test/?q=%s  ").validated()
 check(clean.name == "Café" && clean.keyword == "café.com" && clean.template == "https://example.test/?q=%s", "Configuration canonicalizes Unicode, case and surrounding whitespace")
 for keyword in ["", "two words", "javascript:", "a/b", "a?b", "a#b", "a@b", "a%b", "a\u{0001}b", String(repeating: "a", count: 33)] {

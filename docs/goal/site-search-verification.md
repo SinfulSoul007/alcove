@@ -10,9 +10,17 @@ A dedicated native settings panel supports add/edit/disable/delete and preset pr
 
 ## Verification
 
-`scripts/build.sh test` passed **814 browser checks**, with no failures or compiler diagnostics: 644 existing checks plus 57 site-search core, 46 store, 15 real WebKit/loopback and 52 native input/layout checks. This includes the existing chrome, compact window/native/lifecycle, profile, page-output and website suites. Owned fixtures use temporary metadata, supplied random keys, nonpersistent probe stores or randomly named website stores removed through their owned manifests; normal browsing data is not imported.
+`scripts/build.sh test` passed **849 browser checks after the fix pass**, with no failures or compiler diagnostics: 644 existing checks plus 79 site-search core, 51 store, 17 real WebKit/loopback and 58 native input/layout checks. This includes the existing chrome, compact window/native/lifecycle, profile, page-output and website suites. Owned fixtures use temporary metadata, supplied random keys, nonpersistent probe stores or randomly named website stores removed through their owned manifests; normal browsing data is not imported.
 
-Both optimized `arm64` and `x86_64` bundles built successfully without compiler diagnostics into separate `build/site-search/` directories. Strict ad hoc signatures/Hardened Runtime, exact six entitlements, byte-identical source Info.plist, architecture and version/build/tag/minimum macOS metadata all passed. The test/review/live app bundles were not overwritten or launched. One fresh whole-branch review follows the Task 3 commit. No live native UI, physical Intel, macOS 14, quarantined-install, independent security-audit or Safari performance result is claimed.
+Both optimized `arm64` and `x86_64` bundles built successfully without compiler diagnostics into separate `build/site-search/` directories. Strict ad hoc signatures/Hardened Runtime, exact six entitlements, byte-identical source Info.plist, architecture and version/build/tag/minimum macOS metadata all passed. The test/review/live app bundles were not overwritten or launched. The fresh whole-branch review of `b82ee13..a00af8a` found five Important issues and no Critical or Minor findings. All five were accepted by actual user effect for one fix pass, with no second review:
+
+- Literal malformed percent escapes could consume the query's first characters. Validation now checks both template sides independently, including saved-catalog repair and failed-save rollback.
+- Dot-only path expansions could normalize away the query. These submissions now stay local with an explanatory error; query-parameter and safely suffixed path templates remain usable.
+- An editor could overwrite a newer enabled toggle. The actual editor save path now preserves the live flag; both directions are independently checked.
+- A retired WebKit allocation's identity could be reused. Each Peek now has a lifetime UUID; primary drafts cancel synchronously and compact inputs observe that lifetime even when a native view is reused.
+- App Escape recognized only NSTextView composition. Event handling and menu validation now share an NSTextInputClient-aware check, with a non-NSTextView first-responder regression.
+
+The production-model/native probe evidence and exhaustive review limits are archived locally with this plan's evidence. The post-fix full suite passed all 849 checks with zero compiler diagnostics. All five findings have failing-before/passing-after coverage. Both post-fix optimized builds and exact signature/Info/six-entitlement gates also passed with no compiler diagnostics. No second review is claimed. This report covers local verification; CI results attach to the pushed commit. No live native UI, physical Intel, macOS 14, quarantined-install, independent security-audit or Safari performance result is claimed.
 
 Owned host-cache PNGs were inspected at 480 and 760 points with text at 1.35× and in short primary/settings hosts. Native query/pill geometry and mounted-page identity are checked. AppKit material and accessibility-tree behavior in never-shown hosts do not reproduce a visible app or VoiceOver. This evidence cannot close the live keyboard, focus, sidebar, resizing or animation gates.
 
@@ -36,9 +44,19 @@ Owned host-cache PNGs were inspected at 480 and 760 points with text at 1.35× a
 
 9. use native query-origin geometry plus inspected owned PNGs for the pill-width regression — never-shown NSHostingViews expose no accessibility child tree, so the attempted static-text AX traversal was not a valid visual measurement — cost if wrong: geometry/render coverage does not establish live VoiceOver, focus or animation behavior; those remain open. The invalid AX traversal/diagnostic prints are removed from the test suite.
 
+10. live keyboard/candidate-window/mouse focus, VoiceOver, animation and interactive resizing remain unjudged — hidden hosts and protocol probes do not establish live UI behavior and app access is unconfirmed — cost if wrong: live usability defects can remain despite green source fixtures; those acceptance gates stay open.
+
+11. physical Intel/macOS14, quarantined installation, independent security audit and Safari performance remain open — this source increment has no supported evidence for those platform/device/trust claims — cost if wrong: runtime/install/performance/security issues may appear on those environments; no corresponding success claim is made.
+
+12. automatic OpenSearch discovery/activation, Air Traffic Control and broader Arc parity remain future scope — these were explicitly retained outside this configured-search increment, with the full goal active — cost if wrong: expected Arc workflows remain unavailable until later work, not silently declared complete.
+
+13. reviewer did not judge remote public-release immutability — its remit prohibited GitHub mutations/inspection, while this run has made no tag/release/asset changes and preserves public0.6.2 in source/docs — cost if wrong: an independent remote change would not be detected by this source review; the earlier download-back verification is not represented as a fresh one.
+
+14. use per-Peek lifetime UUIDs and synchronous primary draft invalidation instead of ObjectIdentifier snapshots — owned WKWebView allocation immediately reused the retired address, violating stale-context rejection — cost if wrong: an extra ephemeral identity and earlier draft cancellation on preview changes; no metadata schema or website-store change. Compact UI observes that same lifetime, retaining native identity only for mounted view comparisons.
+
 ## Deferred minors
 
-Final review pending.
+None. The reviewer reported no Minor findings; every Important finding entered the fix pass.
 
 ## Remaining scope
 

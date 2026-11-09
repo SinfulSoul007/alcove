@@ -197,7 +197,7 @@ struct QuickBrowseUI: View {
             // registerView publishes a revision when these KVO properties change.
             .onChange(of: store.views[id]?.cameraCaptureState) { _, _ in refreshMediaStatus() }
             .onChange(of: store.views[id]?.microphoneCaptureState) { _, _ in refreshMediaStatus() }
-            .onChange(of: ownPeek.map(ObjectIdentifier.init)) { _, _ in
+            .onChange(of: store.peekPages[.quick(id)]?.id) { _, _ in
                 profilePickerVisible = false; state.dismissFind(); state.cancelLocation(currentURL: currentURL); refreshMediaStatus()
             }
             .onChange(of: ownPeek?.isLoading) { _, loading in if loading == false { refreshMediaStatus() } }
