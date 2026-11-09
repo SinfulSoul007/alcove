@@ -4,6 +4,7 @@ import WebKit
 import BrowserCore
 
 struct QuickWindowKey: Hashable { let ownerID: UUID; let pageID: UUID }
+enum PageOutputCommand { case printPage, pdf, webArchive }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
@@ -13,11 +14,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var owners: [UUID: BrowserWindowOwner] = [:]
     var normalOwner: BrowserWindowOwner?
     var quickWindows: [QuickWindowKey: QuickBrowseWindowController] = [:]
+    let pageOutput: PageOutputCoordinator
     let updates = UpdateController(installedTag: Bundle.main.object(forInfoDictionaryKey: "AlcoveReleaseTag") as? String ?? "unknown")
     var normalWindow: NSWindow?
     var escapeMonitor: Any?
     var paneFocusMonitor: Any?
     var updateTimer: Timer?
+    override init() { pageOutput = PageOutputCoordinator(); super.init() }
+    init(pageOutput: PageOutputCoordinator) { self.pageOutput = pageOutput; super.init() }
     var activeBrowserWindow: NSWindow? { NSApp.keyWindow?.sheetParent ?? NSApp.keyWindow ?? NSApp.mainWindow }
     var activeQuick: QuickBrowseWindowController? { quickWindows.values.first { $0.window === activeBrowserWindow } }
     var activeStore: BrowserStore? { activeQuick?.store ?? activeBrowserWindow.flatMap { windows[$0] } ?? normalOwner?.store }
@@ -26,6 +30,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard let store = activeStore else { return nil }
         return store.primaryPeekView ?? store.currentView
     }
+    func outputTarget(in window: NSWindow?) -> (store: BrowserStore, web: WKWebView, window: NSWindow)? {
+        guard let window else { return nil }
+        let store: BrowserStore, web: WKWebView?
+        if let quick = quickWindows.values.first(where: { $0.window === window }) {
+            store = quick.store; web = quick.activeWebView
+        } else if let primary = windows[window] {
+            store = primary; web = primary.primaryPeekView ?? primary.currentView
+        } else { return nil }
+        guard let web, web.window === window, store.isVisibleWebsite(web) else { return nil }
+        return (store, web, window)
+    }
+    func performPageOutput(_ command: PageOutputCommand, in window: NSWindow?) {
+        guard let target = outputTarget(in: window) else { return }
+        switch command {
+        case .printPage: pageOutput.printPage(web: target.web, store: target.store, window: target.window)
+        case .pdf: pageOutput.save(web: target.web, store: target.store, window: target.window, format: .pdf)
+        case .webArchive: pageOutput.save(web: target.web, store: target.store, window: target.window, format: .webArchive)
+        }
+    }
+    @objc func printPage() { performPageOutput(.printPage, in: activeBrowserWindow) }
+    @objc func exportPDF() { performPageOutput(.pdf, in: activeBrowserWindow) }
+    @objc func savePage() { performPageOutput(.webArchive, in: activeBrowserWindow) }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular); buildMenu()
         let owner = ensureNormalOwner()
@@ -135,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { openWindow(isPrivate: false); return true }
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
+        pageOutput.cancel(in: window)
         let owner = primaryOwners.removeValue(forKey: window); let lease = primaryLeases.removeValue(forKey: window)
         let store = windows.removeValue(forKey: window); window.contentView = nil
         store?.closePrimaryWindowPages()
@@ -175,6 +202,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(file, "New Tab", #selector(newTab), "t"); add(file, "New Private Window", #selector(privateWindow), "n", [.command, .shift])
         add(file, "New Space…", #selector(newSpace), "n", [.command, .control]); add(file, "Open Location…", #selector(location), "l")
         add(file, "Import Preview Session…", #selector(importSession), "")
+        file.addItem(.separator())
+        add(file, "Save Page As…", #selector(savePage), "s", [.command, .shift])
+        add(file, "Export as PDF…", #selector(exportPDF), "")
+        add(file, "Print…", #selector(printPage), "p")
+        file.addItem(.separator())
         add(file, "Close Tab", #selector(closeTab), "w"); add(file, "Reopen Closed Tab", #selector(reopen), "t", [.command, .shift])
         let edit = submenu("Edit")
         for (title, action, key) in [("Undo", "undo:", "z"), ("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] { edit.addItem(NSMenuItem(title: title, action: Selector(action), keyEquivalent: key)) }
@@ -195,6 +227,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.mainMenu = main
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let outputActions: Set<Selector> = [#selector(printPage), #selector(exportPDF), #selector(savePage)]
+        if let action = menuItem.action, outputActions.contains(action) {
+            guard let target = outputTarget(in: activeBrowserWindow) else { return false }
+            return pageOutput.canBegin(web: target.web, store: target.store, window: target.window)
+        }
         let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings)]
         if let action = menuItem.action, general.contains(action) { return true }
         guard let store = activeStore else { return menuItem.action == #selector(newTab) || menuItem.action == #selector(newQuick) || menuItem.action == #selector(location) }

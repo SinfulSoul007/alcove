@@ -4,7 +4,7 @@ Alcove is an unsigned experimental preview, not an independently audited or stab
 
 ## Boundaries
 
-- App Sandbox limits host-app access to outbound network connections, user-selected files and user-authorized camera/microphone use. No temporary sandbox exceptions or library-validation/JIT exceptions are requested by the host.
+- App Sandbox limits host-app access to outbound network connections, user-selected files, printing and user-authorized camera/microphone use. Source0.6.2 adds the printing entitlement; public0.6.1 does not have it. No temporary sandbox exceptions or library-validation/JIT exceptions are requested by the host.
 - Hardened Runtime is enabled; signing is ad hoc, not an authenticated Developer ID identity. Apple notarization is absent.
 - Normal session/library/preferences are AES-GCM encrypted with a 256-bit Keychain key marked `WhenUnlockedThisDeviceOnly`. Metadata files use mode 0600 in a 0700 directory. Authenticated decryption failure or unavailable Keychain disables saving to preserve data.
 - WebKit cookie/cache/website databases are separate from the encrypted metadata and managed by the system framework. We do not claim all on-disk browsing artifacts are encrypted by Alcove.

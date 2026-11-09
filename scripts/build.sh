@@ -38,6 +38,11 @@ run_website_checks() {
     trap - EXIT
 
 }
+if [[ "${1:-}" == "page-output-website-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputWebsiteChecks.swift -o "$MANUAL/page-output-website-checks"
+    "$MANUAL/page-output-website-checks"
+    exit
+fi
 if [[ "${1:-}" == "page-output-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputChecks.swift -o "$MANUAL/page-output-checks"
     "$MANUAL/page-output-checks"
@@ -97,6 +102,8 @@ fi
 if [[ "${1:-}" == "test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputChecks.swift -o "$MANUAL/page-output-checks"
     "$MANUAL/page-output-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputWebsiteChecks.swift -o "$MANUAL/page-output-website-checks"
+    "$MANUAL/page-output-website-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${SIDEBAR_SOURCES[@]}" scripts/SidebarInteractionChecks.swift -o "$MANUAL/sidebar-checks"
     "$MANUAL/sidebar-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ChromeChecks.swift -o "$MANUAL/chrome-checks"

@@ -210,6 +210,72 @@ final class OutputKeyCounter { var reads = 0 }
         check(!unsafe.contains("/") && !unsafe.contains(":") && !unsafe.contains("\u{0}") && !unsafe.hasPrefix(".") && unsafe.hasSuffix(".pdf"), "A document title cannot turn the suggested filename into a path or hidden control name")
         let unicode = PageOutputFormat.webArchive.suggestedName(String(repeating: "📚", count: 300))
         check(unicode.utf8.count < 240 && unicode.hasSuffix(".webarchive") && !unicode.contains("�"), "Long Unicode titles stay within filename byte bounds without breaking characters")
+
+        let menuBoundary = OutputBoundaries(), menuOutput = PageOutputCoordinator(environment: menuBoundary.environment)
+        let delegate = AppDelegate(pageOutput: menuOutput)
+        let menuFixture = try fixture()
+        delegate.windows[menuFixture.window] = menuFixture.store
+        check(delegate.outputTarget(in: menuFixture.window)?.web === menuFixture.web, "File output resolves the actual registered primary window document")
+        delegate.performPageOutput(.printPage, in: menuFixture.window)
+        check(menuBoundary.prints.count == 1 && menuBoundary.prints[0].0 === menuFixture.web, "The File print action reaches the visible private document")
+        menuBoundary.prints[0].2(false)
+        let originalID = menuFixture.store.selectedID!, splitID = menuFixture.store.newTab()
+        menuFixture.store.select(originalID); menuFixture.store.splitID = splitID; menuFixture.store.activePaneID = splitID
+        let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
+        let splitWeb = OutputFixtureWebView(frame: menuFixture.web.frame, configuration: config)
+        menuFixture.store.registerView(splitWeb, for: splitID, profile: BrowserProfile.defaultID)
+        let holder = NSView(frame: menuFixture.web.frame)
+        menuFixture.window.contentView = holder; holder.addSubview(menuFixture.web); holder.addSubview(splitWeb)
+        delegate.performPageOutput(.pdf, in: menuFixture.window)
+        check(menuBoundary.captures.last?.0 === splitWeb, "Page export follows the focused split pane instead of its covered sibling")
+        menuOutput.cancel(in: menuFixture.window)
+        menuFixture.store.openPeek(URL(string: "about:blank")!, from: splitWeb)
+        let primaryPeek = menuFixture.store.primaryPeekView!
+        primaryPeek.frame = splitWeb.frame; holder.addSubview(primaryPeek)
+        let peekDeadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while primaryPeek.url == nil && ContinuousClock.now < peekDeadline { try await Task.sleep(for: .milliseconds(10)) }
+        delegate.performPageOutput(.webArchive, in: menuFixture.window)
+        check(menuBoundary.captures.last?.0 === primaryPeek && menuBoundary.captures.last?.1 == .webArchive, "Save Page As captures the visible primary Peek without discarding its parent")
+        menuOutput.cancel(in: menuFixture.window)
+        let owner = BrowserWindowOwner(store: menuFixture.store), lease = try owner.acquirePrimary()
+        let quickID = try menuFixture.store.openQuickPage()
+        let quick = try QuickBrowseWindowController(owner: owner, pageID: quickID, requestPrimary: {}, requestProfiles: {}, didClose: {})
+        let quickWindow = quick.window!
+        delegate.quickWindows[QuickWindowKey(ownerID: owner.id, pageID: quickID)] = quick
+        check(delegate.outputTarget(in: quickWindow) == nil, "A blank compact start screen cannot export the primary window's document")
+        menuFixture.store.update(quickID) { $0.url = "about:blank" }
+        let quickWeb = menuFixture.store.view(for: quickID)
+        let mountDeadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while quickWeb.window !== quickWindow && ContinuousClock.now < mountDeadline {
+            quickWindow.contentView?.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(10))
+        }
+        check(delegate.outputTarget(in: quickWindow)?.web === quickWeb, "Compact-window routing stays independent of a different primary Peek")
+        menuFixture.store.openPeek(URL(string: "about:blank")!, from: quickWeb)
+        let quickPeek = menuFixture.store.quickPeekView(quickID)!
+        let quickDeadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while quickPeek.window !== quickWindow && ContinuousClock.now < quickDeadline {
+            quickWindow.contentView?.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(10))
+        }
+        check(delegate.outputTarget(in: quickWindow)?.web === quickPeek, "A compact Peek is the export target rather than its quick parent or primary preview")
+        let countBefore = menuBoundary.captures.count
+        delegate.performPageOutput(.pdf, in: quickWindow)
+        check(menuBoundary.captures.count == countBefore, "A hidden non-key compact fixture cannot start unsolicited file output")
+        quickWindow.close(); owner.release(lease)
+        let fallback = try fixture(isPrivate: false)
+        delegate.normalOwner = BrowserWindowOwner(store: fallback.store)
+        check(delegate.outputTarget(in: nil) == nil && delegate.outputTarget(in: other.window) == nil, "A fallback normal store cannot supply a page for a missing or unrelated native window")
+        let oldMenu = NSApp.mainMenu, oldWindowsMenu = NSApp.windowsMenu
+        defer { NSApp.mainMenu = oldMenu; NSApp.windowsMenu = oldWindowsMenu }
+        delegate.buildMenu()
+        let file = NSApp.mainMenu?.items.first { $0.title == "File" }?.submenu
+        let printItem = file?.items.first { $0.action == #selector(AppDelegate.printPage) }
+        let saveItem = file?.items.first { $0.action == #selector(AppDelegate.savePage) }
+        let pdfItem = file?.items.first { $0.action == #selector(AppDelegate.exportPDF) }
+        check(printItem?.target === delegate && printItem?.keyEquivalent == "p" && printItem?.keyEquivalentModifierMask == .command, "File registers a native Command-P print action")
+        check(saveItem?.target === delegate && saveItem?.keyEquivalent == "s" && saveItem?.keyEquivalentModifierMask == [.command, .shift] && pdfItem?.target === delegate, "File registers explicit WebArchive and PDF output actions")
+        let sidebarItem = NSApp.mainMenu?.items.first { $0.title == "View" }?.submenu?.items.first { $0.action == #selector(AppDelegate.sidebar) }
+        check(sidebarItem?.keyEquivalent == "s" && sidebarItem?.keyEquivalentModifierMask == .command, "Adding Save Page As preserves Command-S for the sidebar")
+        check(printItem.map { !delegate.validateMenuItem($0) } == true, "Native output menus stay disabled without a foreground browser window even when a normal store survives")
         if failures > 0 { throw OutputCheckError.expected }
     }
 }

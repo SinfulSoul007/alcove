@@ -45,7 +45,7 @@ import WebKit
         let info = NSPrintInfo.shared.copy() as! NSPrintInfo
         info.horizontalPagination = .fit; info.verticalPagination = .automatic
         let operation = web.printOperation(with: info)
-        operation.jobTitle = PageOutputFormat.pdf.suggestedName(web.title).replacingOccurrences(of: ".pdf", with: "", options: .anchored, range: nil)
+        operation.jobTitle = (PageOutputFormat.pdf.suggestedName(web.title) as NSString).deletingPathExtension
         operation.showsPrintPanel = true; operation.showsProgressPanel = true
         return operation
     }

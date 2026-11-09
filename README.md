@@ -50,6 +50,12 @@ Quick pages stay independent when their intended Space changes or disappears. Cl
 
 Quick pages and their archive are encrypted with their owning profile’s metadata. The default inactivity archive is six hours. Focused/loading pages, active playback/capture and open native sheets are kept; unknown media state is retained for a later check. Archiving closes live state and can discard unsaved forms. Choose **Off** to keep pages open. Use **Library → Archive → Quick Browse** to reopen in a compact window or directly in a matching-profile Space. Private quick records and preferences remain in memory only.
 
+## Page output in development
+
+Source builds for **0.6.2** add **File → Print…** (Command-P), **Export as PDF…** and **Save Page As…** (Command-Shift-S, WebArchive). Command-S still toggles the sidebar. These commands follow the visible split pane, Peek or Quick Browse page and use native print/save dialogs. The public0.6.1 download does not include them yet; accepted-output/quit handling and final verification are still in development.
+
+Exported PDF/WebArchive files, printer output and print-system artifacts are outside Alcove's metadata encryption. They can contain sensitive page content and metadata, including from private windows. Saved archives are not yet opened through Alcove's UI, and website print buttons using `window.print()` are not wired to native printing yet. Native dialog/printer testing remains pending.
+
 ## Privacy and security
 
 Alcove has no analytics, sync server or account service. Sites you visit receive their normal web requests; searches go to DuckDuckGo. No remote search suggestions are sent while you type.

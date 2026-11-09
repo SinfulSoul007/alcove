@@ -1,0 +1,11 @@
+# Page output verification — in development
+
+This increment adds native user-invoked print, PDF and WebArchive commands. The full browser/Arc fidelity goal remains active. There is no public0.6.2 download yet.
+
+Task1's initial missing interfaces have RED evidence. Its coordinator tests exercise real temporary-file writes and owned, never-shown windows, replacing only capture/presentation timing. Four later failing cases exposed cross-window status and discarded background results; the coordinator now keeps prepared output for its original window and routes errors through native window-owned presentation rather than shared browser status. All42 component checks pass without diagnostics; existing Quick native lifecycle checks pass16.
+
+Task2's File-menu/composition APIs were tested before wiring. Fifty-five focused checks now cover actual native menu registrations and explicit window targeting across primary/split/Peek/Quick/private contexts, blank/unrelated targets and retained normal-owner fallback. Key-window state is substituted only on owned fixtures; no live keyboard/menu success is inferred.
+
+Seven actual WebKit checks generate full-document PDFs, including text below the viewport, and WebArchives with distinct document markers. The saved archive is consumed by a separate nonpersistent WK view. The real atomic background writer saves selected temporary files. Native print-operation construction requires its print panel and retains the real page title; the first check failed because the old suffix removal left .pdf on that title. Save-panel construction restricts file types. No real native dialog or printer is operated, and private fixtures read no normal keys or metadata.
+
+Source identity is developing0.6.2-preview.1/build9, metadata format3 unchanged. Only `com.apple.security.print` is added to the previous entitlement set. Final optimized builds/exact entitlement checks, full suite, accepted-output tracking across close/Quit and one fresh whole-branch review are still required. The native visual/dialog/printer, minimum-OS/Intel, quarantined-install, website-print-button, archive-opening, audit/performance and full Arc gates remain open. Implementation rulings and final review results will be collected here before the plan workspace is removed.
