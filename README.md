@@ -6,7 +6,9 @@ A native, open-source WebKit browser for Mac, inspired by Arc’s sidebar, Space
 
 ## Download
 
-Download the universal ZIP (or DMG when offered) from [GitHub Releases](https://github.com/SinfulSoul007/alcove/releases). The app is self-contained: you do **not** need Xcode or developer tools to use a download. Open the DMG and drag **Alcove.app** to Applications, or unzip it and move the app there.
+Latest preview: [Download 0.6.2 DMG](https://github.com/SinfulSoul007/alcove/releases/download/v0.6.2-preview.1/Alcove-0.6.2-universal-unsigned-preview.dmg) · [ZIP](https://github.com/SinfulSoul007/alcove/releases/download/v0.6.2-preview.1/Alcove-0.6.2-universal-unsigned-preview.zip).
+
+Download the universal DMG or ZIP from [GitHub Releases](https://github.com/SinfulSoul007/alcove/releases). The app is self-contained: you do **not** need Xcode or developer tools to use a download. Open the DMG and drag **Alcove.app** to Applications, or unzip it and move the app there.
 
 **The preview is ad hoc signed, not Developer ID signed or notarized by Apple.** Gatekeeper may warn or block it. Do not disable Gatekeeper or other system protections to run it. If macOS blocks this preview, build from source or wait for a notarized release. Published SHA-256 checksums identify the release files; they are not an independent security certification.
 
@@ -28,6 +30,7 @@ Download the universal ZIP (or DMG when offered) from [GitHub Releases](https://
 - Private windows with temporary WebKit storage and no saved session/history.
 - Bookmarks, searchable history, closed-tab restore and an archive library.
 - Find in page, zoom, back/forward gestures, reload/stop.
+- Native printing, PDF export and WebArchive saving, with Quit choices for unfinished output.
 - Download destination picker and a window-local status list.
 - File uploads and camera/microphone permission prompts.
 - Encrypted local sessions, bookmarks, history and preferences using CryptoKit AES-GCM and a macOS Keychain key.
@@ -50,9 +53,9 @@ Quick pages stay independent when their intended Space changes or disappears. Cl
 
 Quick pages and their archive are encrypted with their owning profile’s metadata. The default inactivity archive is six hours. Focused/loading pages, active playback/capture and open native sheets are kept; unknown media state is retained for a later check. Archiving closes live state and can discard unsaved forms. Choose **Off** to keep pages open. Use **Library → Archive → Quick Browse** to reopen in a compact window or directly in a matching-profile Space. Private quick records and preferences remain in memory only.
 
-## Page output in development
+## Page output
 
-Source builds for **0.6.2** add **File → Print…** (Command-P), **Export as PDF…** and **Save Page As…** (Command-Shift-S, WebArchive). Command-S still toggles the sidebar. These commands follow the visible split pane, Peek or Quick Browse page and use native print/save dialogs. Accepted exports continue if their source window closes; Quit offers to wait for output, keep browsing or explicitly quit without finishing. A failed save cancels a waiting Quit. The public0.6.1 download does not include these commands yet; final verification and native dialog testing remain in progress.
+**0.6.2** adds **File → Print…** (Command-P), **Export as PDF…** and **Save Page As…** (Command-Shift-S, WebArchive). Command-S still toggles the sidebar. These commands follow the visible split pane, Peek or Quick Browse page and use native print/save dialogs. Accepted exports continue if their source window closes; Quit offers to wait for output, keep browsing or explicitly quit without finishing. A failed save cancels a waiting Quit. The public 0.6.2 preview includes these commands. Native dialog/printer testing remains in progress; see the [verification report](docs/releases/0.6.2-verification.md).
 
 Exported PDF/WebArchive files, printer output and print-system artifacts are outside Alcove's metadata encryption. They can contain sensitive page content and metadata, including from private windows. Saved archives are not yet opened through Alcove's UI, and website print buttons using `window.print()` are not wired to native printing yet. Native dialog/printer testing remains pending.
 
