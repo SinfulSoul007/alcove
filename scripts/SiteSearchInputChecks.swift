@@ -5,19 +5,20 @@ import BrowserCore
 
 enum SiteSearchInputCheckError: Error { case failed, timeout }
 @MainActor final class SiteInputWindow: NSWindow {}
+// Some toolchains import this protocol as nonisolated. Stateful witnesses assert AppKit's main-thread contract.
 @MainActor final class SiteCompositionClient: NSView, NSTextInputClient {
     var marked = true
     override var acceptsFirstResponder: Bool { true }
-    func insertText(_ string: Any, replacementRange: NSRange) {}
-    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) { marked = true }
-    func unmarkText() { marked = false }
-    func selectedRange() -> NSRange { NSRange(location: 0, length: 0) }
-    func markedRange() -> NSRange { marked ? NSRange(location: 0, length: 1) : NSRange(location: NSNotFound, length: 0) }
-    func hasMarkedText() -> Bool { marked }
-    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
-    func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
-    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect { .zero }
-    func characterIndex(for point: NSPoint) -> Int { 0 }
+    nonisolated func insertText(_ string: Any, replacementRange: NSRange) {}
+    nonisolated func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) { MainActor.assumeIsolated { marked = true } }
+    nonisolated func unmarkText() { MainActor.assumeIsolated { marked = false } }
+    nonisolated func selectedRange() -> NSRange { NSRange(location: 0, length: 0) }
+    nonisolated func markedRange() -> NSRange { MainActor.assumeIsolated { marked ? NSRange(location: 0, length: 1) : NSRange(location: NSNotFound, length: 0) } }
+    nonisolated func hasMarkedText() -> Bool { MainActor.assumeIsolated { marked } }
+    nonisolated func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
+    nonisolated func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
+    nonisolated func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect { .zero }
+    nonisolated func characterIndex(for point: NSPoint) -> Int { 0 }
 }
 @main struct SiteSearchInputChecks {
     @MainActor static func until(_ condition: () -> Bool) async throws {
