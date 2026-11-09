@@ -2,6 +2,13 @@ import AppKit
 import WebKit
 import BrowserCore
 
+final class OutputPrintThreadProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var deliveries: [Bool] = []
+    func record(_ onMain: Bool) { lock.withLock { deliveries.append(onMain) } }
+    var values: [Bool] { lock.withLock { deliveries } }
+}
+
 @MainActor final class OutputQuitBoundary {
     var counts: [Int] = [], callbacks: [(PageOutputQuitChoice) -> Void] = []
     var cancellations = 0
@@ -160,6 +167,48 @@ import BrowserCore
         check(earlier.isEmpty && later.isEmpty, "A failed file does not release any waiter while another accepted operation is pending")
         wb.pendingWrites[1]()
         check(earlier == [false, false] && later == [true], "Each waiter tracks failures during its own wait and completes exactly once")
+        for stage in ["capture", "picker", "accepted error", "deferred error", "away and back"] {
+            let item = try fixture(), b = OutputBoundaries(), c = PageOutputCoordinator(environment: b.environment)
+            b.deferWrite = true
+            c.save(web: item.web, store: item.store, window: item.window, format: .pdf)
+            if stage != "capture" { b.captures[0].2(.success(bytes)) }
+            if stage == "accepted error" || stage == "deferred error" {
+                b.choices[0].3(item.root.appendingPathComponent("missing/private.pdf"))
+                if stage == "deferred error" { item.window.fixtureKey = false; b.pendingWrites[0]() }
+            }
+            if stage == "away and back" { item.web.fixtureURL = URL(string: "https://replacement.example.invalid"); item.store.webView(item.web, didCommit: nil); item.web.fixtureURL = URL(string: "https://output.example.invalid/alpha") }
+            item.store.webView(item.web, didCommit: nil)
+            switch stage {
+            case "capture": b.captures[0].2(.success(bytes))
+            case "picker", "away and back": b.choices[0].3(item.destination)
+            case "accepted error": b.pendingWrites[0]()
+            default: item.window.fixtureKey = true; NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: item.window)
+            }
+            let correct = stage == "capture" ? b.choices.isEmpty && b.writes == 0 : b.orphanedErrors.count == 1 && b.errors.isEmpty && (stage.contains("error") || b.writes == 0)
+            check(correct, "A same-URL document replacement invalidates \(stage) ownership without touching the replacement document")
+        }
+        for beganBeforeRequest in [false, true] {
+            let item = try fixture(), b = OutputBoundaries(), c = PageOutputCoordinator(environment: b.environment)
+            if beganBeforeRequest { item.store.webView(item.web, didStartProvisionalNavigation: nil) }
+            c.save(web: item.web, store: item.store, window: item.window, format: .pdf)
+            if beganBeforeRequest { item.store.webView(item.web, didCommit: nil) }
+            else { item.store.webView(item.web, didStartProvisionalNavigation: nil) }
+            b.captures[0].2(.success(bytes))
+            check(b.choices.isEmpty && b.writes == 0, beganBeforeRequest ? "A navigation already underway at capture invalidates output when its document commits" : "Provisional navigation invalidates pending output before its URL or document commits")
+        }
+        let unchanged = try fixture(), ub = OutputBoundaries(), uc = PageOutputCoordinator(environment: ub.environment)
+        uc.save(web: unchanged.web, store: unchanged.store, window: unchanged.window, format: .pdf)
+        unchanged.store.revision += 1; ub.captures[0].2(.success(bytes)); ub.choices[0].3(unchanged.destination)
+        check(ub.writes == 1 && (try? Data(contentsOf: unchanged.destination)) == bytes, "An unrelated browser revision does not invalidate the original document's explicit export")
+        let printFixture = try fixture(), printProbe = OutputPrintThreadProbe()
+        let operation = PageOutputNative.printOperation(for: printFixture.web)
+        let nativeJob = PageOutputNative.PrintJob(operation: operation, window: printFixture.window) { _ in printProbe.record(Thread.isMainThread) }
+        typealias PrintCallback = @convention(c) (AnyObject, Selector, NSPrintOperation, Bool, UnsafeMutableRawPointer?) -> Void
+        let selector = Selector(("didRun:success:contextInfo:"))
+        let invoke = unsafeBitCast(nativeJob.method(for: selector), to: PrintCallback.self)
+        await Task.detached { invoke(nativeJob, selector, operation, true, nil); invoke(nativeJob, selector, operation, false, nil) }.value
+        try await waitUntil { !printProbe.values.isEmpty }
+        check(printProbe.values == [true], "A native Objective-C print callback from a worker delivers once on the main actor")
         if failures > 0 { throw OutputCheckError.expected }
     }
 }

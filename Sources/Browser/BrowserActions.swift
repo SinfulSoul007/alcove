@@ -198,7 +198,8 @@ extension BrowserStore {
         }
         revision += 1
     }
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { revision += 1 }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { invalidateDocumentIdentity(for: webView) }
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { invalidateDocumentIdentity(for: webView); revision += 1 }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code != NSURLErrorCancelled { message = error.localizedDescription }; revision += 1
     }

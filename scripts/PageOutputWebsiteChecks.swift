@@ -64,6 +64,31 @@ enum OutputWebsiteError: Error { case timedOut, failed }
         let archivePanel = PageOutputNative.savePanel(name: "Chosen.webarchive", format: .webArchive)
         check(pdfPanel.nameFieldStringValue == "Chosen.pdf" && pdfPanel.allowedContentTypes == [.pdf] && !pdfPanel.allowsOtherFileTypes && archivePanel.allowedContentTypes == [.webArchive], "Native save panels present the requested names and restrict the correct file formats")
         check(keyReads == 0 && !FileManager.default.fileExists(atPath: a.sessionURL.path) && !FileManager.default.fileExists(atPath: b.sessionURL.path), "Real private SDK output writes only selected files and never normal metadata or keys")
+        let originalURL = alpha.url
+        var pendingChoice: ((URL?) -> Void)?, orphaned: [String] = [], localErrors: [String] = []
+        var held = PageOutputEnvironment.live
+        held.choose = { _, _, _, done in pendingChoice = done; return {} }
+        held.reportError = { text, _ in localErrors.append(text) }; held.reportOrphanedError = { orphaned.append($0) }
+        let staleOutput = PageOutputCoordinator(environment: held)
+        staleOutput.save(web: alpha, store: a, window: aw, format: .pdf)
+        try await waitUntil { pendingChoice != nil }
+        alpha.loadHTMLString("<title>REPLACEMENT B</title><body>New account document</body>", baseURL: originalURL)
+        try await waitUntil { alpha.title == "REPLACEMENT B" && !alpha.isLoading }
+        let staleFile = root.appendingPathComponent("stale-document.pdf")
+        pendingChoice?(staleFile)
+        try await waitUntil { !staleOutput.isBusy(in: aw) }
+        check(alpha.url == originalURL && !FileManager.default.fileExists(atPath: staleFile.path) && orphaned.count == 1, "A real same-URL WebKit replacement rejects a pending original-document export")
+        orphaned.removeAll(); pendingChoice = nil
+        var pendingWrite: ((Result<Void, Error>) -> Void)?
+        held.choose = { _, _, _, done in done(root.appendingPathComponent("accepted.pdf")); return {} }
+        held.write = { _, _, done in pendingWrite = done }
+        let acceptedOutput = PageOutputCoordinator(environment: held)
+        acceptedOutput.save(web: alpha, store: a, window: aw, format: .pdf)
+        try await waitUntil { pendingWrite != nil }
+        alpha.loadHTMLString("<title>REPLACEMENT C</title><body>Another account document</body>", baseURL: originalURL)
+        try await waitUntil { alpha.title == "REPLACEMENT C" && !alpha.isLoading }
+        pendingWrite?(.failure(OutputWebsiteError.failed))
+        check(orphaned.count == 1 && localErrors.isEmpty && acceptedOutput.pendingOutputCount == 0, "An accepted export failure after real same-URL replacement stays generic and drains its operation")
         if failures > 0 { throw OutputWebsiteError.failed }
     }
 }

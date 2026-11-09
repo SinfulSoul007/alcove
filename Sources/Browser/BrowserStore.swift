@@ -73,6 +73,12 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var downloadIDs: [ObjectIdentifier: UUID] = [:]
     var archiveTimer: Timer?
     var views: [UUID: WKWebView] = [:]
+    private let documentIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
+    func documentIdentity(for web: WKWebView) -> NSUUID {
+        if let identity = documentIDs.object(forKey: web) { return identity }
+        let identity = NSUUID(); documentIDs.setObject(identity, forKey: web); return identity
+    }
+    func invalidateDocumentIdentity(for web: WKWebView) { documentIDs.setObject(NSUUID(), forKey: web) }
     var viewProfileIDs: [UUID: UUID] = [:]
     var namedDataStores: [UUID: WKWebsiteDataStore] = [:]
     var persistedProfileIDs: Set<UUID> = [BrowserProfile.defaultID]
@@ -411,7 +417,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code != NSURLErrorCancelled { message = error.localizedDescription }
     }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { message = "This page stopped responding. Use Reload to try again." }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { invalidateDocumentIdentity(for: webView); message = "This page stopped responding. Use Reload to try again." }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         createPopup(from: webView, configuration: configuration)
     }

@@ -1,4 +1,4 @@
-# Page output verification — in development
+# Page output verification — reviewed source
 
 This increment adds native user-invoked print, PDF and WebArchive commands. The full browser/Arc fidelity goal remains active. There is no public0.6.2 download yet.
 
@@ -10,9 +10,9 @@ Seven actual WebKit checks generate full-document PDFs, including text below the
 
 Accepted file writes and native print operations now have application lifetime independent of their window jobs. Closed or changed sources receive generic nonmodal failure results without captured URL/title/destination data. A pending error for a document falls back to this result when that document closes or is replaced. Normal Quit waits for fast output quietly; longer work offers Wait, Then Quit / Quit Without Finishing / Keep Browsing. Waiting includes newly accepted output until the operation set drains; a file failure cancels that Quit. Native print cancellation drains without inventing a file failure. Repeated and synchronous presentation callbacks are identity guarded, and no application reply precedes its native termination decision. Result/Quit windows cannot inherit a background normal store for page shortcuts; settings/updates/new-window commands remain available.
 
-Source identity is developing0.6.2-preview.1/build9, metadata format3 unchanged. Only `com.apple.security.print` is added to the previous entitlement set. The complete suite passes633 browser checks with zero failures/compiler diagnostics. Optimized arm64 and x86_64 bundles pass strict ad hoc signature/hardened-runtime verification, exact six entitlements and exact version/build/tag/minimum-OS metadata. One fresh whole-branch review and source CI remain required; no new public preview has been published. The native visual/dialog/printer, minimum-OS/Intel, quarantined-install, website-print-button, archive-opening, audit/performance and full Arc gates remain open. Implementation rulings and final review results will be collected here before the plan workspace is removed.
+Source identity is developing0.6.2-preview.1/build9, metadata format3 unchanged. Only `com.apple.security.print` is added to the previous entitlement set. The complete suite passes644 browser checks with zero failures/compiler diagnostics. Optimized arm64 and x86_64 bundles pass strict ad hoc signature/hardened-runtime verification, exact six entitlements and exact version/build/tag/minimum-OS metadata. One fresh source review found two Important issues, both reproduced and fixed in one pass: per-view document identity now rejects same-URL replacement and stale local errors, and the native Objective-C print callback relays worker completion to MainActor before any state changes. Fifty lifecycle checks and nine real SDK checks pass alongside55 coordinator/menu checks and the prior530 browser checks. No Critical issues or deferred minors remain. Source CI is pending; no new public preview has been published. The native visual/dialog/printer, minimum-OS/Intel, quarantined-install, website-print-button, archive-opening, audit/performance and full Arc gates remain open. Implementation rulings and final review results will be collected here before the plan workspace is removed.
 
-## Implementation decisions
+## Rulings I made
 
 - Ruling: skip an unchanged full baseline rerun — exact public source/CI already verifies the current browser code, and only design/plan files are new — cost if wrong: an environmental baseline difference can first appear in the new focused/full gates.
 
@@ -29,3 +29,15 @@ Source identity is developing0.6.2-preview.1/build9, metadata format3 unchanged.
 - Task 3: Ruling: use asynchronous native Quit choices and track native printing as well as accepted file IO — a modal loop can obstruct IO callbacks, and native print preparation must not disappear from termination tracking when its source window closes — cost if wrong: additional prompt/operation identities and native keyboard/lifetime behavior to verify. Coalesce fast output before showing choices, ignore stale replies, and keep the explicit Quit action usable after Wait.
 
 - Task 3: Ruling: non-browser result/Quit windows have no active browser store — the former normal-owner fallback could direct page shortcuts to an unrelated background document — cost if wrong: app-level commands may be unintentionally disabled, so keep updates/settings/new-window commands available and add owned-window/action regressions.
+
+- Final: Ruling: native save/print focus restoration, print preview/cancel and result/Quit interaction remain open — authorized GUI access is unavailable, and owned construction/injected checks cannot establish live behavior — cost if wrong: native usability defects may remain in an accurately labelled preview.
+
+- Final: Ruling: physical printing, sandboxed printer execution, macOS14/Intel runtime and quarantined installation remain open — these require environments not supplied by local structural verification — cost if wrong: device/OS/install incompatibilities can remain.
+
+- Final: Ruling: archive reopening, website window.print(), Safari benchmarks and full Arc parity remain active future work — this output increment does not establish them, and the user goal is not marked complete — cost if wrong: a partial increment could otherwise be mistaken for the full browser.
+
+- Final: Ruling: invalidate document identity at provisional main-frame start, commit and content-process termination using a weak-key per-view map — URL equality does not establish an unchanged document, and commit must also catch navigation already underway at request time — cost if wrong: a failed/cancelled provisional navigation conservatively invalidates a legitimate pending save, requiring a retry; unrelated views and accepted immutable writes are preserved. No identity is persisted and views are not retained by the map.
+
+## Deferred minors
+
+None.

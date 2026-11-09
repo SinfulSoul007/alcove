@@ -31,6 +31,7 @@ enum PageOutputFormat: Equatable, Sendable {
     private enum Stage { case capture, ready, choose, print, write }
     @MainActor private final class Job {
         let id = UUID(), key: ObjectIdentifier, profile: UUID, url: URL, title: String?
+        let document: NSUUID
         weak var store: BrowserStore?
         weak var web: WKWebView?
         weak var window: NSWindow?
@@ -44,6 +45,7 @@ enum PageOutputFormat: Equatable, Sendable {
         init(web: WKWebView, store: BrowserStore, window: NSWindow, profile: UUID, url: URL, stage: Stage) {
             self.key = ObjectIdentifier(window); self.web = web; self.store = store; self.window = window
             self.profile = profile; self.url = url; self.title = web.title; self.stage = stage
+            self.document = store.documentIdentity(for: web)
         }
         deinit {
             timeout?.cancel(); if let closing { NotificationCenter.default.removeObserver(closing) }
@@ -97,7 +99,8 @@ enum PageOutputFormat: Equatable, Sendable {
     private func current(_ job: Job, stage: Stage) -> Bool { jobs[job.key] === job && job.stage == stage }
     private func valid(_ job: Job) -> Bool {
         guard !job.cancelled, let web = job.web, let store = job.store, let window = job.window else { return false }
-        return web.window === window && web.url == job.url && store.profileID(for: web) == job.profile && store.isVisibleWebsite(web)
+        return web.window === window && web.url == job.url && store.profileID(for: web) == job.profile
+            && store.documentIdentity(for: web) === job.document && store.isVisibleWebsite(web)
     }
     private func install(_ cancellation: @escaping () -> Void, for job: Job, stage: Stage) {
         if current(job, stage: stage) { job.presentation = cancellation }

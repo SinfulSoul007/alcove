@@ -108,7 +108,7 @@ import WebKit
             guard !completed else { return }; completed = true; completion(nil)
         }
     }
-    @MainActor private final class PrintJob: NSObject {
+    @MainActor final class PrintJob: NSObject {
         let operation: NSPrintOperation
         weak var window: NSWindow?
         weak var sheet: NSWindow?
@@ -123,8 +123,11 @@ import WebKit
             sheet = window.attachedSheet
         }
         func cancel() { if let window, let sheet, sheet.sheetParent === window { window.endSheet(sheet, returnCode: .cancel) } }
-        @objc func didRun(_ operation: NSPrintOperation, success: Bool, contextInfo: UnsafeMutableRawPointer?) {
-            guard !completed else { return }; completed = true; completion(success)
+        @objc nonisolated func didRun(_ operation: NSPrintOperation, success: Bool, contextInfo: UnsafeMutableRawPointer?) {
+            // Objective-C may invoke this delegate on the native print worker.
+            Task { @MainActor [self] in
+                guard !completed else { return }; completed = true; completion(success)
+            }
         }
     }
 }
