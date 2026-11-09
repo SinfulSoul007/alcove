@@ -3,6 +3,15 @@ import WebKit
 
 @MainActor final class PageOutputNative {
     private var prints: [UUID: PrintJob] = [:]
+    private var alerts: [UUID: AlertPresentation] = [:]
+    var quitPresenter: PageOutputQuitPresenter {
+        { [self] count, completion in
+            let alert = Self.quitAlert(count: count)
+            return present(alert, key: true) { index in
+                completion(index == 0 ? .wait : index == 1 ? .quitNow : .cancel)
+            }
+        }
+    }
     var environment: PageOutputEnvironment {
         PageOutputEnvironment(capture: { web, format, completion in
             switch format {
@@ -33,7 +42,20 @@ import WebKit
         }, reportError: { message, window in
             let alert = Self.errorAlert(message: message)
             alert.beginSheetModal(for: window) { _ in }
+        }, reportOrphanedError: { [self] message in
+            _ = present(Self.errorAlert(message: message), key: false) { _ in }
         })
+    }
+    private func present(_ alert: NSAlert, key: Bool, completion: @escaping (Int?) -> Void) -> (() -> Void) {
+        let id = UUID()
+        let presentation = AlertPresentation(alert: alert) { [weak self] index in
+            self?.alerts.removeValue(forKey: id); completion(index)
+        }
+        alerts[id] = presentation; presentation.show(key: key)
+        return { [weak self, weak presentation] in
+            guard let self, let presentation, self.alerts[id] === presentation else { return }
+            self.alerts.removeValue(forKey: id); presentation.dismiss()
+        }
     }
     static func savePanel(name: String, format: PageOutputFormat) -> NSSavePanel {
         let panel = NSSavePanel(); panel.nameFieldStringValue = name
@@ -53,6 +75,38 @@ import WebKit
         let alert = NSAlert(); alert.messageText = "Unable to save page"
         alert.informativeText = String(message.prefix(1000)); alert.addButton(withTitle: "OK")
         return alert
+    }
+    static func quitAlert(count: Int) -> NSAlert {
+        let alert = NSAlert(); alert.messageText = "Finish output before quitting?"
+        alert.informativeText = "\(count) requested output operation\(count == 1 ? " is" : "s are") still running. Quitting now may leave an export or print job unfinished."
+        alert.addButton(withTitle: "Wait, Then Quit")
+        alert.addButton(withTitle: "Quit Without Finishing")
+        alert.addButton(withTitle: "Keep Browsing").keyEquivalent = "\u{1b}"
+        return alert
+    }
+    @MainActor private final class AlertPresentation: NSObject, NSWindowDelegate {
+        let alert: NSAlert
+        let completion: (Int?) -> Void
+        var completed = false
+        init(alert: NSAlert, completion: @escaping (Int?) -> Void) {
+            self.alert = alert; self.completion = completion; super.init()
+            alert.layout(); alert.window.isReleasedWhenClosed = false; alert.window.delegate = self
+            for (index, button) in alert.buttons.enumerated() { button.tag = index; button.target = self; button.action = #selector(choose(_:)) }
+        }
+        func show(key: Bool) {
+            alert.window.center()
+            if key { alert.window.makeKeyAndOrderFront(nil) } else { alert.window.orderFront(nil) }
+        }
+        func dismiss() {
+            guard !completed else { return }; completed = true
+            alert.window.delegate = nil; alert.window.close()
+        }
+        @objc func choose(_ button: NSButton) {
+            guard !completed else { return }; dismiss(); completion(button.tag)
+        }
+        func windowWillClose(_ notification: Notification) {
+            guard !completed else { return }; completed = true; completion(nil)
+        }
     }
     @MainActor private final class PrintJob: NSObject {
         let operation: NSPrintOperation

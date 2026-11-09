@@ -15,16 +15,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var normalOwner: BrowserWindowOwner?
     var quickWindows: [QuickWindowKey: QuickBrowseWindowController] = [:]
     let pageOutput: PageOutputCoordinator
+    let outputTermination: PageOutputTermination
     let updates = UpdateController(installedTag: Bundle.main.object(forInfoDictionaryKey: "AlcoveReleaseTag") as? String ?? "unknown")
     var normalWindow: NSWindow?
     var escapeMonitor: Any?
     var paneFocusMonitor: Any?
     var updateTimer: Timer?
-    override init() { pageOutput = PageOutputCoordinator(); super.init() }
-    init(pageOutput: PageOutputCoordinator) { self.pageOutput = pageOutput; super.init() }
+    override convenience init() { self.init(pageOutput: PageOutputCoordinator()) }
+    init(pageOutput: PageOutputCoordinator, quitPresenter: PageOutputQuitPresenter? = nil) {
+        self.pageOutput = pageOutput
+        outputTermination = PageOutputTermination(output: pageOutput, presenter: quitPresenter ?? PageOutputNative().quitPresenter)
+        super.init()
+    }
     var activeBrowserWindow: NSWindow? { NSApp.keyWindow?.sheetParent ?? NSApp.keyWindow ?? NSApp.mainWindow }
     var activeQuick: QuickBrowseWindowController? { quickWindows.values.first { $0.window === activeBrowserWindow } }
-    var activeStore: BrowserStore? { activeQuick?.store ?? activeBrowserWindow.flatMap { windows[$0] } ?? normalOwner?.store }
+    func browserStore(in window: NSWindow?) -> BrowserStore? {
+        guard let window else { return nil }
+        return quickWindows.values.first { $0.window === window }?.store ?? windows[window]
+    }
+    var activeStore: BrowserStore? { browserStore(in: activeBrowserWindow) }
     var activeWebView: WKWebView? {
         if let quick = activeQuick { return quick.activeWebView }
         guard let store = activeStore else { return nil }
@@ -175,6 +184,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let paneFocusMonitor { NSEvent.removeMonitor(paneFocusMonitor) }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    func terminationDecision(reply: @escaping (Bool) -> Void) -> NSApplication.TerminateReply { outputTermination.decision(reply: reply) }
+    func resurfaceQuitChoices() -> Bool { outputTermination.resurface() }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        terminationDecision { sender.reply(toApplicationShouldTerminate: $0) }
+    }
     func application(_ application: NSApplication, open urls: [URL]) {
         let owner = ensureNormalOwner()
         for url in urls where QuickBrowseRouting.host(for: url) != nil {
@@ -232,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let target = outputTarget(in: activeBrowserWindow) else { return false }
             return pageOutput.canBegin(web: target.web, store: target.store, window: target.window)
         }
-        let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings)]
+        let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings), #selector(customize), #selector(checkUpdates)]
         if let action = menuItem.action, general.contains(action) { return true }
         guard let store = activeStore else { return menuItem.action == #selector(newTab) || menuItem.action == #selector(newQuick) || menuItem.action == #selector(location) }
         let quick = activeQuick
@@ -257,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
     }
     @objc func about() { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Alcove", .applicationVersion: updates.installedTag + " · Unsigned Preview", .credits: NSAttributedString(string: "An independent, open-source WebKit browser for Mac. Not notarized by Apple.")]) }
-    @objc func quit() { NSApp.terminate(nil) }
+    @objc func quit() { if !resurfaceQuitChoices() { NSApp.terminate(nil) } }
     @objc func openMain() { openWindow(isPrivate: false) }
     @objc func newQuick() {
         if let quick = activeQuick { quick.newQuick(); return }

@@ -38,13 +38,18 @@ run_website_checks() {
     trap - EXIT
 
 }
+if [[ "${1:-}" == "page-output-lifetime-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/PageOutputLifetimeChecks.swift -o "$MANUAL/page-output-lifetime-checks"
+    "$MANUAL/page-output-lifetime-checks"
+    exit
+fi
 if [[ "${1:-}" == "page-output-website-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputWebsiteChecks.swift -o "$MANUAL/page-output-website-checks"
     "$MANUAL/page-output-website-checks"
     exit
 fi
 if [[ "${1:-}" == "page-output-test" ]]; then
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputChecks.swift -o "$MANUAL/page-output-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/PageOutputChecks.swift -o "$MANUAL/page-output-checks"
     "$MANUAL/page-output-checks"
     exit
 fi
@@ -100,7 +105,9 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputChecks.swift -o "$MANUAL/page-output-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/PageOutputLifetimeChecks.swift -o "$MANUAL/page-output-lifetime-checks"
+    "$MANUAL/page-output-lifetime-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/PageOutputChecks.swift -o "$MANUAL/page-output-checks"
     "$MANUAL/page-output-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputWebsiteChecks.swift -o "$MANUAL/page-output-website-checks"
     "$MANUAL/page-output-website-checks"
