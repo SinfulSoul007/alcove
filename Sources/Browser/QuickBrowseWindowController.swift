@@ -90,7 +90,7 @@ import BrowserCore
         if store.focusedQuickPageID == pageID { store.focusedQuickPageID = nil }
         store.touchQuickPage(pageID)
     }
-    func requestLocation() { state.requestLocation(currentURL: activeWebView?.url?.absoluteString ?? store.quickPage(pageID)?.tab.url ?? "") }
+    func requestLocation() { state.requestLocation(currentURL: activeWebView?.url?.absoluteString ?? store.quickPage(pageID)?.tab.url ?? "", context: store.searchInputContext(quickID: pageID)) }
     func newQuick() {
         guard let profile = store.quickProfileID(pageID) else { return }
         do { _ = try store.openQuickPage(profileID: profile) } catch { state.navigationError = error.localizedDescription }

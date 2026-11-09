@@ -38,6 +38,34 @@ run_website_checks() {
     trap - EXIT
 
 }
+run_site_search_checks() {
+    local mode="$1"
+    if [[ "$mode" == "store" ]]; then
+        xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/SiteSearchStoreChecks.swift -o "$MANUAL/site-search-store-checks"
+    else
+        xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchWebsiteChecks.swift scripts/OwnedWebsiteStores.swift -o "$MANUAL/site-search-website-checks"
+    fi
+    local search_port_file
+    search_port_file="$(mktemp "$MANUAL/site-search-port.XXXXXX")"
+    python3 scripts/SiteSearchFixture.py "$search_port_file" > "$MANUAL/site-search-fixture.log" 2>&1 &
+    local search_fixture_pid=$!
+    trap 'kill "$search_fixture_pid" 2>/dev/null || true; wait "$search_fixture_pid" 2>/dev/null || true; rm -f "$search_port_file"' EXIT
+    for attempt in {1..500}; do [[ -s "$search_port_file" ]] && break; kill -0 "$search_fixture_pid" 2>/dev/null || break; sleep 0.02; done
+    [[ -s "$search_port_file" ]]
+    ALCOVE_SITE_SEARCH_FIXTURE_URL="http://127.0.0.1:$(cat "$search_port_file")/" "$MANUAL/site-search-$mode-checks"
+    kill "$search_fixture_pid" 2>/dev/null || true
+    wait "$search_fixture_pid" 2>/dev/null || true
+    rm -f "$search_port_file"
+    trap - EXIT
+}
+if [[ "${1:-}" == "site-search-website-test" ]]; then
+    run_site_search_checks website
+    exit
+fi
+if [[ "${1:-}" == "site-search-store-test" ]]; then
+    run_site_search_checks store
+    exit
+fi
 if [[ "${1:-}" == "site-search-core-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/SiteSearchCoreChecks.swift -o "$MANUAL/site-search-core-checks"
     "$MANUAL/site-search-core-checks"
@@ -110,6 +138,8 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    run_site_search_checks store
+    run_site_search_checks website
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/SiteSearchCoreChecks.swift -o "$MANUAL/site-search-core-checks"
     "$MANUAL/site-search-core-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/PageOutputLifetimeChecks.swift -o "$MANUAL/page-output-lifetime-checks"

@@ -10,8 +10,21 @@ enum BrowserPanel: String, Identifiable { case library, settings, appearance, up
 @MainActor
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     @Published var session = Session()
-    @Published var commandVisible = false
+    @Published var commandVisible = false {
+        didSet {
+            if !commandVisible {
+                if commandSiteSearch != nil { commandSiteSearch = nil }
+                commandContext = nil
+                if commandError != nil { commandError = nil }
+                if !command.isEmpty { command = "" }
+                commandOpensNewTab = false
+            }
+        }
+    }
     @Published var command = ""
+    @Published var commandSiteSearch: SiteSearch?
+    var commandContext: SearchInputContext?
+    @Published var commandError: String?
     var commandOpensNewTab = false
     @Published var sidebarVisible = true
     @Published var presentedPanel: BrowserPanel?
@@ -52,7 +65,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         get { library(for: activeProfileID) }
         set { setLibrary(newValue, for: activeProfileID) }
     }
-    @Published var preferences = Preferences()
+    @Published var preferences = Preferences() { didSet { siteSearchCatalogCache = nil } }
+    var siteSearchCatalogCache: SiteSearchCatalog?
     var libraryVisible: Bool { get { presentedPanel == .library } set { if newValue { presentedPanel = .library } else if libraryVisible { presentedPanel = nil } } }
     var settingsVisible: Bool { get { presentedPanel == .settings } set { if newValue { presentedPanel = .settings } else if settingsVisible { presentedPanel = nil } } }
     @Published var findVisible = false
@@ -188,6 +202,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func select(_ id: UUID) {
         guard session.spaces[spaceIndex].tabs.contains(where: { $0.id == id }) else { return }
+        if focusedID != id { dismissCommand() }
         session.spaces[spaceIndex].selected = id; activePaneID = nil
         accessOrder.removeAll { $0 == id }; accessOrder.append(id)
         update(id) { $0.lastAccessed = Date() }
@@ -197,6 +212,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func selectSpace(_ id: UUID) {
         guard session.spaces.contains(where: { $0.id == id }) else { return }
+        if session.selectedSpace != id { dismissCommand() }
         closePrimaryPeek(); activePaneID = nil; splitID = nil; session.selectedSpace = id; save()
     }
     func addSpace() {
@@ -301,16 +317,26 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func showCommand(new: Bool = false) {
         commandOpensNewTab = new
-        command = new ? "" : (selectedTab?.url ?? ""); commandVisible = true
+        commandSiteSearch = nil; commandError = nil; commandContext = searchInputContext()
+        command = new ? "" : (primaryPeekView?.url?.absoluteString ?? currentView?.url?.absoluteString ?? selectedTab?.url ?? ""); commandVisible = true
     }
     func navigate(_ input: String) {
-        guard let url = Address.resolve(input) else { return }
-        guard !profileUnavailable(activeProfileID) else { message = "This profile is busy or unavailable. Try again after its data operation finishes."; return }
-        commandVisible = false
-        let id = commandOpensNewTab && selectedTab?.url.isEmpty != true ? newTab() : (focusedID ?? newTab())
-        commandOpensNewTab = false
-        update(id) { $0.url = url.absoluteString; $0.title = url.host ?? "Page" }
-        view(for: id).load(URLRequest(url: url))
+        let editing = commandVisible, new = commandOpensNewTab
+        do {
+            if editing { guard let context = commandContext, matchesSearchInputContext(context) else { throw SearchInputError.contextChanged } }
+            guard !profileUnavailable(activeProfileID), !isShuttingDown else { throw ProfileError.pending }
+            let url = try resolveSearchInput(input, selection: editing ? commandSiteSearch : nil)
+            let peek = editing && !new ? primaryPeekView : nil
+            commandVisible = false
+            if let peek { peek.load(URLRequest(url: url)); return }
+            if editing && new { closePrimaryPeek() }
+            let id = new && selectedTab?.url.isEmpty != true ? newTab() : (focusedID ?? newTab())
+            update(id) { $0.url = url.absoluteString; $0.title = url.host ?? "Page" }
+            view(for: id).load(URLRequest(url: url))
+        } catch {
+            if editing { commandError = error.localizedDescription }
+            else { message = error.localizedDescription }
+        }
     }
     func update(_ id: UUID, change: (inout BrowserCore.Tab) -> Void) {
         guard let profile = profileID(for: id), var value = tab(id) else { return }

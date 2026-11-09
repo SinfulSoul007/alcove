@@ -8,6 +8,9 @@ import BrowserCore
 final class QuickBrowseWindowState: ObservableObject {
     @Published var addressText = ""
     @Published var isEditingAddress = false
+    @Published var siteSearch: SiteSearch?
+    var locationContext: SearchInputContext?
+    private var locationURL = ""
     @Published private(set) var locationFocusRequest = 0
     @Published var findText = "" {
         didSet { if findText != oldValue { findGeneration = UUID(); findResult = "" } }
@@ -20,21 +23,35 @@ final class QuickBrowseWindowState: ObservableObject {
     private var findGeneration = UUID()
     private var mediaGeneration = UUID()
 
-    func requestLocation(currentURL: String) {
+    func requestLocation(currentURL: String, context: SearchInputContext? = nil) {
         dismissFind()
-        addressText = currentURL
+        locationURL = currentURL; addressText = currentURL
+        siteSearch = nil; locationContext = context; navigationError = nil
         isEditingAddress = true
         locationFocusRequest += 1
     }
+    func beginLocation(context: SearchInputContext?) {
+        guard !isEditingAddress else { return }
+        siteSearch = nil; locationContext = context; isEditingAddress = true; navigationError = nil
+    }
+    @discardableResult func activateSiteSearch(_ site: SiteSearch, context: SearchInputContext) -> Bool {
+        guard isEditingAddress, locationContext == context, site.enabled, (try? site.validated()) == site else { return false }
+        siteSearch = site; addressText = ""; navigationError = nil; locationFocusRequest += 1; return true
+    }
+    func leaveSiteSearch(restoreKeyword: Bool) {
+        if restoreKeyword, let siteSearch { addressText = siteSearch.keyword }
+        siteSearch = nil; navigationError = nil
+    }
     func syncLocation(currentURL: String) {
+        locationURL = currentURL
         if !isEditingAddress { addressText = currentURL }
     }
     func cancelLocation(currentURL: String) {
-        isEditingAddress = false
-        addressText = currentURL
+        isEditingAddress = false; siteSearch = nil; locationContext = nil
+        locationURL = currentURL; addressText = currentURL
     }
     func showFind() {
-        isEditingAddress = false
+        isEditingAddress = false; siteSearch = nil; locationContext = nil; addressText = locationURL
         findVisible = true
         findFocusRequest += 1
     }
@@ -251,7 +268,7 @@ struct QuickBrowseUI: View {
                              size: 12 * appearance.textScale, ink: NSColor(theme.ink),
                              focusRequest: state.locationFocusRequest, selectAll: true,
                              resignFocus: !state.isEditingAddress,
-                             onBeginEditing: { state.isEditingAddress = true },
+                             onBeginEditing: { state.beginLocation(context: store.searchInputContext(quickID: id)) },
                              onEndEditing: { state.cancelLocation(currentURL: currentURL) },
                              onSubmit: navigate,
                              onCancel: { state.cancelLocation(currentURL: currentURL); focusPage() })
@@ -411,10 +428,11 @@ struct QuickBrowseUI: View {
             Image(systemName: symbol).font(.system(size: 12, weight: .medium)).frame(width: 25, height: 28)
         }.buttonStyle(.plain).disabled(!enabled).help(label).accessibilityLabel(label)
     }
-    private func requestLocation() { state.requestLocation(currentURL: currentURL) }
+    private func requestLocation() { state.requestLocation(currentURL: currentURL, context: store.searchInputContext(quickID: id)) }
     private func navigate() {
+        guard state.isEditingAddress else { return }
         do {
-            try store.navigateForegroundQuickPage(id, input: state.addressText)
+            try store.navigateForegroundQuickPage(id, input: state.addressText, selection: state.siteSearch, context: state.locationContext)
             state.navigationError = nil
             state.cancelLocation(currentURL: currentURL)
             focusPage()

@@ -23,13 +23,17 @@ extension BrowserStore {
         case .stop: web.stopLoading()
         }
     }
-    func navigateForegroundQuickPage(_ id: UUID, input: String) throws {
+    func navigateForegroundQuickPage(_ id: UUID, input: String, selection: SiteSearch? = nil, context: SearchInputContext? = nil) throws {
+        if let context {
+            guard case .quick(let pageID, _, _) = context, pageID == id, matchesSearchInputContext(context) else { throw SearchInputError.contextChanged }
+        } else if selection != nil { throw SearchInputError.contextChanged }
         guard let profile = quickProfileID(id) else { throw QuickBrowseError.missing }
         try requireQuickProfile(profile)
+        let url = try resolveSearchInput(input, selection: selection)
         if let peek = quickPeekView(id) {
-            guard let url = Address.resolve(input), QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.invalidAddress }
+            guard QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.invalidAddress }
             touchQuickPage(id); peek.load(URLRequest(url: url))
-        } else { try navigateQuickPage(id, input: input) }
+        } else { try navigateQuickPage(id, input: url.absoluteString) }
     }
     func isFocusedWebsite(_ web: WKWebView) -> Bool {
         guard let window = web.window, window.isKeyWindow || window.attachedSheet?.isKeyWindow == true else { return false }
