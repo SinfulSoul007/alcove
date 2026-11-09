@@ -9,9 +9,10 @@ enum PeekContext: Hashable { case primary, quick(UUID) }
     let web: WKWebView
     let profileID: UUID
     var spaceID: UUID?
+    let requestedURL: URL?
     var observations: [NSKeyValueObservation] = []
-    init(web: WKWebView, profileID: UUID, spaceID: UUID?) {
-        self.web = web; self.profileID = profileID; self.spaceID = spaceID
+    init(web: WKWebView, profileID: UUID, spaceID: UUID?, requestedURL: URL? = nil) {
+        self.web = web; self.profileID = profileID; self.spaceID = spaceID; self.requestedURL = requestedURL
     }
 }
 
@@ -35,7 +36,7 @@ extension BrowserStore {
         let config = WKWebViewConfiguration(); config.websiteDataStore = websiteDataStore(forProfile: profile)
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self; web.uiDelegate = self; web.allowsBackForwardNavigationGestures = true
-        let page = PeekState(web: web, profileID: profile, spaceID: targetSpace)
+        let page = PeekState(web: web, profileID: profile, spaceID: targetSpace, requestedURL: url)
         let changed: () -> Void = { [weak self, weak web] in
             Task { @MainActor in guard let self, let web, self.peekContext(for: web) != nil else { return }; self.revision += 1 }
         }
@@ -89,43 +90,7 @@ extension BrowserStore {
         do { _ = try promotePeek(in: context) } catch { message = error.localizedDescription }
     }
     @discardableResult func promotePeek(in context: PeekContext, to destination: UUID? = nil, allowProfileChange: Bool = false) throws -> UUID {
-        guard let page = peekPages[context], let url = page.web.url, QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.missing }
-        let web = page.web; let owner = page.profileID
-        try requireQuickProfile(owner)
-        var candidate = makeDocument(); let index: Int
-        if let destination {
-            guard let found = candidate.session.spaces.firstIndex(where: { $0.id == destination }) else { throw ProfileError.missing }
-            index = found
-        } else if let found = candidate.session.spaces.firstIndex(where: { $0.id == page.spaceID && (isPrivate || $0.effectiveProfileID == owner) })
-            ?? candidate.session.spaces.firstIndex(where: { isPrivate || $0.effectiveProfileID == owner }) { index = found }
-        else {
-            var target = Space(name: profiles.first(where: { $0.id == owner })?.name ?? "Personal", tabs: []); target.profileID = owner
-            candidate.session.spaces.append(target); index = candidate.session.spaces.count - 1
-        }
-        let targetProfile = isPrivate ? BrowserProfile.defaultID : candidate.session.spaces[index].effectiveProfileID
-        try requireQuickProfile(targetProfile)
-        let crossing = owner != targetProfile
-        guard !crossing || allowProfileChange else { throw QuickBrowseError.consentRequired }
-        let tab = BrowserCore.Tab(title: web.title ?? url.host ?? "Page", url: url.absoluteString)
-        var discard: [UUID] = []
-        if candidate.session.spaces[index].tabs.count == 1, let blank = candidate.session.spaces[index].tabs.first, blank.url.isEmpty && !blank.pinned {
-            discard.append(blank.id); candidate.session.spaces[index].tabs = []
-        }
-        candidate.session.spaces[index].tabs.append(tab); candidate.session.spaces[index].selected = tab.id
-        candidate.session.selectedSpace = candidate.session.spaces[index].id
-        if !isPrivate {
-            var records = candidate.library(for: targetProfile); records.record(title: tab.title, url: tab.url); candidate.setLibrary(records, for: targetProfile)
-        }
-        try commitQuickDocument(candidate, discarding: discard, beforePublish: {
-            if crossing { self.closePeek(in: context) }
-            else {
-                self.peekPages.removeValue(forKey: context); page.observations = []
-                web.removeFromSuperview(); self.registerView(web, for: tab.id, profile: targetProfile)
-            }
-            self.closePrimaryPeek(); self.splitID = nil; self.activePaneID = nil
-        })
-        if !crossing { loadSiteIcon(web) }
-        return tab.id
+        try performPeekPromotion(preparePeekPromotion(in: context, to: destination), allowProfileChange: allowProfileChange)
     }
     func loadSiteIcon(_ web: WKWebView) {
         guard let id = views.first(where: { $0.value === web })?.key, let url = web.url, ["http", "https"].contains(url.scheme ?? "") else { return }

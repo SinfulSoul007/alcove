@@ -66,8 +66,9 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         get { library(for: activeProfileID) }
         set { setLibrary(newValue, for: activeProfileID) }
     }
-    @Published var preferences = Preferences() { didSet { siteSearchCatalogCache = nil } }
+    @Published var preferences = Preferences() { didSet { siteSearchCatalogCache = nil; linkRuleCatalogCache = nil } }
     var siteSearchCatalogCache: SiteSearchCatalog?
+    var linkRuleCatalogCache: LinkRuleCatalog?
     var libraryVisible: Bool { get { presentedPanel == .library } set { if newValue { presentedPanel = .library } else if libraryVisible { presentedPanel = nil } } }
     var settingsVisible: Bool { get { presentedPanel == .settings } set { if newValue { presentedPanel = .settings } else if settingsVisible { presentedPanel = nil } } }
     @Published var findVisible = false
@@ -214,7 +215,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func selectSpace(_ id: UUID) {
         guard session.spaces.contains(where: { $0.id == id }) else { return }
         if session.selectedSpace != id { dismissCommand() }
-        closePrimaryPeek(); activePaneID = nil; splitID = nil; session.selectedSpace = id; save()
+        closePrimaryPeek(); activePaneID = nil; splitID = nil; session.activateSpace(id); save()
     }
     func addSpace() {
         let alert = NSAlert(); alert.messageText = "Create a Space"; alert.informativeText = "Give this collection of tabs a name."

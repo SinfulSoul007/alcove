@@ -33,7 +33,7 @@ extension BrowserStore {
         var newSpace = Space(name: name); newSpace.profileID = id
         if isPrivate { session.spaces.append(newSpace); selectSpace(newSpace.id) }
         else {
-            var candidate = makeDocument(); candidate.session.spaces.append(newSpace); candidate.session.selectedSpace = newSpace.id
+            var candidate = makeDocument(); candidate.session.spaces.append(newSpace); candidate.session.activateSpace(newSpace.id)
             do { try commitProfileDocument(candidate); closePrimaryPeek(); splitID = nil; activePaneID = nil }
             catch { message = error.localizedDescription }
         }

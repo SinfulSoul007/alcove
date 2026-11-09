@@ -113,9 +113,7 @@ extension BrowserStore {
         session.spaces[spaceIndex].tabs.append(tab); select(tab.id)
     }
     func restoreArchived(_ id: UUID) {
-        guard let i = library.archive.firstIndex(where: { $0.id == id }) else { return }
-        var tab = library.archive.remove(at: i); tab.id = UUID(); tab.lastAccessed = Date()
-        session.spaces[spaceIndex].tabs.append(tab); select(tab.id)
+        do { _ = try restoreArchivedRouted(id, profileID: activeProfileID) } catch { message = error.localizedDescription }
     }
     func setFolder(_ id: UUID) {
         let alert = NSAlert(); alert.messageText = "Pinned tab folder"; alert.informativeText = "Choose a folder name. Leave it empty to remove the tab from its folder."

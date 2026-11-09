@@ -56,7 +56,7 @@ extension BrowserStore {
         if let target = session.spaces.first(where: { isPrivate || $0.effectiveProfileID == profile }) { selectSpace(target.id); return }
         var candidate = makeDocument()
         var target = Space(name: profiles.first { $0.id == profile }?.name ?? "Personal")
-        target.profileID = profile; candidate.session.spaces.append(target); candidate.session.selectedSpace = target.id
+        target.profileID = profile; candidate.session.spaces.append(target); candidate.session.activateSpace(target.id)
         try commitQuickDocument(candidate, beforePublish: { self.closePrimaryPeek(); self.splitID = nil; self.activePaneID = nil })
     }
     func bookmarkWebsite(_ web: WKWebView) throws {
@@ -76,32 +76,7 @@ extension BrowserStore {
             && quickPage(snapshot.id)?.tab.url == snapshot.url && views[snapshot.id].map(ObjectIdentifier.init) == snapshot.viewID
     }
     func openExternalPage(_ url: URL) throws -> ExternalLinkDestination {
-        guard !isPrivate else { throw BrowserWindowOwnerError.privateDispatch }
-        guard QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.invalidAddress }
-        let available = Set(profiles.filter { !profileUnavailable($0.id) }.map(\.id))
-        guard let profile = QuickBrowseRouting.profile(for: url, choices: preferences.quickDomainChoices ?? [], available: available, fallback: activeProfileID) else { throw ProfileError.pending }
-        try requireQuickProfile(profile)
-        if preferences.quickBrowseExternalLinks ?? true { return .quick(try openQuickPage(url: url, profileID: profile)) }
-        // The opt-out creates its Space/tab in a single durable transition.
-        var candidate = makeDocument()
-        let index: Int
-        if activeProfileID == profile { index = spaceIndex }
-        else if let found = candidate.session.spaces.firstIndex(where: { $0.effectiveProfileID == profile }) { index = found }
-        else {
-            var target = Space(name: profiles.first { $0.id == profile }?.name ?? "Personal", tabs: [])
-            target.profileID = profile; candidate.session.spaces.append(target); index = candidate.session.spaces.count - 1
-        }
-        let tab = BrowserCore.Tab(title: url.host ?? "Page", url: url.absoluteString)
-        var discard: [UUID] = []
-        if candidate.session.spaces[index].tabs.count == 1, let blank = candidate.session.spaces[index].tabs.first, blank.url.isEmpty && !blank.pinned {
-            discard = [blank.id]; candidate.session.spaces[index].tabs = []
-        }
-        candidate.session.spaces[index].tabs.append(tab); candidate.session.spaces[index].selected = tab.id
-        let spaceID = candidate.session.spaces[index].id; candidate.session.selectedSpace = spaceID
-        try commitQuickDocument(candidate, discarding: discard, beforePublish: {
-            self.closePrimaryPeek(); self.splitID = nil; self.activePaneID = nil
-        })
-        return .space(spaceID)
+        try openRoutedExternal(url)
     }
     func bookmarkQuickPage(_ id: UUID) throws {
         guard !isPrivate else { throw ProfileError.privateMode }
@@ -112,30 +87,6 @@ extension BrowserStore {
         try commitQuickDocument(candidate); message = "Bookmark saved."
     }
     @discardableResult func restoreQuickArchiveInSpace(_ id: UUID, profileID: UUID) throws -> UUID {
-        let profile = isPrivate ? BrowserProfile.defaultID : profileID
-        try requireQuickProfile(profile)
-        var candidate = makeDocument(); var records = candidate.library(for: profile)
-        guard let archived = records.archive.firstIndex(where: { $0.id == id && $0.archiveSource == "quickBrowse" }) else { throw QuickBrowseError.missing }
-        var tab = records.archive.remove(at: archived)
-        tab.id = UUID(); tab.archiveSource = nil; tab.lastAccessed = Date()
-        tab.pinned = false; tab.favorite = nil; tab.folder = nil; tab.homeURL = nil; tab.pinnedTitle = nil
-        candidate.setLibrary(records, for: profile)
-        let index: Int
-        if activeProfileID == profile { index = spaceIndex }
-        else if let found = candidate.session.spaces.firstIndex(where: { $0.effectiveProfileID == profile }) { index = found }
-        else {
-            var target = Space(name: profiles.first { $0.id == profile }?.name ?? "Personal", tabs: [])
-            target.profileID = profile; candidate.session.spaces.append(target); index = candidate.session.spaces.count - 1
-        }
-        var discard: [UUID] = []
-        if candidate.session.spaces[index].tabs.count == 1, let blank = candidate.session.spaces[index].tabs.first, blank.url.isEmpty && !blank.pinned {
-            discard = [blank.id]; candidate.session.spaces[index].tabs = []
-        }
-        candidate.session.spaces[index].tabs.append(tab); candidate.session.spaces[index].selected = tab.id
-        candidate.session.selectedSpace = candidate.session.spaces[index].id
-        try commitQuickDocument(candidate, discarding: discard, beforePublish: {
-            self.closePrimaryPeek(); self.splitID = nil; self.activePaneID = nil
-        })
-        return tab.id
+        try restoreArchivedRouted(id, profileID: profileID)
     }
 }

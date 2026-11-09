@@ -58,6 +58,30 @@ run_site_search_checks() {
     rm -f "$search_port_file"
     trap - EXIT
 }
+run_link_routing_website_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/LinkRoutingWebsiteChecks.swift scripts/OwnedWebsiteStores.swift -o "$MANUAL/link-routing-website-checks"
+    local routing_port_file routing_fixture_pid
+    routing_port_file="$(mktemp "$MANUAL/link-routing-port.XXXXXX")"
+    python3 scripts/LinkRoutingFixture.py "$routing_port_file" > "$MANUAL/link-routing-fixture.log" 2>&1 &
+    routing_fixture_pid=$!
+    trap 'kill "$routing_fixture_pid" 2>/dev/null || true; wait "$routing_fixture_pid" 2>/dev/null || true; rm -f "$routing_port_file"' EXIT
+    for attempt in {1..500}; do [[ -s "$routing_port_file" ]] && break; kill -0 "$routing_fixture_pid" 2>/dev/null || break; sleep 0.02; done
+    [[ -s "$routing_port_file" ]]
+    ALCOVE_LINK_ROUTING_FIXTURE_URL="http://127.0.0.1:$(cat "$routing_port_file")/" "$MANUAL/link-routing-website-checks"
+    kill "$routing_fixture_pid" 2>/dev/null || true
+    wait "$routing_fixture_pid" 2>/dev/null || true
+    rm -f "$routing_port_file"
+    trap - EXIT
+}
+if [[ "${1:-}" == "link-routing-website-test" ]]; then
+    run_link_routing_website_checks
+    exit
+fi
+if [[ "${1:-}" == "link-routing-store-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/LinkRoutingStoreChecks.swift -o "$MANUAL/link-routing-store-checks"
+    "$MANUAL/link-routing-store-checks"
+    exit
+fi
 if [[ "${1:-}" == "link-routing-core-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/LinkRoutingCoreChecks.swift -o "$MANUAL/link-routing-core-checks"
     "$MANUAL/link-routing-core-checks"
@@ -148,6 +172,9 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/LinkRoutingStoreChecks.swift -o "$MANUAL/link-routing-store-checks"
+    "$MANUAL/link-routing-store-checks"
+    run_link_routing_website_checks
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/LinkRoutingCoreChecks.swift -o "$MANUAL/link-routing-core-checks"
     "$MANUAL/link-routing-core-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/SiteSearchInputChecks.swift -o "$MANUAL/site-search-input-checks"

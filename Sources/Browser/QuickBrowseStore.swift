@@ -116,7 +116,7 @@ extension BrowserStore {
             guard let original = page.requestedURL, URL(string: original).flatMap({ QuickBrowseRouting.host(for: $0) }) != nil else { return nil }
             tab.url = original
         }
-        tab.lastAccessed = page.lastActiveAt; tab.archiveSource = "quickBrowse"; tab.pinned = false; tab.favorite = nil; tab.folder = nil
+        tab.lastAccessed = page.lastActiveAt; tab.archiveSource = "quickBrowse"; tab.archivedSpaceID = page.intendedSpaceID; tab.pinned = false; tab.favorite = nil; tab.folder = nil
         return tab
     }
     func closeQuickPage(_ id: UUID) throws {
@@ -156,7 +156,7 @@ extension BrowserStore {
             discard.append(blank.id); candidate.session.spaces[index].tabs = []
         }
         candidate.session.spaces[index].tabs.append(tab); candidate.session.spaces[index].selected = id
-        let spaceID = candidate.session.spaces[index].id; candidate.session.selectedSpace = spaceID
+        let spaceID = candidate.session.spaces[index].id; candidate.session.activateSpace(spaceID)
         try commitQuickDocument(candidate, discarding: discard, beforePublish: {
             if !crossing { self.views[id]?.removeFromSuperview() }
             if crossing { self.closePrimaryPeek(); self.closeQuickPeek(id) }
@@ -278,7 +278,7 @@ extension BrowserStore {
         var candidate = makeDocument(); var records = candidate.library(for: owner)
         guard var tab = records.archive.first(where: { $0.id == id }), let url = URL(string: tab.url), QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.invalidAddress }
         let existing = records.quickPages?.first(where: { $0.tab.url == tab.url || $0.requestedURL == tab.url })
-        tab.id = UUID(); tab.pinned = false; tab.favorite = nil; tab.archiveSource = nil; tab.homeURL = nil; tab.pinnedTitle = nil; tab.folder = nil
+        tab.id = UUID(); tab.pinned = false; tab.favorite = nil; tab.archiveSource = nil; tab.archivedSpaceID = nil; tab.homeURL = nil; tab.pinnedTitle = nil; tab.folder = nil
         let page = QuickPage(tab: tab, intendedSpaceID: session.spaces.first(where: { isPrivate || $0.effectiveProfileID == owner })?.id)
         records.archive.removeAll { $0.id == id }
         if existing == nil { records.quickPages = (records.quickPages ?? []) + [page] }

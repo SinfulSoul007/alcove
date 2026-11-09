@@ -191,7 +191,7 @@ extension BrowserStore {
         var candidate = makeDocument(); candidate.profiles?.append(profile)
         candidate.setLibrary(BrowserLibrary(), for: profile.id)
         var newSpace = Space(name: profile.name); newSpace.profileID = profile.id
-        candidate.session.spaces.append(newSpace); candidate.session.selectedSpace = newSpace.id
+        candidate.session.spaces.append(newSpace); candidate.session.activateSpace(newSpace.id)
         try commitProfileDocument(candidate); closePrimaryPeek(); splitID = nil; activePaneID = nil
         return profile.id
     }
