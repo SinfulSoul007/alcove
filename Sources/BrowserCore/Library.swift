@@ -37,6 +37,7 @@ public struct Preferences: Codable {
     public var quickBrowseExternalLinks: Bool? = true
     public var quickBrowseArchiveHours: Int? = 6
     public var quickDomainChoices: [QuickDomainChoice]?
+    public var siteSearches: [SiteSearch]?
     public init() {}
 }
 public struct BrowserDocument: Codable {

@@ -38,6 +38,11 @@ run_website_checks() {
     trap - EXIT
 
 }
+if [[ "${1:-}" == "site-search-core-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/SiteSearchCoreChecks.swift -o "$MANUAL/site-search-core-checks"
+    "$MANUAL/site-search-core-checks"
+    exit
+fi
 if [[ "${1:-}" == "page-output-lifetime-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/PageOutputLifetimeChecks.swift -o "$MANUAL/page-output-lifetime-checks"
     "$MANUAL/page-output-lifetime-checks"
@@ -105,6 +110,8 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/SiteSearchCoreChecks.swift -o "$MANUAL/site-search-core-checks"
+    "$MANUAL/site-search-core-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/PageOutputLifetimeChecks.swift -o "$MANUAL/page-output-lifetime-checks"
     "$MANUAL/page-output-lifetime-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/PageOutputChecks.swift -o "$MANUAL/page-output-checks"
