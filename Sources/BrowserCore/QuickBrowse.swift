@@ -20,25 +20,7 @@ public struct QuickDomainChoice: Codable, Identifiable, Equatable {
 }
 
 public enum QuickBrowseRouting {
-    public static func normalizedHost(_ raw: String) -> String? {
-        guard !raw.isEmpty, !raw.contains(where: { $0.isWhitespace }) else { return nil }
-        var host = raw.lowercased()
-        if host.hasSuffix(".") { host.removeLast() }
-        guard !host.isEmpty else { return nil }
-        if host.contains(":"), !host.hasPrefix("[") { host = "[" + host + "]" }
-        if host.hasPrefix("[") && host.hasSuffix("]") {
-            guard host.dropFirst().dropLast().allSatisfy({ "0123456789abcdef:.".contains($0) }), host.contains(":") else { return nil }
-        } else {
-            let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-"))
-            let labels = host.split(separator: ".", omittingEmptySubsequences: false)
-            guard host.utf8.count <= 253, labels.allSatisfy({ label in
-                !label.isEmpty && label.utf8.count <= 63 && !label.hasPrefix("-") && !label.hasSuffix("-") && label.unicodeScalars.allSatisfy { allowed.contains($0) }
-            }) else { return nil }
-        }
-        var components = URLComponents(); components.scheme = "https"; components.host = host
-        guard let canonical = components.url?.host?.lowercased(), !canonical.contains("%") else { return nil }
-        return canonical.contains(":") && !canonical.hasPrefix("[") ? "[" + canonical + "]" : canonical
-    }
+    public static func normalizedHost(_ raw: String) -> String? { RoutingHost.normalized(raw) }
     public static func host(for url: URL) -> String? {
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), let host = url.host else { return nil }
         return normalizedHost(host)

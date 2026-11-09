@@ -31,6 +31,7 @@ public struct Tab: Codable, Identifiable, Equatable {
     public var folder: String?
     public var lastAccessed: Date?
     public var archiveSource: String?
+    public var archivedSpaceID: UUID?
     public init(title: String = "New Tab", url: String = "", pinned: Bool = false) {
         self.title = title; self.url = url; self.pinned = pinned; self.lastAccessed = Date()
     }
@@ -52,13 +53,21 @@ public struct Space: Codable, Identifiable {
 public struct Session: Codable {
     public var spaces: [Space]
     public var selectedSpace: UUID
+    public var lastUsedSpaces: [UUID: UUID]?
     public init() { let first = Space(name: "Personal"); spaces = [first]; selectedSpace = first.id }
+    @discardableResult public mutating func activateSpace(_ id: UUID) -> Bool {
+        guard let space = spaces.first(where: { $0.id == id }) else { return false }
+        selectedSpace = id
+        if lastUsedSpaces == nil { lastUsedSpaces = [:] }
+        lastUsedSpaces?[space.profileID ?? BrowserProfile.defaultID] = id
+        return true
+    }
     public mutating func archiveInactive(before cutoff: Date, excluding protected: Set<UUID>) -> [Tab] {
         var archived: [Tab] = []
         for s in spaces.indices {
             let ids = spaces[s].tabs.filter { !$0.pinned && !protected.contains($0.id) && !$0.url.isEmpty && ($0.lastAccessed.map { $0 < cutoff } ?? false) }.map(\.id)
             for id in ids {
-                if let tab = spaces[s].tabs.first(where: { $0.id == id }) { archived.append(tab) }
+                if var tab = spaces[s].tabs.first(where: { $0.id == id }) { tab.archivedSpaceID = spaces[s].id; archived.append(tab) }
                 close(id, in: spaces[s].id)
             }
         }

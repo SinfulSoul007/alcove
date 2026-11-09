@@ -132,6 +132,11 @@ extension BrowserDocument {
         }
         let choices = (preferences.quickDomainChoices ?? []).map { choice in QuickDomainChoice(host: choice.host, profileID: valid(choice.profileID)) }
         preferences.quickDomainChoices = QuickBrowseRouting.repairedChoices(choices, knownProfiles: Set(ids))
+        if let recent = session.lastUsedSpaces {
+            session.lastUsedSpaces = recent.filter { owner, spaceID in
+                ids.contains(owner) && session.spaces.contains { $0.id == spaceID && $0.effectiveProfileID == owner }
+            }
+        }
         library = self.library(for: BrowserProfile.defaultID)
     }
 }
