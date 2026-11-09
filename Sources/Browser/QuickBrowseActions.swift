@@ -32,8 +32,11 @@ extension BrowserStore {
         } else { try navigateQuickPage(id, input: input) }
     }
     func isFocusedWebsite(_ web: WKWebView) -> Bool {
-        guard !isShuttingDown, let window = web.window,
-              window.isKeyWindow || window.attachedSheet?.isKeyWindow == true,
+        guard let window = web.window, window.isKeyWindow || window.attachedSheet?.isKeyWindow == true else { return false }
+        return isVisibleWebsite(web)
+    }
+    func isVisibleWebsite(_ web: WKWebView) -> Bool {
+        guard !isShuttingDown, web.window != nil,
               let profile = profileID(for: web), !profileUnavailable(profile) else { return false }
         if let context = quickContext(for: web) {
             if let peek = quickPeekView(context.id) { return web === peek }
