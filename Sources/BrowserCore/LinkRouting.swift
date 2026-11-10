@@ -82,8 +82,8 @@ private struct RoutingAddress {
     var equalWithoutScheme: String { root ? String(withoutScheme.dropLast()) : withoutScheme }
     init?(_ url: URL) {
         guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              let scheme = parts.scheme?.lowercased(), ["http","https"].contains(scheme),
-              let rawHost = parts.host, let host = RoutingHost.normalized(rawHost) else { return nil }
+              let origin = WebOrigin(url) else { return nil }
+        let scheme = origin.scheme, host = origin.host
         parts.scheme = scheme; parts.host = host
         if (scheme == "http" && parts.port == 80) || (scheme == "https" && parts.port == 443) { parts.port = nil }
         parts.percentEncodedPath = Self.path(parts.percentEncodedPath)

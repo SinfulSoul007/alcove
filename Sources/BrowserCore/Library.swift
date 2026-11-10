@@ -8,6 +8,7 @@ public struct PageRecord: Codable, Identifiable, Equatable {
     public init(title: String, url: String, date: Date = Date()) { id = UUID(); self.title = title; self.url = url; self.date = date }
 }
 public struct BrowserLibrary: Codable {
+    public var siteBoosts: [SiteBoost]?
     public var favoriteTabs: [Tab]?
     public var quickPages: [QuickPage]?
     public var bookmarks: [PageRecord] = []
@@ -28,6 +29,7 @@ public struct BrowserLibrary: Codable {
     }
 }
 public struct Preferences: Codable {
+    public var boostsEnabled: Bool?
     public var suspendTabs = false
     public var archiveAfterDays = 0
     public var appearance: AppearanceSettings?

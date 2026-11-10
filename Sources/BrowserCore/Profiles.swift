@@ -73,7 +73,15 @@ extension BrowserDocument {
             }
         }
         var entries = profileLibraries ?? []
-        for index in entries.indices { entries[index].profileID = valid(entries[index].profileID) }
+        for index in entries.indices {
+            let previousOwner = entries[index].profileID
+            entries[index].profileID = valid(previousOwner)
+            if entries[index].profileID != previousOwner {
+                entries[index].library.siteBoosts = entries[index].library.siteBoosts?.map { boost in
+                    var value = boost; value.approvedJavaScriptHash = nil; return value
+                }
+            }
+        }
         let referenced = [BrowserProfile.defaultID] + registry.map(\.id) + session.spaces.map(\.effectiveProfileID) + entries.map(\.profileID)
         var ids: [UUID] = []
         for id in referenced where !ids.contains(id) { ids.append(id) }
@@ -95,6 +103,9 @@ extension BrowserDocument {
         let liveOwners = Dictionary(uniqueKeysWithValues: session.spaces.flatMap { space in space.tabs.map { ($0.id, space.effectiveProfileID) } })
         let liveFavorites = Set(session.spaces.flatMap(\.tabs).filter { $0.favorite == true }.map(\.id))
         for index in (profileLibraries ?? []).indices {
+            if let saved = profileLibraries![index].library.siteBoosts {
+                profileLibraries![index].library.siteBoosts = BoostCatalog(saved).entries
+            }
             let owner = profileLibraries![index].profileID
             var favorites = profileLibraries![index].library.favoriteTabs ?? []
             let live = session.spaces.filter { $0.effectiveProfileID == owner }.flatMap(\.tabs).filter { $0.favorite == true }
@@ -143,6 +154,7 @@ extension BrowserDocument {
 
 extension BrowserLibrary {
     public mutating func mergePreservingRecords(_ other: BrowserLibrary) {
+        if siteBoosts != nil || other.siteBoosts != nil { siteBoosts = BoostCatalog((siteBoosts ?? []) + (other.siteBoosts ?? [])).entries }
         func pages(_ current: [PageRecord], _ incoming: [PageRecord]) -> [PageRecord] {
             var result = current
             for var record in incoming where !result.contains(record) {
