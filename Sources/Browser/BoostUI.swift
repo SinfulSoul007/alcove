@@ -31,13 +31,13 @@ import BrowserCore
                 Toggle("Enabled", isOn: Binding(get: { store.boostsEnabled }, set: { value in perform { try store.setBoostsEnabled(value) } }))
                     .toggleStyle(.switch).font(.system(size: 11 * scale)).fixedSize()
                     .disabled(!store.canEditBoosts).accessibilityLabel("Enable website Boosts")
-                Button("Done") { editor.finish(in: store) }.keyboardShortcut(.cancelAction).accessibilityIdentifier("boost-done")
+                Button("Done") { Task { await editor.finish(in: store) } }.disabled(editor.isSaving).keyboardShortcut(.cancelAction).accessibilityIdentifier("boost-done")
             }
             HStack(spacing: 8) {
                 if editor.source == nil && !store.isPrivate {
                     Picker("Profile", selection: Binding(get: { editor.profileID }, set: { _ = editor.changeProfile($0, in: store) })) {
                         ForEach(store.profiles) { Text($0.name).tag($0.id) }
-                    }.frame(maxWidth: 260)
+                    }.frame(maxWidth: 260).disabled(editor.isSaving)
                 } else {
                     Label(profileName, systemImage: store.isPrivate ? "hand.raised" : "person.crop.circle").lineLimit(1).help(profileName)
                     if let host = editor.source?.host { Text("·"); Text(host).lineLimit(1).truncationMode(.middle).help(host) }
@@ -66,21 +66,22 @@ import BrowserCore
                     codeControls
                     hiddenElements
                 }.font(.system(size: 12 * scale)).frame(maxWidth: .infinity, alignment: .leading)
-            }
+            }.disabled(editor.isSaving)
+            if editor.isSaving { ProgressView("Checking CSS…").controlSize(.small).font(.system(size: 11 * scale)) }
             if let error = editor.error { Text(error).font(.system(size: 11 * scale)).foregroundStyle(.red).lineLimit(3).help(error).accessibilityLabel("Boost error: \(error)") }
             HStack(spacing: 10) {
                 Menu("Share Appearance") {
                     Button("Copy Appearance") { perform { try BoostClipboard.copy(editor.draft) } }
                     Button("Paste Appearance") { _ = editor.pasteAppearance(from: .general) }
-                }
+                }.disabled(editor.isSaving)
                 Spacer()
                 if editor.isDirty { Button("Cancel Edit") { editor.cancel() }.help("Discard unsaved name, site and code edits. Appearance choices are already saved.") }
-                Button("Save Changes") { editor.save(in: store) }.buttonStyle(.borderedProminent).disabled(!canSave).accessibilityIdentifier("boost-save")
+                Button("Save Changes") { Task { await editor.save(in: store) } }.buttonStyle(.borderedProminent).disabled(!canSave || editor.isSaving).accessibilityIdentifier("boost-save")
             }.font(.system(size: 11 * scale))
         }.padding(20).frame(width: 600, height: min(720, max(300, availableHeight)))
             .tint(store.activeTheme.accent).preferredColorScheme(store.activeTheme.isDark ? .dark : .light)
             .onAppear { if store.boostEditor == nil { store.boostEditor = editor } }
-            .interactiveDismissDisabled(editor.isDirty)
+            .interactiveDismissDisabled(editor.isDirty || editor.isSaving)
             .confirmationDialog("Delete \(deleting?.content.name ?? "Boost")?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
                 if let value = deleting { Button("Delete Boost", role: .destructive) { _ = editor.remove(value, in: store); deleting = nil } }
                 Button("Cancel", role: .cancel) { deleting = nil }
@@ -125,6 +126,7 @@ import BrowserCore
                     Text("Text size"); Slider(value: Binding(get: { editor.draft.content.appearance.textScale }, set: { value in changeAppearance { $0.textScale = value } }), in: 0.75...1.75, step: 0.05).accessibilityLabel("Relative text size")
                     Text("\(Int((editor.draft.content.appearance.textScale * 100).rounded()))% relative").monospacedDigit().font(.system(size: 10 * scale)).fixedSize()
                 }
+                Text("Scales the website's root and rem-based text. Fixed-pixel text keeps its size.").font(.system(size: 10 * scale)).foregroundStyle(.secondary)
                 HStack {
                     Menu("Presets") { ForEach(BoostLookPreset.allCases) { preset in Button(preset.rawValue) { editor.setAppearance(preset.appearance, in: store) } } }
                     Button("Shuffle") { if let preset = BoostLookPreset.allCases.filter({ $0 != .original && $0.appearance != editor.draft.content.appearance }).randomElement() { editor.setAppearance(preset.appearance, in: store) } }
@@ -195,8 +197,10 @@ import BrowserCore
     private func changeAppearance(_ change: (inout BoostAppearance) -> Void) { var value = editor.draft.content.appearance; change(&value); editor.setAppearance(value, in: store) }
     private func perform(_ action: () throws -> Void) { do { try action(); editor.error = nil } catch { editor.error = error.localizedDescription } }
     private func approve() {
-        guard editor.save(in: store), let source = editor.source else { return }
-        store.requestBoostJavaScriptApproval(editor.draft.id, source: source, onApproved: { [weak editor] in editor?.error = nil }, onError: { [weak editor] in editor?.error = $0.localizedDescription })
+        Task { @MainActor in
+            guard await editor.save(in: store), let source = editor.source else { return }
+            store.requestBoostJavaScriptApproval(editor.draft.id, source: source, onApproved: { [weak editor] in editor?.error = nil }, onError: { [weak editor] in editor?.error = $0.localizedDescription })
+        }
     }
     private func run() {
         guard let source = editor.source else { return }
@@ -207,11 +211,13 @@ import BrowserCore
         }
     }
     private func zap() {
-        guard editor.save(in: store), let source = editor.source else { return }
-        perform {
-            if current?.enabled == false { try store.setBoostEnabled(editor.draft.id, profileID: editor.profileID, enabled: true) }
-            try store.startBoostPicker(editor.draft.id, source: source)
-            store.presentedPanel = nil
+        Task { @MainActor in
+            guard await editor.save(in: store), let source = editor.source else { return }
+            perform {
+                if current?.enabled == false { try store.setBoostEnabled(editor.draft.id, profileID: editor.profileID, enabled: true) }
+                try store.startBoostPicker(editor.draft.id, source: source)
+                store.presentedPanel = nil
+            }
         }
     }
     private static func color(_ hex: String) -> Color {

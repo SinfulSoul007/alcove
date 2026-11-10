@@ -94,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let quick = quickWindows.values.first(where: { $0.window === window }),
            quick.state.findVisible || quick.state.isEditingAddress || quick.store.quickPeekView(quick.pageID) != nil { quick.escape(); return true }
         guard let store = windows[window] else { return false }
-        if store.presentedPanel == .boosts { _ = store.finishBoostEditor() }
+        if store.presentedPanel == .boosts { Task { @MainActor [weak store] in _ = await store?.finishBoostEditor() } }
         else if store.presentedPanel != nil { store.presentedPanel = nil }
         else if store.commandVisible { store.dismissCommand() }
         else if store.findVisible { store.findVisible = false }

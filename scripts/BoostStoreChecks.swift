@@ -6,7 +6,7 @@ import BrowserCore
 
 enum BoostStoreCheckError: Error { case failed }
 @main struct BoostStoreChecks {
-    @MainActor static func main() throws {
+    @MainActor static func main() async throws {
         NSApplication.shared.setActivationPolicy(.prohibited); setbuf(stdout, nil)
         var failures = 0, fixtures: [SiteSearchStoreFixture] = []
         var windows: [NSWindow] = []
@@ -62,6 +62,34 @@ enum BoostStoreCheckError: Error { case failed }
         var invalidCode = current; invalidCode.content.javascript = "});window.escaped=true;(()=>{"
         rejects("Invalid custom JavaScript is rejected before persistence") { try store.saveBoost(invalidCode, profileID: f.profile, expected: store.boostCatalog(profileID: f.profile).entries[0]) }
         check(store.boostCatalog(profileID: f.profile).entries[0].content.javascript == current.content.javascript, "Rejected syntax leaves the previous custom code intact")
+        let cssBase = store.boostCatalog(profileID: f.profile).entries[0]
+        let cssBytes = try Data(contentsOf: store.sessionURL)
+        for css in ["#target{color:", "#target{color:red; broken}", "p{color:blue} q{background:"] {
+            let editor = BoostEditor(store: store, profileID: f.profile, initial: cssBase)
+            editor.draft.content.css = css
+            let savedCSS = await editor.save(in: store)
+            check(!savedCSS && editor.error?.contains("CSS") == true && editor.draft.content.css == css, "Malformed or partially malformed CSS keeps its editable draft and a useful error")
+            let unchangedBytes = try Data(contentsOf: store.sessionURL)
+            check(store.boostCatalog(profileID: f.profile).entries[0] == cssBase && unchangedBytes == cssBytes, "Rejected CSS preserves the saved record and encrypted bytes")
+        }
+        for css in ["#target ??? {color:blue}", "#target{color:not-a-color}", "#target{color:blue;display:inexistent}"] {
+            let invalidFixture = try fixture(), invalidStore = invalidFixture.store
+            let validLook = SiteBoost(content: BoostContent(name: "Working CSS", host: "127.0.0.1", css: "#target{color:red}"))
+            try await invalidStore.saveValidatedBoost(validLook, profileID: invalidFixture.profile)
+            let validBytes = try Data(contentsOf: invalidStore.sessionURL)
+            let editor = BoostEditor(store: invalidStore, profileID: invalidFixture.profile, initial: validLook)
+            editor.draft.content.css = css
+            let savedCSS = await editor.save(in: invalidStore)
+            check(!savedCSS && editor.error?.contains("CSS") == true && editor.draft.content.css == css, "WebKit-invalid selectors or declarations retain their draft and useful CSS error")
+            let bytes = try Data(contentsOf: invalidStore.sessionURL)
+            check(invalidStore.boostCatalog(profileID: invalidFixture.profile).entries.first == validLook && bytes == validBytes, "WebKit-invalid CSS cannot replace the previous encrypted definition")
+        }
+        for css in ["", "/* intentionally clear custom CSS */", "@media (min-width:1px){p{color:red}}", "@layer first, second; @layer first{p{color:red!important}}", "@keyframes fade{from{opacity:0}to{opacity:1}}", #"p{margin:0;margin-top:1px!important;--empty:;--json:{"x":1};content:"}"}"#, #"p{color:red;& > span{font-weight:bold}background:white;}"#, #"@m\65 dia (min-width:1px){p{co\6c or:red}}"#, "@font-face{font-family:Fixture;src:url(data:font/woff;base64,AA==)}"] {
+            do {
+                let validation = try await BoostCSS.checked(css)
+                check(validation.matches(css), "WebKit preflight retains supported CSS, nesting, escapes and intentional empty styles")
+            } catch { check(false, "Supported CSS must not be rejected: \(error.localizedDescription)") }
+        }
         try store.setBoostsEnabled(false)
         let globallyOff = try MetadataStore(url: store.sessionURL, key: f.key).load(BrowserDocument.self)!
         check(globallyOff.preferences.boostsEnabled == false && store.preferences.boostsEnabled == false, "Global off persists before it is published")

@@ -21,7 +21,13 @@ extension BrowserStore {
         records.siteBoosts = entries; candidate.setLibrary(records, for: profileID)
         try commitQuickDocument(candidate)
     }
-    func saveBoost(_ raw: SiteBoost, profileID: UUID, expected: SiteBoost? = nil) throws {
+    func saveValidatedBoost(_ raw: SiteBoost, profileID: UUID, expected: SiteBoost? = nil) async throws {
+        try requireBoostEdits(profileID: profileID)
+        _ = try raw.validated()
+        let validation = try await BoostCSS.checked(raw.content.css)
+        try saveBoost(raw, profileID: profileID, expected: expected, cssValidation: validation)
+    }
+    func saveBoost(_ raw: SiteBoost, profileID: UUID, expected: SiteBoost? = nil, cssValidation: BoostCSS.Validation? = nil) throws {
         try requireBoostEdits(profileID: profileID)
         let catalog = boostCatalog(profileID: profileID)
         var value: SiteBoost
@@ -31,6 +37,12 @@ extension BrowserStore {
         } else {
             guard !catalog.entries.contains(where: { $0.id == raw.id }) else { throw BoostError.stale }
             value = try raw.validated(); value.approvedJavaScriptHash = nil
+        }
+        try BoostCSS.validate(value.content.css)
+        if !value.content.css.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           catalog.entries.first(where: { $0.id == value.id })?.content.css != value.content.css,
+           cssValidation?.matches(value.content.css) != true {
+            throw NSError(domain: "Alcove.BoostCSS", code: 4, userInfo: [NSLocalizedDescriptionKey: "CSS must pass WebKit validation before saving. Your saved rules were kept."])
         }
         if !value.content.javascript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { _ = try BoostScript.validatedBody(value.content.javascript) }
         try persistBoosts(catalog.upserting(value), profileID: profileID)

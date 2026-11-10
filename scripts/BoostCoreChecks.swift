@@ -21,7 +21,7 @@ var boost = try SiteBoost(id: id, content: content, hiddenSelectors: ["#ad", "ma
 check(boost.content.name == "Quiet Café" && boost.content.host == "example.test", "Editing normalizes the name and canonical site")
 check(boost.content.css == "\n/* exact */ p{line-height:1.6}\n" && boost.content.javascript == "\nawait Promise.resolve(); window.counter = 1;\n", "Saving preserves exact CSS and JavaScript whitespace")
 check(boost.content.appearance.background == "#123ABC" && boost.content.appearance.text == "#ABCDEF", "Colors have one validated hexadecimal representation")
-check(boost.content.appearance.css.contains("#123ABC") && boost.content.appearance.css.contains("serif") && boost.content.appearance.css.contains("125%"), "No-code settings produce usable color, font and relative text-scale CSS")
+check(boost.content.appearance.css.contains("#123ABC") && boost.content.appearance.css.contains("serif") && !boost.content.appearance.css.contains("font-size") && boost.content.appearance.textScale == 1.25, "No-code colors/fonts remain static while relative scaling retains its factor for the real site baseline")
 check(BoostAppearance().css.isEmpty, "An untouched appearance preserves the website's original design")
 let catalog = BoostCatalog([boost])
 for address in ["https://EXAMPLE.test/", "http://example.test:8123/path?q=x", "https://example.test./"] {

@@ -10,6 +10,8 @@ import BrowserCore
     @Published var draft: SiteBoost
     @Published private(set) var original: SiteBoost?
     @Published var error: String?
+    @Published private(set) var isSaving = false
+    private var saveGeneration = UUID()
     private var initialContent: BoostContent
     private var newIntent = false
     init(store: BrowserStore, profileID: UUID, source: BoostEditSource? = nil, initial: SiteBoost? = nil) {
@@ -22,42 +24,57 @@ import BrowserCore
         guard owner === store, !store.isShuttingDown else { throw CancellationError() }
         if let source { guard source.store === store, source.profileID == profileID, RoutingHost.normalized(draft.content.host) == source.host else { throw BoostError.stale } }
     }
-    @discardableResult func save(in store: BrowserStore) -> Bool {
+    @discardableResult func save(in store: BrowserStore) async -> Bool {
+        guard !isSaving else { return false }
+        let generation = UUID(); saveGeneration = generation
         do {
             try requireOwner(store)
             if let original, !isDirty {
                 guard store.boostCatalog(profileID: profileID).entries.contains(where: { $0.id == original.id && $0.content == original.content }) else { throw BoostError.stale }
                 return true
             }
-            try store.saveBoost(draft, profileID: profileID, expected: original)
+            let proposed = draft, expected = original, profile = profileID
+            _ = try proposed.validated()
+            isSaving = true
+            defer { isSaving = false }
+            let validation = try await BoostCSS.checked(proposed.content.css)
+            guard saveGeneration == generation else { return false }
+            guard draft == proposed, original == expected, profileID == profile else { throw BoostError.stale }
+            try requireOwner(store)
+            try store.saveBoost(proposed, profileID: profile, expected: expected, cssValidation: validation)
             guard let saved = store.boostCatalog(profileID: profileID).entries.first(where: { $0.id == draft.id }) else { throw BoostError.missing }
             original = saved; draft = saved; initialContent = saved.content; newIntent = false; error = nil
             return true
-        } catch { self.error = error.localizedDescription; return false }
+        } catch { if saveGeneration == generation { self.error = error.localizedDescription }; return false }
     }
-    @discardableResult func finish(in store: BrowserStore) -> Bool {
-        guard owner === store, !isDirty || save(in: store) else { return false }
+    @discardableResult func finish(in store: BrowserStore) async -> Bool {
+        guard owner === store, !isSaving else { return false }
+        if isDirty, !(await save(in: store)) { return false }
+        guard store.boostEditor === self, store.presentedPanel == .boosts else { return false }
         store.presentedPanel = nil
         if store.boostEditor === self { store.boostEditor = nil }
         return true
     }
     func cancel() {
+        saveGeneration = UUID()
         if let original { draft = original }
         else { draft = SiteBoost(content: initialContent); newIntent = false }
         error = nil
     }
     @discardableResult func select(_ value: SiteBoost) -> Bool {
+        guard !isSaving else { return false }
         guard !isDirty else { error = "Save or cancel your unsaved edits before choosing another Boost."; return false }
         guard source == nil || value.content.host == source?.host else { error = BoostError.stale.localizedDescription; return false }
         original = value; draft = value; initialContent = value.content; newIntent = false; error = nil; return true
     }
     @discardableResult func newBoost() -> Bool {
+        guard !isSaving else { return false }
         guard !isDirty else { error = "Save or cancel your unsaved edits before creating another Boost."; return false }
         let content = BoostContent(name: "Personal look", host: source?.host ?? "")
         original = nil; draft = SiteBoost(content: content); initialContent = content; newIntent = true; error = nil; return true
     }
     @discardableResult func changeProfile(_ id: UUID, in store: BrowserStore) -> Bool {
-        guard owner === store, source == nil, !isDirty,
+        guard owner === store, source == nil, !isDirty, !isSaving,
               store.isPrivate ? id == BrowserProfile.defaultID : store.profiles.contains(where: { $0.id == id }) else {
             error = "Finish this draft before opening Boosts for another profile."; return false
         }
@@ -67,6 +84,7 @@ import BrowserCore
         draft = value; initialContent = value.content; error = nil; return true
     }
     @discardableResult func setAppearance(_ appearance: BoostAppearance, in store: BrowserStore) -> Bool {
+        guard !isSaving else { return false }
         do {
             try requireOwner(store)
             let appearance = try appearance.validated()
@@ -80,6 +98,7 @@ import BrowserCore
         } catch { self.error = error.localizedDescription; return false }
     }
     @discardableResult func pasteAppearance(from board: NSPasteboard) -> Bool {
+        guard !isSaving else { return false }
         guard !isDirty else { error = "Save or cancel the current draft before pasting another appearance."; return false }
         do {
             let imported = try BoostClipboard.read(from: board)
@@ -134,8 +153,8 @@ extension BrowserStore {
         boostEditor = BoostEditor(store: self, profileID: profile, source: source, initial: initial)
         presentedPanel = .boosts
     }
-    @discardableResult func finishBoostEditor() -> Bool {
-        if let boostEditor { return boostEditor.finish(in: self) }
+    @discardableResult func finishBoostEditor() async -> Bool {
+        if let boostEditor { return await boostEditor.finish(in: self) }
         presentedPanel = nil; return true
     }
     func removeBoostZap(_ id: UUID, profileID: UUID, selector: String) throws { try changeBoostZaps(id, profileID: profileID) { $0.removeAll { $0 == selector } } }

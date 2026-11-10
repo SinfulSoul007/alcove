@@ -46,7 +46,7 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
         }
         let (f, web) = try fixture(), store = f.store
         var look = SiteBoost(content: BoostContent(name: "Strict site", host: "127.0.0.1", appearance: BoostAppearance(background: "#F0EEDD", font: .serif, textScale: 1.25), css: "#target{color:#123456!important}", javascript: "window.scriptRuns=(window.scriptRuns||0)+1; document.getElementById('target').textContent=String(window.siteGlobal+1); await Promise.resolve(); document.body.dataset.awaited='yes';"))
-        try store.saveBoost(look, profileID: f.profile)
+        try await store.saveValidatedBoost(look, profileID: f.profile)
         try await load(web)
         try await eventually("Constructed Boost CSS applies on a site that rejects inline styles") { try await js(web, "return getComputedStyle(document.getElementById('target')).color;") as? String == "rgb(18, 52, 86)" }
         check(try await js(web, "return getComputedStyle(document.documentElement).fontSize;") as? String == "20px", "No-code relative text scale reaches the real layout engine")
@@ -67,7 +67,7 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
         check(try await js(web, "return window.scriptRuns;") as? Int == 1, "Repeated ready events and explicit Run cannot execute the same script twice per document")
         let current = store.boostCatalog(profileID: f.profile).entries[0]
         look = current; look.content.css = "#target{color:#AABBCC!important}"
-        try store.saveBoost(look, profileID: f.profile, expected: current)
+        try await store.saveValidatedBoost(look, profileID: f.profile, expected: current)
         try await eventually("Custom CSS edits update the current document without navigation") { try await js(web, "return getComputedStyle(document.getElementById('target')).color;") as? String == "rgb(170, 187, 204)" }
         check(try await js(web, "return keptInput===document.getElementById('keep') && keptInput.value==='unsaved form' && window.scriptRuns===1 && window.scrollY===300;") as? Bool == true, "Editing styles preserves the same input node, unsaved form, scroll and script state")
         try store.setBoostsEnabled(false)
@@ -121,7 +121,7 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
         let shared = web.configuration.userContentController
         shared.addUserScript(WKUserScript(source: "window.unrelatedScriptAlive=42;", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let (other, otherWeb) = try fixture(controller: shared)
-        try other.store.saveBoost(SiteBoost(content: BoostContent(name: "Other profile", host: "127.0.0.1", css: "#target{color:#AA0000!important}")), profileID: other.profile)
+        try await other.store.saveValidatedBoost(SiteBoost(content: BoostContent(name: "Other profile", host: "127.0.0.1", css: "#target{color:#AA0000!important}")), profileID: other.profile)
         BoostRuntime.install(on: otherWeb); BoostRuntime.install(on: otherWeb)
         try await load(otherWeb)
         try await eventually("A shared popup content controller resolves the receiving view's real profile") { try await js(otherWeb, "return getComputedStyle(document.getElementById('target')).color;") as? String == "rgb(170, 0, 0)" }
@@ -138,7 +138,7 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
         check(privateFixture.reads.count == 0 && !FileManager.default.fileExists(atPath: privateFixture.store.sessionURL.path), "Private runtime does not request keys or create a normal metadata file")
         let (slow, slowWeb) = try fixture()
         let slowLook = SiteBoost(content: BoostContent(name: "Load approval", host: "127.0.0.1", javascript: "window.earlyExecution=(window.earlyExecution||0)+1;"))
-        try slow.store.saveBoost(slowLook, profileID: slow.profile)
+        try await slow.store.saveValidatedBoost(slowLook, profileID: slow.profile)
         slowWeb.load(URLRequest(url: origin.appendingPathComponent("slow")))
         try await eventually("Approval fixture exposes its page before DOM ready") { try await js(slowWeb, "return !!document.getElementById('target') && document.readyState!=='complete';") as? Bool == true }
         try slow.store.approveBoostJavaScript(BoostJavaScriptRequest(source: BoostEditSource(store: slow.store, web: slowWeb), boost: slow.store.boostCatalog(profileID: slow.profile).entries[0]))
@@ -149,7 +149,7 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
         try await eventually("The next provisional navigation can use the newly approved code") { try await js(slowWeb, "return window.earlyExecution===1;") as? Bool == true }
         let (failed, failedWeb) = try fixture()
         let failedLook = SiteBoost(content: BoostContent(name: "Rollback", host: "127.0.0.1"))
-        try failed.store.saveBoost(failedLook, profileID: failed.profile)
+        try await failed.store.saveValidatedBoost(failedLook, profileID: failed.profile)
         try await load(failedWeb)
         try failed.store.startBoostPicker(failedLook.id, source: BoostEditSource(store: failed.store, web: failedWeb))
         try await eventually("Rollback fixture picker is ready") { try await js(failedWeb, "return !!__alcoveBoostState_v1.picker;", world: world) as? Bool == true }
@@ -164,7 +164,7 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
         failed.store.cancelBoostPicker()
         let (closing, closingWeb) = try fixture()
         let closingLook = SiteBoost(content: BoostContent(name: "Closing picker", host: "127.0.0.1"))
-        try closing.store.saveBoost(closingLook, profileID: closing.profile)
+        try await closing.store.saveValidatedBoost(closingLook, profileID: closing.profile)
         try await load(closingWeb)
         try closing.store.startBoostPicker(closingLook.id, source: BoostEditSource(store: closing.store, web: closingWeb))
         try await eventually("Window-close fixture picker is ready") { try await js(closingWeb, "return !!__alcoveBoostState_v1.picker;", world: world) as? Bool == true }
@@ -181,6 +181,59 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
         try await load(ephemeralWeb!)
         ephemeralStore!.shutdown(); ephemeralWeb = nil; ephemeralStore = nil
         try await eventually("Shared scripts, handlers and native call jobs release a closed owner and web view") { retired.store == nil && retired.web == nil }
+        let (review, reviewWeb) = try fixture()
+        var reviewedLook = SiteBoost(content: BoostContent(name: "Review regression", host: "127.0.0.1", css: "#target{color:#FF0000!important}"))
+        try await review.store.saveValidatedBoost(reviewedLook, profileID: review.profile)
+        try await load(reviewWeb, path: "review")
+        try await eventually("Review fixture begins with the saved working style") { try await js(reviewWeb, "return getComputedStyle(document.getElementById('target')).color==='rgb(255, 0, 0)';") as? Bool == true }
+        for css in ["#target{color:", "#target{color:blue} p{background:", "#target ??? {color:blue}", "#target{color:not-a-color}", "#target{color:blue;display:inexistent}"] {
+            let rejected = try await reviewWeb.callAsyncJavaScript("const s=__alcoveBoostState_v1;try{s.apply(s.nonce,location.hostname,s.serial,'',css,[]);return false;}catch(e){return String(e).includes('CSS');}", arguments: ["css": css], in: nil, contentWorld: world) as? Bool
+            let unchangedColor = try await js(reviewWeb, "return getComputedStyle(document.getElementById('target')).color==='rgb(255, 0, 0)';") as? Bool
+            check(rejected == true && unchangedColor == true, "Actual WebKit rejects malformed/partial CSS without replacing the working sheets")
+            _ = try await js(reviewWeb, "const s=__alcoveBoostState_v1;s.apply(s.nonce,location.hostname,s.serial,'','#target{color:red!important}',[]);return true;", world: world)
+        }
+        _ = try await js(reviewWeb, "window.reviewInput=document.getElementById('keep');reviewInput.value='kept form';window.reviewAd=document.getElementById('ad');return true;")
+        for css in ["", "@layer custom {#ad{display:block!important}}"] {
+            let base = review.store.boostCatalog(profileID: review.profile).entries[0]
+            reviewedLook = base; reviewedLook.content.css = css; try await review.store.saveValidatedBoost(reviewedLook, profileID: review.profile, expected: base)
+            _ = try await js(reviewWeb, "reviewAd.style.setProperty('display','inline-flex','important');return true;")
+            let saved = review.store.boostCatalog(profileID: review.profile).entries[0]
+            try review.store.addBoostZap(saved.id, profileID: review.profile, selector: "#ad", expected: saved)
+            try await eventually("Zap dominates site/custom layers and inline-important display") { try await js(reviewWeb, "return getComputedStyle(reviewAd).display==='none' && reviewInput.value==='kept form';") as? Bool == true }
+            try review.store.undoBoostZap(saved.id, profileID: review.profile)
+            try await eventually("Undo restores exact inline display/priority and the original live nodes") { try await js(reviewWeb, "return reviewAd===document.getElementById('ad') && reviewAd.style.display==='inline-flex' && reviewAd.style.getPropertyPriority('display')==='important' && reviewInput===document.getElementById('keep') && reviewInput.value==='kept form';") as? Bool == true }
+        }
+        let dynamicBase = review.store.boostCatalog(profileID: review.profile).entries[0]
+        try review.store.addBoostZap(dynamicBase.id, profileID: review.profile, selector: ".dynamic-ad", expected: dynamicBase)
+        try await eventually("A saved selector remains active before matching elements appear") { try await js(reviewWeb, "return __alcoveBoostState_v1.hideSelectors?.includes('.dynamic-ad')===true;", world: world) as? Bool == true }
+        _ = try await js(reviewWeb, "window.dynamicAd=document.createElement('div');dynamicAd.className='dynamic-ad';dynamicAd.style.setProperty('display','block','important');document.body.append(dynamicAd);return true;")
+        try await eventually("New matching elements are hidden despite inline-important styles") { try await js(reviewWeb, "return getComputedStyle(dynamicAd).display==='none';") as? Bool == true }
+        _ = try await js(reviewWeb, "dynamicAd.style.setProperty('display','grid','important');return true;")
+        try await eventually("Page display changes stay hidden while updating the reversible baseline") { try await js(reviewWeb, "return getComputedStyle(dynamicAd).display==='none';") as? Bool == true }
+        try review.store.undoBoostZap(dynamicBase.id, profileID: review.profile)
+        try await eventually("Undo preserves the page's latest inline display and original form node") { try await js(reviewWeb, "return dynamicAd.style.display==='grid' && dynamicAd.style.getPropertyPriority('display')==='important' && reviewInput===document.getElementById('keep') && reviewInput.value==='kept form';") as? Bool == true }
+        let reviewSource = try BoostEditSource(store: review.store, web: reviewWeb)
+        try review.store.startBoostPicker(reviewedLook.id, source: reviewSource)
+        try await eventually("Propagation regression has a real picker overlay") { try await js(reviewWeb, "return !!document.querySelector('[data-alcove-zap-overlay]');") as? Bool == true }
+        _ = try await js(reviewWeb, "const overlay=document.querySelector('[data-alcove-zap-overlay]');for(const type of ['pointerdown','mousedown','pointerup','mouseup','click','dblclick','contextmenu','touchstart','touchend'])overlay.dispatchEvent(new Event(type,{bubbles:true,cancelable:true}));return true;")
+        check(try await js(reviewWeb, "return captureCount===0 && reviewInput.value==='kept form' && location.pathname==='/review';") as? Bool == true, "Picker input cannot activate ancestor page handlers or change a live form")
+        review.store.cancelBoostPicker()
+        try await eventually("Picker interception is disabled after cancellation") { try await js(reviewWeb, "return !document.querySelector('[data-alcove-zap-overlay]');") as? Bool == true }
+        _ = try await js(reviewWeb, "document.getElementById('target').dispatchEvent(new Event('pointerdown',{bubbles:true,cancelable:true}));return true;")
+        check(try await js(reviewWeb, "return captureCount===2 && reviewInput.value==='page activated';") as? Bool == true, "Normal page pointer input resumes after picker cancellation")
+        for rootSize in [24, 10] {
+            _ = try await reviewWeb.callAsyncJavaScript("const site=new CSSStyleSheet();site.replaceSync('html{font-size:'+size+'px!important}');document.adoptedStyleSheets=[...document.adoptedStyleSheets,site];return true;", arguments: ["size": rootSize], in: nil, contentWorld: .page)
+            for (scale, expected) in [(0.75, Double(rootSize)*0.75), (1.0, Double(rootSize)), (1.25, Double(rootSize)*1.25), (1.25, Double(rootSize)*1.25)] {
+                let base = review.store.boostCatalog(profileID: review.profile).entries[0]
+                reviewedLook = base; reviewedLook.content.appearance.textScale = scale
+                try await review.store.saveValidatedBoost(reviewedLook, profileID: review.profile, expected: base)
+                try await eventually("Relative text scale \(scale) preserves the \(rootSize)px site baseline without compounding") { try await js(reviewWeb, "return parseFloat(getComputedStyle(document.documentElement).fontSize);") as? Double == expected }
+                check(try await js(reviewWeb, "return getComputedStyle(document.getElementById('fixed')).fontSize;") as? String == "13px", "Relative root/rem scaling leaves explicit fixed-pixel descendants unchanged")
+            }
+            try review.store.setBoostsEnabled(false)
+            try await eventually("Disabling relative text size restores the site's \(rootSize)px root") { try await js(reviewWeb, "return parseFloat(getComputedStyle(document.documentElement).fontSize);") as? Int == rootSize }
+            try review.store.setBoostsEnabled(true)
+        }
         store.shutdown()
         let selectorCount = store.boostCatalog(profileID: f.profile).entries.first?.hiddenSelectors.count
         _ = try? await js(web, "webkit.messageHandlers.alcoveBoostBridge.postMessage({kind:'picked',nonce:__alcoveBoostState_v1.nonce,picker:'old',selection:'old',selector:'#second'});", world: world)

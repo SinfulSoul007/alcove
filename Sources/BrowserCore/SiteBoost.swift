@@ -54,10 +54,8 @@ public struct BoostAppearance: Codable, Equatable, Sendable {
         case .rounded: family = "ui-rounded,-apple-system,sans-serif"
         }
         if let family { rules.append("body,body *{font-family:\(family)!important}") }
-        if value.textScale != 1 {
-            let percent = NumberFormatter(); percent.locale = Locale(identifier: "en_US_POSIX"); percent.maximumFractionDigits = 4
-            if let size = percent.string(from: NSNumber(value: value.textScale * 100)) { rules.append("html{font-size:\(size)%!important}") }
-        }
+        // Relative root/rem sizing needs the site's computed, unboosted baseline.
+        // The WebKit runtime supplies it; an initial-font percentage is incorrect.
         return rules.joined(separator: "\n")
     }
 }

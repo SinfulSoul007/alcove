@@ -14,7 +14,13 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             body = b"window.slowFinished=true;"
             mime = 'text/javascript'
         elif self.path == '/fixture.js':
-            body = b"window.siteGlobal=17; window.addEventListener('message',e=>{if(e.data.kind==='frameColor')window.frameColor=e.data.color;});"
+            body = b"""window.siteGlobal=17; window.addEventListener('message',e=>{if(e.data.kind==='frameColor')window.frameColor=e.data.color;});
+            if(location.pathname==='/review'){
+              const sheet=new CSSStyleSheet();sheet.replaceSync('@layer site {#ad{display:block!important}} html{font-size:24px} #fixed{font-size:13px}');document.adoptedStyleSheets=[sheet];
+              window.captureCount=0;
+              for(const type of ['pointerdown','mousedown','pointerup','mouseup','click','dblclick','contextmenu','touchstart','touchend'])
+                for(const node of [window,document]) node.addEventListener(type,()=>{window.captureCount++;const input=document.getElementById('keep');if(input)input.value='page activated';},true);
+            }"""
             mime = 'text/javascript'
         elif self.path == '/frame.js':
             body = b"parent.postMessage({kind:'frameColor',color:getComputedStyle(document.getElementById('child')).color},'*');"
@@ -25,7 +31,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         else:
             port = self.server.server_address[1]
             body = ("<!doctype html><html><head><title>Owned Boost fixture</title><script src='/fixture.js'></script></head><body>"
-                    "<p id='target'>Original target</p><form><input id='keep' value='original'></form>"
+                    "<p id='target'>Original target</p><p id='fixed'>Fixed text</p><form><input id='keep' value='original'></form>"
                     "<a id='ad' href='/clicked'>Hide this link</a><div id='second'>Another element</div>"
                     f"<iframe src='http://localhost:{port}/frame'></iframe>"
                     "<p>" + "Owned content " * 1000 + "</p>" + ("<script src='/slow.js'></script>" if self.path == '/slow' else "") + "</body></html>").encode()

@@ -137,7 +137,7 @@ enum BoostRuntimeError: LocalizedError {
         let document = try await readDocument(page)
         guard let value = snapshot(page) else { return }
         page.serial += 1
-        _ = try await query(page, "return globalThis.__alcoveBoostState_v1?.apply(nonce,host,serial,appearance,css,selectors);", arguments: ["nonce": document.nonce, "host": value.origin.host, "serial": page.serial, "appearance": value.boost?.content.appearance.css ?? "", "css": value.boost?.content.css ?? "", "selectors": value.boost?.hiddenSelectors ?? []], in: world)
+        _ = try await query(page, "return globalThis.__alcoveBoostState_v1?.apply(nonce,host,serial,appearance,css,selectors,textScale);", arguments: ["nonce": document.nonce, "host": value.origin.host, "serial": page.serial, "appearance": value.boost?.content.appearance.css ?? "", "css": value.boost?.content.css ?? "", "selectors": value.boost?.hiddenSelectors ?? [], "textScale": value.boost?.content.appearance.textScale ?? 1], in: world)
         guard matches(page, value), page.nonce == document.nonce else { return }
         if auto && document.ready && !page.processedReady {
             page.processedReady = true

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import WebKit
 import CryptoKit
+import Combine
 import BrowserCore
 
 enum BoostInputCheckError: Error { case failed }
@@ -46,22 +47,26 @@ enum BoostInputCheckError: Error { case failed }
         check(editor.setAppearance(appearance, in: store), "A no-code change saves immediately even while code has an unfinished draft")
         let afterAppearance = store.boostCatalog(profileID: f.profile).entries[0]
         check(afterAppearance.content.name == "Owned look" && afterAppearance.content.javascript == "window.owned=true;" && afterAppearance.content.appearance == appearance && editor.draft.content.javascript == "const unfinished = ;", "Immediate appearance saves preserve unsaved name/code fields without executing them")
-        check(!editor.finish(in: store) && store.presentedPanel == .boosts && editor.error != nil, "Invalid Done keeps the draft and existing definition visible")
+        let finishedInvalid = await editor.finish(in: store)
+        check(!finishedInvalid && store.presentedPanel == .boosts && editor.error != nil, "Invalid Done keeps the draft and existing definition visible")
         editor.cancel()
         check(!editor.isDirty && editor.draft.content.name == "Owned look" && editor.draft.content.appearance == appearance, "Cancel drops unsaved fields and retains already-saved appearance choices")
         editor.draft.content.name = "Saved on Done"
-        check(editor.finish(in: store) && store.presentedPanel == nil && store.boostCatalog(profileID: f.profile).entries[0].content.name == "Saved on Done", "Done saves a valid dirty draft before dismissal")
+        let finishedValid = await editor.finish(in: store)
+        check(finishedValid && store.presentedPanel == nil && store.boostCatalog(profileID: f.profile).entries[0].content.name == "Saved on Done", "Done saves a valid dirty draft before dismissal")
         let current = store.boostCatalog(profileID: f.profile).entries[0]
         let stale = BoostEditor(store: store, profileID: f.profile, source: source, initial: current)
         stale.draft.content.css = "p{color:red}"
         var newer = current; newer.content.name = "Newer title"; try store.saveBoost(newer, profileID: f.profile, expected: current)
-        check(!stale.save(in: store) && stale.isDirty && store.boostCatalog(profileID: f.profile).entries[0].content.name == "Newer title", "An old editor cannot overwrite a newer saved content revision")
+        let savedStale = await stale.save(in: store)
+        check(!savedStale && stale.isDirty && store.boostCatalog(profileID: f.profile).entries[0].content.name == "Newer title", "An old editor cannot overwrite a newer saved content revision")
         let live = store.boostCatalog(profileID: f.profile).entries[0]
         let preserved = BoostEditor(store: store, profileID: f.profile, source: source, initial: live)
         preserved.draft.content.css = "p{line-height:1.7}"
         try store.setBoostEnabled(live.id, profileID: f.profile, enabled: false)
         try store.addBoostZap(live.id, profileID: f.profile, selector: "#ad", expected: store.boostCatalog(profileID: f.profile).entries[0])
-        check(preserved.save(in: store) && !store.boostCatalog(profileID: f.profile).entries[0].enabled && store.boostCatalog(profileID: f.profile).entries[0].hiddenSelectors == ["#ad"], "Native code Save preserves newer variant and hidden-element controls")
+        let savedPreserved = await preserved.save(in: store)
+        check(savedPreserved && !store.boostCatalog(profileID: f.profile).entries[0].enabled && store.boostCatalog(profileID: f.profile).entries[0].hiddenSelectors == ["#ad"], "Native code Save preserves newer variant and hidden-element controls")
         try store.removeBoostZap(live.id, profileID: f.profile, selector: "#ad")
         check(store.boostCatalog(profileID: f.profile).entries[0].hiddenSelectors.isEmpty, "An individual hidden element can be restored atomically")
         try store.addBoostZap(live.id, profileID: f.profile, selector: "#one", expected: store.boostCatalog(profileID: f.profile).entries[0])
@@ -82,7 +87,9 @@ enum BoostInputCheckError: Error { case failed }
         var sharedLook = store.boostCatalog(profileID: f.profile).entries[0]; sharedLook.hiddenSelectors = ["#imported-ad"]
         try BoostClipboard.copy(sharedLook, to: board)
         let styledImport = BoostEditor(store: store, profileID: f.profile)
-        check(styledImport.pasteAppearance(from: board) && styledImport.setAppearance(BoostAppearance(font: .rounded), in: store) && styledImport.save(in: store), "A pasted appearance can be styled before its remaining code fields are saved")
+        let preparedImport = styledImport.pasteAppearance(from: board) && styledImport.setAppearance(BoostAppearance(font: .rounded), in: store)
+        let savedImport = preparedImport ? await styledImport.save(in: store) : false
+        check(savedImport, "A pasted appearance can be styled before its remaining code fields are saved")
         let styledSaved = store.boostCatalog(profileID: f.profile).entries.first { $0.id == styledImport.draft.id }
         check(styledSaved?.hiddenSelectors == ["#imported-ad"] && styledSaved?.content.css == "p{line-height:1.7}" && styledSaved?.enabled == false && styledSaved?.content.javascript.isEmpty == true, "Styling an imported draft retains its selectors/CSS and keeps it disabled without scripts")
         store.boostEditor = importer; store.presentedPanel = .settings
@@ -93,6 +100,31 @@ enum BoostInputCheckError: Error { case failed }
         store.savingEnabled = false
         check(!preserved.setAppearance(BoostAppearance(background: "#000000"), in: store) && preserved.draft == oldDraft, "A failed immediate appearance save leaves the previous visible draft intact")
         store.savingEnabled = true
+
+        let (race, _, raceSource) = try mounted(), raceStore = race.store
+        let raceLook = SiteBoost(content: BoostContent(name: "Pending CSS", host: "127.0.0.1"))
+        try raceStore.saveBoost(raceLook, profileID: race.profile)
+        let raceBytes = try Data(contentsOf: raceStore.sessionURL)
+        let changing = BoostEditor(store: raceStore, profileID: race.profile, source: raceSource, initial: raceLook)
+        changing.draft.content.css = "p{color:red}"
+        let changedDuringSave = changing.$isSaving.sink { if $0 { changing.draft.content.css = "p{color:blue}" } }
+        let changedSaved = await changing.save(in: raceStore)
+        changedDuringSave.cancel()
+        let afterRaceBytes = try Data(contentsOf: raceStore.sessionURL)
+        check(!changedSaved && changing.draft.content.css == "p{color:blue}" && raceStore.boostCatalog(profileID: race.profile).entries.first == raceLook && afterRaceBytes == raceBytes, "A CSS validation reply cannot save an older draft over concurrent edits")
+        let canceling = BoostEditor(store: raceStore, profileID: race.profile, source: raceSource, initial: raceLook)
+        canceling.draft.content.css = "p{color:green}"
+        let canceledDuringSave = canceling.$isSaving.sink { if $0 { canceling.cancel() } }
+        let canceledSaved = await canceling.save(in: raceStore)
+        canceledDuringSave.cancel()
+        check(!canceledSaved && !canceling.isDirty && canceling.error == nil && raceStore.boostCatalog(profileID: race.profile).entries.first == raceLook, "Cancel invalidates a pending CSS save without a late write or stale error")
+        let finishing = BoostEditor(store: raceStore, profileID: race.profile, source: raceSource, initial: raceLook)
+        raceStore.boostEditor = finishing; raceStore.presentedPanel = .boosts
+        finishing.draft.content.css = "p{color:purple}"
+        let switchedDuringSave = finishing.$isSaving.sink { if $0 { raceStore.presentedPanel = .settings } }
+        let closedOtherPanel = await finishing.finish(in: raceStore)
+        switchedDuringSave.cancel()
+        check(!closedOtherPanel && raceStore.presentedPanel == .settings && raceStore.boostCatalog(profileID: race.profile).entries.first?.content.css == "p{color:purple}", "A completed Done cannot dismiss a different panel opened during CSS validation")
 
         let (approvalFixture, approvalWindow, approvalSource) = try mounted(), approvalStore = approvalFixture.store
         let script = SiteBoost(content: BoostContent(name: "Consent fixture", host: "127.0.0.1", javascript: "window.consentFixture = 17;"))
@@ -202,7 +234,8 @@ enum BoostInputCheckError: Error { case failed }
         }
         let p = try fixture(true), privateEditor = BoostEditor(store: p.store, profileID: BrowserProfile.defaultID)
         privateEditor.draft.content.host = "private.test"; privateEditor.draft.content.name = "Private draft"
-        check(privateEditor.save(in: p.store) && p.reads.count == 0 && !FileManager.default.fileExists(atPath: p.store.sessionURL.path), "The native private editor saves only temporary definitions without requesting a key or file")
+        let savedPrivate = await privateEditor.save(in: p.store)
+        check(savedPrivate && p.reads.count == 0 && !FileManager.default.fileExists(atPath: p.store.sessionURL.path), "The native private editor saves only temporary definitions without requesting a key or file")
         if failures != 0 { throw BoostInputCheckError.failed }
     }
 }
