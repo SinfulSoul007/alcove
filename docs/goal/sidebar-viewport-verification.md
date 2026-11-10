@@ -11,7 +11,7 @@ The actual BrowserUI root now fills its received viewport instead of imposing an
 - Follow-up delayed-focus regression:48 PASS/1 FAIL before rejecting stale focus callbacks while disabled. Final native sidebar suite:50 PASS/0 FAIL, retaining original mouse, cancellation, window and tracking assertions.
 - Existing browser chrome suite:55 PASS/0 FAIL. All focused checks have zero compiler diagnostics.
 - Optimized arm64 and x86_64 bundles pass strict signature, Hardened Runtime, byte-identical Info, exact architecture, minimum macOS14 and unchanged exact six-entitlement gates. Their receipts are retained with the plan evidence.
-- Full local suite, final fresh review and exact-source CI/package checks are pending at this checkpoint.
+- Complete local suite:1,445 PASS/0 FAIL/0 compiler diagnostics, terminal exit0. The frozen114-file product/test manifest remained unchanged through focused/full/build gates, and the installed Visual Four executable remains unchanged. Final fresh review and exact-source CI/package checks are pending at this checkpoint.
 
 ## Rulings and costs
 
