@@ -96,6 +96,9 @@ struct BrowserUI: View {
                     Color.black.opacity(0.25).ignoresSafeArea().onTapGesture { store.commandVisible = false }
                     CommandPanel(store: store, availableHeight: geometry.size.height - min(140, geometry.size.height * 0.18) - 40).frame(width: min(600, geometry.size.width - 64)).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, min(140, geometry.size.height * 0.18)).transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : -8)))
                 }
+                if let picker = store.boostPicker, case .primary = picker.source.inputContext {
+                    BoostPickerBanner(store: store, session: picker).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(.top, chrome.height + 10).padding(.trailing, 18)
+                }
                 if let message = store.message {
                     VStack { Spacer(); HStack {
                         if !store.savingEnabled && !store.isPrivate { Button("Unlock") { store.unlockLocalData() } }
@@ -119,6 +122,7 @@ struct BrowserUI: View {
                 case .settings: SettingsPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .siteSearch: SiteSearchPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .links: LinkRoutingPanel(store: store, availableHeight: geometry.size.height - 40)
+                case .boosts: BoostPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .appearance:
                     if store.canModifyLocalMetadata { AppearancePanel(store: store, availableHeight: geometry.size.height - 40) }
                     else { lockedAppearancePanel }
@@ -200,6 +204,7 @@ struct BrowserUI: View {
                 Menu {
                     Button("New Space…") { store.requestNewSpace() }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(store.activeProfileID)))
                     Button("Customize…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata)
+                    Button("Boost This Site…") { do { try store.requestBoostEditor(for: store.primaryPeekView ?? store.currentView) } catch { store.message = error.localizedDescription } }
                     Menu("Theme") { ForEach(SidebarTheme.allCases) { choice in Button(choice.name) { withAnimation(motion) { store.setTheme(choice) } } } }.disabled(!store.canModifyLocalMetadata)
                     Button("Split View") { store.toggleSplit() }
                     Button("Bookmark Page") { store.addBookmark() }.disabled(store.isPrivate || !store.savingEnabled || store.profileUnavailable(store.activeProfileID))

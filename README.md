@@ -61,15 +61,25 @@ Exported PDF/WebArchive files, printer output and print-system artifacts are out
 
 ## Site search (source development)
 
-The developing 0.6.4 source includes configured site shortcuts; the public download above remains 0.6.2. Type `yt`, `wiki` or `gh` in the command bar or Quick Browse address field, press Tab, then type a query and press Return. Empty Backspace restores the shortcut; the pill's close button leaves site mode and keeps your query. Normal Return behavior stays unchanged until you select a site.
+The developing 0.7.0 source includes configured site shortcuts; the public download above remains 0.6.2. Type `yt`, `wiki` or `gh` in the command bar or Quick Browse address field, press Tab, then type a query and press Return. Empty Backspace restores the shortcut; the pill's close button leaves site mode and keeps your query. Normal Return behavior stays unchanged until you select a site.
 
 Use **Alcove → Site Search Settings…**, Settings, or the command list to add, edit, disable or remove shortcuts. A search URL uses one `%s` for the query, with complete URL escapes for other literal percent signs. Path templates reject queries that would become dot-only path segments. Matching stays local and sends nothing before submission. Normal profiles share encrypted shortcut settings; searches use the current page's actual profile. Private windows start with presets and keep changes temporary. Editing or removing a selected provider requires selecting it again before submission. Automatic site discovery is still pending.
 
 ## Link routing (source development)
 
-Developing 0.6.4 adds **Alcove → Link Routing Settings…** (also Settings → Links, or “Link Preferences”/“Air Traffic Control” in the command list). Add ordered Contains/Equals URL conditions and choose Quick Browse, Most Recent Space or a named Space. The first enabled match wins. The default applies to links from other apps; routing and its test-URL preview stay local. Named Spaces select their own profile; Quick Browse/recent routes retain the source or remembered account. An unavailable matching destination blocks the opening until edited.
+Developing 0.7.0 includes **Alcove → Link Routing Settings…** (also Settings → Links, or “Link Preferences”/“Air Traffic Control” in the command list). Add ordered Contains/Equals URL conditions and choose Quick Browse, Most Recent Space or a named Space. The first enabled match wins. The default applies to links from other apps; routing and its test-URL preview stay local. Named Spaces select their own profile; Quick Browse/recent routes retain the source or remembered account. An unavailable matching destination blocks the opening until edited.
 
 Archive restoration follows matching routes, otherwise its original same-profile Space. Opening a Peek within its profile keeps its live page state; changing profiles asks to reload with separate website logins. Cancellation, a changed route/document or a failed metadata write preserves the original preview. Private windows ignore normal link rules. See the [source verification record](docs/goal/link-routing-verification.md) for evidence and remaining native QA. The public downloadable preview remains 0.6.2.
+
+## Website Boosts (source development)
+
+Developing 0.7.0 adds **Alcove → Website Boosts…**, Settings → Website Boosts, the command “Create Boost”, and **Boost This Site…** in the main and Quick Browse action menus. Each profile keeps its own saved looks for an exact hostname across HTTP, HTTPS and ports. Choose colors, fonts, relative text size, a preset or Shuffle. Appearance choices save immediately; name/site/CSS/JavaScript drafts use **Save Changes** or **Done**. Unsaved drafts survive switching panels, and a Quick Browse editor stays bound to its original profile.
+
+Use **Hide an Element…** to choose page elements without deleting their DOM nodes or reloading a form. **Undo**, individual **Unhide**, and **Unhide All** restore them. **Done** or Escape leaves picker mode; text composition receives Escape first. Styles apply to the main document. Frame contents and shadow roots keep their own styling.
+
+JavaScript requires local approval for its exact code and site. Approval applies to future loads; **Run on This Page** is explicit and runs the saved script once per document. Editing code requires fresh approval. Turning a Boost off stops future runs; reloading may be needed to undo earlier script effects. **Share Appearance → Copy/Paste** transfers local JSON containing styles and hidden-element rules. Imported looks start disabled and contain no JavaScript or approval. Review custom CSS before enabling it: styles can change page behavior and request resources. Private definitions and approvals stay temporary and separate.
+
+The public download remains 0.6.2. Source fixtures cover storage, WebKit effects and owned native control logic. Live control colors, focus, accessibility, animations, Arc fidelity and broad website compatibility remain under verification; offscreen renders do not establish visual perfection.
 
 ## Privacy and security
 

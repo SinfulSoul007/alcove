@@ -90,10 +90,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @discardableResult func handleEscape(in window: NSWindow?) -> Bool {
         guard let window, !hasMarkedText(in: window) else { return false }
         if SidebarResizeHandle.cancelActiveResize(in: window) { return true }
+        if let pickerStore = browserStore(in: window), pickerStore.boostPicker?.source.window === window { pickerStore.cancelBoostPicker(); return true }
         if let quick = quickWindows.values.first(where: { $0.window === window }),
            quick.state.findVisible || quick.state.isEditingAddress || quick.store.quickPeekView(quick.pageID) != nil { quick.escape(); return true }
         guard let store = windows[window] else { return false }
-        if store.presentedPanel != nil { store.presentedPanel = nil }
+        if store.presentedPanel == .boosts { _ = store.finishBoostEditor() }
+        else if store.presentedPanel != nil { store.presentedPanel = nil }
         else if store.commandVisible { store.dismissCommand() }
         else if store.findVisible { store.findVisible = false }
         else if store.primaryPeekView != nil { store.closePrimaryPeek() }
@@ -217,6 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(app, "About Alcove", #selector(about), ""); add(app, "Settings…", #selector(settings), ",")
         add(app, "Site Search Settings…", #selector(siteSearchSettings), "")
         add(app, "Link Routing Settings…", #selector(linkRoutingSettings), "")
+        add(app, "Website Boosts…", #selector(websiteBoosts), "")
         add(app, "Customize…", #selector(customize), ",", [.command, .shift])
         add(app, "Manage Profiles…", #selector(manageProfiles), "")
         add(app, "Check for Updates…", #selector(checkUpdates), "")
@@ -258,7 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let target = outputTarget(in: activeBrowserWindow) else { return false }
             return pageOutput.canBegin(web: target.web, store: target.store, window: target.window)
         }
-        let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings), #selector(customize), #selector(checkUpdates), #selector(siteSearchSettings), #selector(linkRoutingSettings)]
+        let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings), #selector(customize), #selector(checkUpdates), #selector(siteSearchSettings), #selector(linkRoutingSettings), #selector(websiteBoosts)]
         if let action = menuItem.action, general.contains(action) { return true }
         guard let store = activeStore else { return menuItem.action == #selector(newTab) || menuItem.action == #selector(newQuick) || menuItem.action == #selector(location) }
         let quick = activeQuick
@@ -362,6 +365,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func settings() { primaryForActive().settingsVisible = true }
     @objc func siteSearchSettings() { primaryForActive().presentedPanel = .siteSearch }
     @objc func linkRoutingSettings() { primaryForActive().presentedPanel = .links }
+    @objc func websiteBoosts() {
+        let web = activeStore?.presentedPanel == nil ? activeWebView : nil
+        let store = primaryForActive()
+        do { try store.requestBoostEditor(for: web) } catch { store.message = error.localizedDescription }
+    }
     @objc func customize() { primaryForActive().appearanceVisible = true }
     @objc func manageProfiles() {
         openWindow(isPrivate: false)

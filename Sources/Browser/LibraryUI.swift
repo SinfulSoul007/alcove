@@ -93,12 +93,12 @@ struct SettingsPanel: View {
             HStack { Text("Alcove Settings").font(.title2.bold()); Spacer(); Button("Done") { store.settingsVisible = false }.keyboardShortcut(.cancelAction) }
             ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-            HStack {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), alignment: .leading)], alignment: .leading, spacing: 10) {
                 Button("Customize Appearance…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata)
                 Button("Site Search…") { store.presentedPanel = .siteSearch }
                 Button("Links…") { store.presentedPanel = .links }.accessibilityIdentifier("link-routing-settings")
+                Button("Website Boosts…") { do { try store.requestBoostEditor() } catch { store.message = error.localizedDescription } }.accessibilityIdentifier("boost-settings")
                 Button("Welcome Tour") { store.presentedPanel = nil; store.onboardingVisible = true }.disabled(store.isPrivate || !store.savingEnabled)
-                Spacer()
                 Button("Updates…") { store.updatesVisible = true }
             }
             GroupBox("Privacy") {

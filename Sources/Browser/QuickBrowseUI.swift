@@ -123,6 +123,7 @@ struct QuickBrowseUI: View {
     let onOpenSettings: () -> Void
     let onClose: () -> Void
     let onNewQuick: () -> Void
+    let onOpenBoosts: () -> Void
 
     init(store: BrowserStore, id: UUID, state: QuickBrowseWindowState,
          onPromoteSpace: @escaping (UUID?) -> Void,
@@ -131,11 +132,14 @@ struct QuickBrowseUI: View {
          onManageProfiles: @escaping () -> Void,
          onOpenSettings: @escaping () -> Void,
          onClose: @escaping () -> Void,
-         onNewQuick: @escaping () -> Void) {
+         onNewQuick: @escaping () -> Void, onOpenBoosts: (() -> Void)? = nil) {
         self.store = store; self.id = id; self.state = state
         self.onPromoteSpace = onPromoteSpace; self.onPromotePeek = onPromotePeek
         self.onRequestProfile = onRequestProfile; self.onManageProfiles = onManageProfiles
         self.onOpenSettings = onOpenSettings; self.onClose = onClose; self.onNewQuick = onNewQuick
+        self.onOpenBoosts = onOpenBoosts ?? {
+            do { try store.requestBoostEditor(for: store.foregroundQuickView(id)) } catch { store.message = error.localizedDescription }
+        }
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -177,6 +181,11 @@ struct QuickBrowseUI: View {
                     .overlay(alignment: .top) { progress }
                     .overlay { if let peek = ownPeek { peekOverlay(peek, size: geometry.size) } }
                     .animation(motion, value: ownPeek != nil)
+                    .overlay(alignment: .topTrailing) {
+                        if let picker = store.boostPicker, case .quick(let pageID, _, _) = picker.source.inputContext, pageID == id {
+                            BoostPickerBanner(store: store, session: picker).padding(10)
+                        }
+                    }
             }
             .background(theme.gradient)
             .foregroundStyle(theme.ink)
@@ -255,6 +264,7 @@ struct QuickBrowseUI: View {
                 }.disabled(currentURL.isEmpty)
                 Divider()
                 Button("Settings…", action: onOpenSettings)
+                Button("Boost This Site…", action: onOpenBoosts)
                 Button("Close Quick Browse", action: onClose)
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 14, weight: .medium)).frame(width: 25, height: 30)

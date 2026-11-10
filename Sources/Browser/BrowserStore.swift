@@ -5,11 +5,11 @@ import BrowserCore
 import CryptoKit
 import Combine
 
-enum BrowserPanel: String, Identifiable { case library, settings, appearance, updates, profiles, siteSearch, links; var id: String { rawValue } }
+enum BrowserPanel: String, Identifiable { case library, settings, appearance, updates, profiles, siteSearch, links, boosts; var id: String { rawValue } }
 
 @MainActor
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
-    @Published var session = Session()
+    @Published var session = Session() { didSet { if boostPicker != nil { reconcileBoostPicker() } } }
     @Published var commandVisible = false {
         didSet {
             if !commandVisible {
@@ -30,6 +30,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var sidebarVisible = true
     @Published var presentedPanel: BrowserPanel?
     @Published var boostPicker: BoostPickerSession?
+    @Published var boostEditor: BoostEditor?
+    var boostApprovalJobs: [ObjectIdentifier: BoostApprovalJob] = [:]
     var appearanceVisible: Bool { get { presentedPanel == .appearance } set { if newValue { presentedPanel = .appearance } else if appearanceVisible { presentedPanel = nil } } }
     var updatesVisible: Bool { get { presentedPanel == .updates } set { if newValue { presentedPanel = .updates } else if updatesVisible { presentedPanel = nil } } }
     var profilesVisible: Bool { get { presentedPanel == .profiles } set { if newValue { presentedPanel = .profiles } else if profilesVisible { presentedPanel = nil } } }
@@ -58,8 +60,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func setCustomTheme(_ theme: CustomTheme) { session.spaces[spaceIndex].customTheme = theme; save() }
     func finishOnboarding() { preferences.onboardingCompleted = true; onboardingVisible = false; flush(); onboardingDidFinish?() }
 
-    @Published var splitID: UUID?
-    @Published var activePaneID: UUID?
+    @Published var splitID: UUID? { didSet { if boostPicker != nil { reconcileBoostPicker() } } }
+    @Published var activePaneID: UUID? { didSet { if boostPicker != nil { reconcileBoostPicker() } } }
     @Published var message: String?
     @Published var revision = 0
     @Published var profiles: [BrowserProfile] = [.defaultProfile]
@@ -81,7 +83,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var clearingProfileID: UUID?
     @Published var deletingProfileID: UUID?
     var isShuttingDown = false
-    @Published var peekPages: [PeekContext: PeekState] = [:] { didSet { reconcileSearchInputContext() } }
+    @Published var peekPages: [PeekContext: PeekState] = [:] { didSet { reconcileSearchInputContext(); if boostPicker != nil { reconcileBoostPicker() } } }
     @Published var siteIcons: [UUID: NSImage] = [:]
     let isPrivate: Bool
     let privateDataStore: WKWebsiteDataStore?
@@ -199,7 +201,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
-        flush(); isShuttingDown = true; cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
+        flush(); isShuttingDown = true; cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
     }

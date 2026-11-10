@@ -33,6 +33,8 @@ extension BrowserStore {
         case .profiles: if !isPrivate { profilesVisible = true }
         case .siteSearch: presentedPanel = .siteSearch
         case .linkRouting: presentedPanel = .links
+        case .boosts:
+            do { try requestBoostEditor(for: primaryPeekView ?? currentView) } catch { message = error.localizedDescription }
         case .copyURL:
             if let url = currentView?.url { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(url.absoluteString, forType: .string) }
         }

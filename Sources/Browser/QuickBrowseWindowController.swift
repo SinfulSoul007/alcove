@@ -41,7 +41,8 @@ import BrowserCore
             onManageProfiles: requestProfiles,
             onOpenSettings: { [weak self] in self?.requestPrimary(); self?.store.settingsVisible = true },
             onClose: { [weak self] in self?.window?.performClose(nil) },
-            onNewQuick: { [weak self] in self?.newQuick() })
+            onNewQuick: { [weak self] in self?.newQuick() },
+            onOpenBoosts: { [weak self] in self?.requestBoosts() })
         let hosting = NSHostingView(rootView: content); hosting.safeAreaRegions = []; hosting.sizingOptions = []
         window.contentView = hosting; refreshTitle()
         changeSubscription = store.objectWillChange.sink { [weak self] _ in
@@ -96,9 +97,15 @@ import BrowserCore
         do { _ = try store.openQuickPage(profileID: profile) } catch { state.navigationError = error.localizedDescription }
     }
     func escape() {
-        if state.findVisible { state.dismissFind() }
+        guard (window?.firstResponder as? NSTextInputClient)?.hasMarkedText() != true else { return }
+        if store.boostPicker?.source.window === window { store.cancelBoostPicker() }
+        else if state.findVisible { state.dismissFind() }
         else if state.isEditingAddress { state.cancelLocation(currentURL: store.quickPage(pageID)?.tab.url ?? "") }
         else if store.quickPeekView(pageID) != nil { store.closeQuickPeek(pageID) }
+    }
+    func requestBoosts() {
+        do { try store.requestBoostEditor(for: activeWebView); requestPrimary() }
+        catch { store.message = error.localizedDescription }
     }
     func refreshMediaStatus() {
         guard let web = activeWebView else { return }
