@@ -161,6 +161,11 @@ if [[ "${1:-}" == "sidebar-test" ]]; then
     "$MANUAL/sidebar-checks"
     exit
 fi
+if [[ "${1:-}" == "sidebar-layout-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SidebarLayoutChecks.swift -o "$MANUAL/sidebar-layout-checks"
+    "$MANUAL/sidebar-layout-checks"
+    exit
+fi
 if [[ "${1:-}" == "chrome-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ChromeChecks.swift -o "$MANUAL/chrome-checks"
     "$MANUAL/chrome-checks"
@@ -236,6 +241,8 @@ if [[ "${1:-}" == "test" ]]; then
     "$MANUAL/page-output-website-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${SIDEBAR_SOURCES[@]}" scripts/SidebarInteractionChecks.swift -o "$MANUAL/sidebar-checks"
     "$MANUAL/sidebar-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SidebarLayoutChecks.swift -o "$MANUAL/sidebar-layout-checks"
+    "$MANUAL/sidebar-layout-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ChromeChecks.swift -o "$MANUAL/chrome-checks"
     "$MANUAL/chrome-checks"
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/CoreChecks.swift -o "$MANUAL/checks"

@@ -73,7 +73,8 @@ struct BrowserUI: View {
                     .clipShape(RoundedRectangle(cornerRadius: store.sidebarVisible ? 0 : appearance.cornerRadius + 4))
                     .shadow(color: .black.opacity(!store.sidebarVisible && shown ? 0.25 : 0), radius: 20, x: 8, y: 0)
                     .overlay(alignment: .trailing) {
-                        SidebarResizeHandle(interactionEnabled: !sidebarInteractionBlocked && shown, onBegin: {
+                        SidebarResizeHandle(interactionEnabled: !sidebarInteractionBlocked && shown, width: width,
+                                            canInteract: { !sidebarInteractionBlocked && (store.sidebarVisible || reveal.revealed) }, onBegin: {
                             reveal.beginResize()
                             resize.begin(at: SidebarSizing.width(saved: sidebarWidth, windowWidth: geometry.size.width))
                         }, onDrag: { resize.drag(by: $0, windowWidth: geometry.size.width) }, onEnd: {
@@ -81,7 +82,9 @@ struct BrowserUI: View {
                             reveal.endResize()
                         }, onCancel: {
                             resize.cancel(); reveal.endResize()
-                        }, onReset: { resize.cancel(); sidebarWidth = 236; reveal.endResize() }).frame(width: 6)
+                        }, onReset: { resize.cancel(); sidebarWidth = 236; reveal.endResize() }, onSetWidth: { value in
+                            resize.cancel(); sidebarWidth = value; reveal.endResize()
+                        }, onFocusChange: { reveal.setKeyboardFocus($0) }).frame(width: 6)
                     }
                     .offset(x: shown ? 0 : -width - 16)
                     .opacity(shown ? 1 : 0)
@@ -109,7 +112,7 @@ struct BrowserUI: View {
                 if store.onboardingVisible { OnboardingView(store: store).transition(.opacity).zIndex(10) }
             }
             .background(theme.gradient).foregroundStyle(theme.ink)
-            .frame(minWidth: 800, minHeight: 540).ignoresSafeArea()
+            .frame(maxWidth: .infinity, maxHeight: .infinity).ignoresSafeArea()
             .preferredColorScheme(theme.isDark ? .dark : .light)
             .animation(motion, value: store.commandVisible)
             .animation(motion, value: store.primaryPeekView != nil)

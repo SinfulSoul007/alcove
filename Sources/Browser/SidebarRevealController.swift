@@ -10,6 +10,7 @@ import BrowserCore
     private var edgeInside = false
     private var panelInside = false
     private var resizing = false
+    private var keyboardFocused = false
     private var menus = Set<ObjectIdentifier>()
     private var pending: Task<Void, Never>?
     private var scheduledToken: Int?
@@ -25,7 +26,7 @@ import BrowserCore
         guard enabled != value else { return }
         enabled = value
         if !value {
-            cancelPending(); state.reset(); edgeInside = false; panelInside = false; resizing = false
+            cancelPending(); state.reset(); edgeInside = false; panelInside = false; resizing = false; keyboardFocused = false
             publish()
         } else { reconcile() }
     }
@@ -36,8 +37,13 @@ import BrowserCore
     func panelExited() { guard panelInside else { return }; panelInside = false; reconcile() }
     func beginResize() { guard !resizing else { return }; resizing = true; reconcile() }
     func endResize() { guard resizing else { return }; resizing = false; reconcile() }
+    func setKeyboardFocus(_ value: Bool) {
+        guard !value || (enabled && revealed && receivesPointer) else { return }
+        guard keyboardFocused != value else { return }
+        keyboardFocused = value; reconcile()
+    }
     func reset() {
-        cancelPending(); state.reset(); edgeInside = false; panelInside = false; resizing = false; menus.removeAll()
+        cancelPending(); state.reset(); edgeInside = false; panelInside = false; resizing = false; keyboardFocused = false; menus.removeAll()
         publish()
     }
     private func publish() { if revealed != state.revealed { revealed = state.revealed } }
@@ -48,7 +54,7 @@ import BrowserCore
         cancelPending()
         guard enabled, !windowClosed, !hasWindow || window != nil else { state.reset(); publish(); return }
         guard !hasWindow || window?.isKeyWindow == true || !menus.isEmpty else { state.reset(); publish(); return }
-        guard !resizing, menus.isEmpty else { return }
+        guard !resizing, !keyboardFocused, menus.isEmpty else { return }
         if edgeInside && !revealed { schedule(reveal: true) }
         else if revealed && !edgeInside && !panelInside { schedule(reveal: false) }
     }
@@ -63,7 +69,7 @@ import BrowserCore
     private func complete(_ token: Int, reveal: Bool) {
         guard scheduledToken == token else { return }
         scheduledToken = nil; pending = nil
-        guard enabled, receivesPointer, !resizing, menus.isEmpty else { return }
+        guard enabled, receivesPointer, !resizing, !keyboardFocused, menus.isEmpty else { return }
         if reveal {
             guard edgeInside else { return }; state.completeReveal(token)
         } else {

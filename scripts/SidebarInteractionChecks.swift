@@ -68,6 +68,9 @@ import BrowserCore
         subscription.cancel()
         hover.beginResize(); hover.panelExited(); await pause()
         check(hover.revealed, "A sidebar resize holds the floating panel open outside its bounds")
+        hover.setKeyboardFocus(true); hover.endResize(); await pause()
+        check(hover.revealed, "Keyboard focus retains the floating panel after a mouse resize ends")
+        hover.setKeyboardFocus(false)
         hover.endResize()
         check(await waitUntil({ !hover.revealed }), "Ending resize reevaluates pointer presence and permits delayed hiding")
         hover.edgeEntered(); hover.setEnabled(false); await pause(130)
@@ -78,6 +81,9 @@ import BrowserCore
         check(await waitUntil({ hover.revealed }), "Enabling a tracked edge preserves its current pointer presence")
         hover.reset(); await pause()
         check(!hover.revealed, "Reset cancels outstanding work and clears floating state")
+        hover.setEnabled(false); hover.setKeyboardFocus(true); hover.setEnabled(true); hover.edgeEntered()
+        check(await waitUntil({ hover.revealed }), "A late focus callback while disabled cannot block the next edge reveal")
+        hover.reset()
 
         let menuOwner = window()
         let menuHover = SidebarRevealController(enabled: true); menuHover.attach(to: menuOwner)
@@ -156,16 +162,18 @@ import BrowserCore
         width.begin(at: 236); _ = width.finish(); width.drag(by: 50, windowWidth: 1000)
         check(width.temporaryWidth == nil, "Completed width state rejects a late drag update")
         let resizeWindow = window(), replacementWindow = window()
+        resizeWindow.setContentSize(NSSize(width: 1000, height: 400)); replacementWindow.setContentSize(NSSize(width: 1000, height: 400))
         let resizeParent = NSView(); resizeWindow.contentView = resizeParent
         let replacementParent = NSView(); replacementWindow.contentView = replacementParent
         let handle = SidebarResizeHandle.Handle(frame: NSRect(x: 0, y: 0, width: 6, height: 300))
         resizeParent.addSubview(handle)
-        var storedWidth = 236.0, begins = 0, ends = 0, cancels = 0, resets = 0
+        var storedWidth = 236.0, begins = 0, ends = 0, cancels = 0, resets = 0, absoluteSets = 0
         handle.begin = { begins += 1; width.begin(at: storedWidth) }
         handle.drag = { width.drag(by: $0, windowWidth: 1000) }
-        handle.end = { ends += 1; if let value = width.finish() { storedWidth = value } }
+        handle.end = { [weak handle] in ends += 1; if let value = width.finish() { storedWidth = value; handle?.width = value } }
         handle.cancel = { cancels += 1; width.cancel() }
         handle.reset = { resets += 1; width.cancel(); storedWidth = 236 }
+        handle.setWidth = { absoluteSets += 1; storedWidth = $0 }
         func mouse(_ type: NSEvent.EventType, x: Double, clicks: Int = 1, owner: NSWindow) -> NSEvent {
             NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 80), modifierFlags: [], timestamp: 0,
                                windowNumber: owner.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 0)!
@@ -177,6 +185,9 @@ import BrowserCore
         handle.mouseDown(with: mouse(.leftMouseDown, x: 200, owner: resizeWindow))
         handle.mouseDragged(with: mouse(.leftMouseDragged, x: 250, owner: resizeWindow))
         check(width.temporaryWidth == 286 && storedWidth == 236, "Mouse resize changes only transient width before release")
+        let heldAX = handle.accessibilityPerformIncrement()
+        handle.setAccessibilityValue(320 as NSNumber)
+        check(!heldAX && absoluteSets == 0 && storedWidth == 236, "AX actions cannot interrupt or commit an active mouse gesture")
         handle.mouseUp(with: mouse(.leftMouseUp, x: 250, owner: resizeWindow))
         handle.mouseUp(with: mouse(.leftMouseUp, x: 250, owner: resizeWindow))
         check(storedWidth == 286 && ends == 1 && width.temporaryWidth == nil, "Mouse release commits the width exactly once")
@@ -198,7 +209,7 @@ import BrowserCore
         check(resets == 1 && storedWidth == 236 && begins == beforeDoubleBegin && ends == beforeDoubleEnd && width.temporaryWidth == nil,
               "Double-click reset cannot reuse a prior drag origin or commit a phantom gesture")
         handle.keyDown(with: key(124, owner: resizeWindow))
-        check(storedWidth == 248 && ends == beforeDoubleEnd + 1 && width.temporaryWidth == nil, "An idle arrow-key step commits one bounded width change")
+        check(storedWidth == 248 && absoluteSets == 1 && ends == beforeDoubleEnd && width.temporaryWidth == nil, "An idle arrow-key step commits one bounded width change")
         handle.mouseDown(with: mouse(.leftMouseDown, x: 200, owner: resizeWindow))
         handle.mouseDragged(with: mouse(.leftMouseDragged, x: 220, owner: resizeWindow))
         let beforeHeldArrow = ends
@@ -209,6 +220,7 @@ import BrowserCore
         handle.mouseUp(with: mouse(.leftMouseUp, x: 220, owner: resizeWindow))
         check(cancels == 3 && storedWidth == 248 && ends == beforeHeldArrow && width.temporaryWidth == nil,
               "Key-window loss cancels the resize without saving its transient width")
+        check(resizeWindow.firstResponder !== handle && !handle.isAccessibilityFocused(), "Key-window loss also releases actual divider focus")
         resizeWindow.fixtureKey = true
         handle.mouseDown(with: mouse(.leftMouseDown, x: 200, owner: resizeWindow))
         handle.mouseDragged(with: mouse(.leftMouseDragged, x: 300, owner: resizeWindow))
@@ -228,6 +240,7 @@ import BrowserCore
         handle.mouseUp(with: mouse(.leftMouseUp, x: 120, owner: replacementWindow))
         check(cancels == 5 && storedWidth == 248 && width.temporaryWidth == nil, "The current window closes and cancels its active resize without committing")
         let focusWindow = window(), focusParent = NSView(); focusWindow.contentView = focusParent; focusParent.addSubview(handle)
+        focusWindow.setContentSize(NSSize(width: 1000, height: 400))
         handle.mouseDown(with: mouse(.leftMouseDown, x: 100, owner: focusWindow))
         handle.mouseDragged(with: mouse(.leftMouseDragged, x: 110, owner: focusWindow))
         let beforeFocusCancel = cancels
