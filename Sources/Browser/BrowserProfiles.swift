@@ -167,7 +167,7 @@ extension BrowserStore {
         var prepared = document; try prepared.repairProfiles()
         session = Self.repairedSession(prepared.session); profiles = prepared.profiles ?? [.defaultProfile]
         profileLibraries = prepared.profileLibraries ?? [ProfileLibrary(profileID: BrowserProfile.defaultID, library: prepared.library)]
-        preferences = prepared.preferences; reconcileSearchInputContext(); pruneQuickActivity(); quickPagesDidChange?()
+        preferences = prepared.preferences; reconcileSearchInputContext(); pruneQuickActivity(); quickPagesDidChange?(); refreshBoosts()
     }
     func commitProfileDocument(_ candidate: BrowserDocument, discarding ids: [UUID] = [], resetting spaceID: UUID? = nil, beforePublish: (() -> Void)? = nil) throws {
         guard !isPrivate else { throw ProfileError.privateMode }

@@ -45,6 +45,7 @@ extension BrowserStore {
                              web.observe(\.canGoBack) { _, _ in changed() }, web.observe(\.canGoForward) { _, _ in changed() },
                              web.observe(\.cameraCaptureState) { _, _ in changed() }, web.observe(\.microphoneCaptureState) { _, _ in changed() }]
         peekPages[context] = page
+        BoostRuntime.install(on: web)
         web.load(URLRequest(url: url))
     }
     func closePrimaryPeek() { closePeek(in: .primary) }
@@ -55,6 +56,7 @@ extension BrowserStore {
     }
     func closePeek(in context: PeekContext) {
         guard let page = peekPages.removeValue(forKey: context) else { return }
+        invalidateDocumentIdentity(for: page.web); BoostRuntime.forget(page.web)
         closingPages.append(ClosingProfilePage(page.web, profileID: page.profileID))
         page.observations = []
         page.web.navigationDelegate = nil; page.web.uiDelegate = nil; page.web.stopLoading()

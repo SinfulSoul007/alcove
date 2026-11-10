@@ -29,6 +29,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     private(set) var commandFocusRequest = 0
     @Published var sidebarVisible = true
     @Published var presentedPanel: BrowserPanel?
+    @Published var boostPicker: BoostPickerSession?
     var appearanceVisible: Bool { get { presentedPanel == .appearance } set { if newValue { presentedPanel = .appearance } else if appearanceVisible { presentedPanel = nil } } }
     var updatesVisible: Bool { get { presentedPanel == .updates } set { if newValue { presentedPanel = .updates } else if updatesVisible { presentedPanel = nil } } }
     var profilesVisible: Bool { get { presentedPanel == .profiles } set { if newValue { presentedPanel = .profiles } else if profilesVisible { presentedPanel = nil } } }
@@ -95,7 +96,11 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         if let identity = documentIDs.object(forKey: web) { return identity }
         let identity = NSUUID(); documentIDs.setObject(identity, forKey: web); return identity
     }
-    func invalidateDocumentIdentity(for web: WKWebView) { documentIDs.setObject(NSUUID(), forKey: web) }
+    func invalidateDocumentIdentity(for web: WKWebView) {
+        documentIDs.setObject(NSUUID(), forKey: web)
+        if boostPicker?.source.web === web { cancelBoostPicker() }
+        BoostRuntime.invalidate(web)
+    }
     var viewProfileIDs: [UUID: UUID] = [:]
     var namedDataStores: [UUID: WKWebsiteDataStore] = [:]
     var persistedProfileIDs: Set<UUID> = [BrowserProfile.defaultID]
@@ -194,7 +199,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
-        flush(); isShuttingDown = true; cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
+        flush(); isShuttingDown = true; cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
     }
@@ -392,6 +397,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         web.navigationDelegate = self; web.uiDelegate = self
         views[id] = web
         viewProfileIDs[id] = profile
+        BoostRuntime.install(on: web)
         observations[id] = [
             web.observe(\.title, options: [.new]) { [weak self] web, _ in
                 Task { @MainActor in guard let self, self.views[id] === web else { return }; self.update(id) {

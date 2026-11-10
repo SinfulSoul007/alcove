@@ -181,6 +181,7 @@ extension BrowserStore {
     }
     func discardView(_ id: UUID) {
         guard let web = views.removeValue(forKey: id) else { return }
+        invalidateDocumentIdentity(for: web); BoostRuntime.forget(web)
         closingPages.removeAll { $0.webView == nil }
         if let profile = viewProfileIDs[id] { closingPages.append(ClosingProfilePage(web, profileID: profile)) }
         web.navigationDelegate = nil; web.uiDelegate = nil; web.stopLoading()
@@ -196,7 +197,7 @@ extension BrowserStore {
         }
         revision += 1
     }
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { invalidateDocumentIdentity(for: webView) }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { BoostRuntime.navigationStarted(webView); invalidateDocumentIdentity(for: webView) }
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { invalidateDocumentIdentity(for: webView); revision += 1 }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code != NSURLErrorCancelled { message = error.localizedDescription }; revision += 1

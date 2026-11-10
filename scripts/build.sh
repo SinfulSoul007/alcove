@@ -73,6 +73,22 @@ run_link_routing_website_checks() {
     rm -f "$routing_port_file"
     trap - EXIT
 }
+run_boosts_website_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostWebsiteChecks.swift -o "$MANUAL/boosts-website-checks"
+    local boost_port_file boost_fixture_pid
+    boost_port_file="$(mktemp "$MANUAL/boost-port.XXXXXX")"
+    python3 scripts/BoostFixture.py "$boost_port_file" > "$MANUAL/boost-fixture.log" 2>&1 &
+    boost_fixture_pid=$!
+    trap 'kill "$boost_fixture_pid" 2>/dev/null || true; wait "$boost_fixture_pid" 2>/dev/null || true; rm -f "$boost_port_file"' EXIT
+    for attempt in {1..500}; do [[ -s "$boost_port_file" ]] && break; kill -0 "$boost_fixture_pid" 2>/dev/null || break; sleep 0.02; done
+    [[ -s "$boost_port_file" ]]
+    ALCOVE_BOOST_FIXTURE_URL="http://127.0.0.1:$(cat "$boost_port_file")/" "$MANUAL/boosts-website-checks"
+    kill "$boost_fixture_pid" 2>/dev/null || true
+    wait "$boost_fixture_pid" 2>/dev/null || true
+    rm -f "$boost_port_file"
+    trap - EXIT
+}
+if [[ "${1:-}" == "boosts-website-test" ]]; then run_boosts_website_checks; exit; fi
 if [[ "${1:-}" == "boosts-store-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostStoreChecks.swift -o "$MANUAL/boosts-store-checks"
     "$MANUAL/boosts-store-checks"
@@ -187,6 +203,7 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    run_boosts_website_checks
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostStoreChecks.swift -o "$MANUAL/boosts-store-checks"
     "$MANUAL/boosts-store-checks"
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/BoostCoreChecks.swift -o "$MANUAL/boosts-core-checks"

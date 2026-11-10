@@ -18,13 +18,18 @@ import BrowserCore
     init(store: BrowserStore, web: WKWebView) throws {
         guard store.isVisibleWebsite(web), web.navigationDelegate === store,
               let window = web.window, let profile = store.profileID(for: web),
+              store.matchesBoostWebsiteDataStore(web, profileID: profile),
               let url = web.url, let origin = WebOrigin(url),
               let context = store.searchInputContext(quickID: store.quickContext(for: web)?.id) else { throw BoostError.stale }
         self.store = store; self.web = web; self.window = window
         profileID = profile; host = origin.host; self.url = url
         documentID = store.documentIdentity(for: web); inputContext = context
         closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.closed = true }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.closed = true
+                if self.store?.boostPicker?.source === self { self.store?.cancelBoostPicker() }
+            }
         }
     }
     deinit { if let closing { NotificationCenter.default.removeObserver(closing) } }
@@ -32,6 +37,7 @@ import BrowserCore
         guard store === owner, !closed, !owner.isShuttingDown, let web, let window,
               web.window === window, web.navigationDelegate === owner, !owner.profileUnavailable(profileID),
               owner.profileID(for: web) == profileID, owner.documentIdentity(for: web) === documentID,
+              owner.matchesBoostWebsiteDataStore(web, profileID: profileID),
               web.url == url, web.url.flatMap(WebOrigin.init)?.host == host,
               owner.matchesSearchInputContext(inputContext) else { return false }
         return true

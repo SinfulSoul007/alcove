@@ -66,7 +66,7 @@ extension BrowserStore {
             beforePublish?()
             reconcilePeeks(in: document)
             session = Self.repairedSession(document.session); profileLibraries = document.profileLibraries ?? []
-            preferences = document.preferences; reconcileSearchInputContext(); pruneQuickActivity(); quickPagesDidChange?()
+            preferences = document.preferences; reconcileSearchInputContext(); pruneQuickActivity(); quickPagesDidChange?(); refreshBoosts()
         } else { try commitProfileDocument(document, discarding: ids, beforePublish: beforePublish) }
     }
     @discardableResult func openQuickPage(url: URL? = nil, profileID: UUID? = nil, intendedSpaceID: UUID? = nil, configuration: WKWebViewConfiguration? = nil) throws -> UUID {

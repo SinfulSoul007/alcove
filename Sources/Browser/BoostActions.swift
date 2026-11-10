@@ -79,5 +79,6 @@ extension BrowserStore {
         _ = try BoostScript.validatedBody(current.content.javascript)
         current.approvedJavaScriptHash = current.scriptHash
         try persistBoosts(catalog.upserting(current), profileID: request.source.profileID)
+        BoostRuntime.deferNewApproval(current, profileID: request.source.profileID, store: self)
     }
 }
