@@ -53,6 +53,49 @@ let encodedSlash = LinkRuleCatalog([LinkRule(kind:.equals,pattern:"example.test/
 check(encodedSlash.matching(URL(string:"https://example.test/a/b")!) == nil, "An escaped slash stays distinct from a path separator")
 let defaults = LinkRuleCatalog([LinkRule(kind: .equals, pattern: "https://EXAMPLE.test:443/", destination: .space(a))])
 check(defaults.matching(URL(string: "https://example.test")!) != nil, "Default ports and a root slash do not split equivalent addresses")
+let portCases: [(String,String,Bool)] = [
+    ("example.test:80","http://example.test/",true),
+    ("example.test:80","http://example.test:80/",true),
+    ("example.test:80","https://example.test:80/",true),
+    ("example.test:80","https://example.test/",false),
+    ("example.test:80","http://example.test:443/",false),
+    ("example.test:80","https://example.test:443/",false),
+    ("example.test:443","http://example.test/",false),
+    ("example.test:443","http://example.test:80/",false),
+    ("example.test:443","http://example.test:443/",true),
+    ("example.test:443","https://example.test/",true),
+    ("example.test:443","https://example.test:443/",true),
+    ("example.test:443","https://example.test:80/",false),
+    ("example.test:8443","http://example.test:8443/",true),
+    ("example.test:8443","https://example.test:8443/",true),
+    ("example.test:8443","http://example.test/",false),
+    ("example.test:8443","https://example.test/",false),
+    ("example.test:08443","http://example.test:8443/",true),
+    ("example.test:8443","https://example.test:08443/",true),
+    ("http://example.test:80","http://example.test/",true),
+    ("http://example.test:80","https://example.test/",false),
+    ("example.test","http://example.test:80/",true),
+    ("example.test","https://example.test:443/",true),
+    ("example.test","http://example.test:443/",false),
+    ("example.test","https://example.test:80/",false)
+]
+for (pattern,address,wanted) in portCases {
+    let routes = LinkRuleCatalog([LinkRule(kind:.equals,pattern:pattern,destination:.space(b))])
+    check((routes.matching(URL(string:address)!) != nil) == wanted, "Equals preserves scheme-associated port identity: \(pattern) → \(address) = \(wanted)")
+}
+let noPortRule = LinkRule(kind:.equals,pattern:"example.test")
+let explicit443Rule = LinkRule(kind:.equals,pattern:"example.test:443")
+let differentPortConditions = LinkRuleCatalog([noPortRule,explicit443Rule])
+check(differentPortConditions.entries.count == 2, "Saved conditions that differ under HTTP cannot collapse under an invented HTTPS scheme")
+check((try? LinkRuleCatalog([noPortRule]).upserting(explicit443Rule))?.count == 2, "Port-specific and implicit-default conditions remain separately editable")
+let explicit80Rule = LinkRule(kind:.equals,pattern:"example.test:80")
+check((try? differentPortConditions.upserting(explicit80Rule))?.count == 3, "HTTP-default and HTTPS-default conditions remain distinct")
+reject("Equivalent default-port aliases remain duplicate conditions across both schemes") {
+    _ = try LinkRuleCatalog([explicit80Rule]).upserting(LinkRule(kind:.equals,pattern:"EXAMPLE.test:080/"))
+}
+reject("Equivalent HTTPS-port aliases remain duplicate conditions across both schemes") {
+    _ = try LinkRuleCatalog([explicit443Rule]).upserting(LinkRule(kind:.equals,pattern:"EXAMPLE.test:0443/"))
+}
 let unicode = LinkRuleCatalog([LinkRule(kind: .equals, pattern: "https://bücher.example/café", destination: .space(a))])
 check(unicode.matching(URL(string: "https://xn--bcher-kva.example/caf%C3%A9")!) != nil, "Unicode rules match the browser's IDNA and UTF8 address")
 let literal = LinkRuleCatalog([LinkRule(pattern: "invoice.*", destination: .space(a))])

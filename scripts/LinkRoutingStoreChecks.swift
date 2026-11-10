@@ -225,6 +225,19 @@ enum LinkRoutingCheckError: Error { case failed }
         check(ms.linkRuleCatalog.entries.count == 1, "Duplicate rejection preserves the first distinct route")
         rejects("Invalid reordering cannot remove or duplicate a rule") { try ms.moveLinkRule(ms.linkRuleCatalog.entries[0].id,by:Int.max) }
         check(ms.linkRuleCatalog.entries.count == 1 && lockedRuleDoc.session.selectedSpace == ms.session.selectedSpace, "Failed reordering preserves routes and current Space")
+        let ports = try fixture(), portStore = ports.store, safeSpace = ports.store.space.id
+        let portTargetProfile = try portStore.createProfile(name:"Port-only destination"); portStore.namedDataStores[portTargetProfile] = .nonPersistent()
+        let portTargetSpace = portStore.space.id; portStore.selectSpace(safeSpace)
+        try portStore.setDefaultLinkDestination(.mostRecentSpace)
+        try portStore.saveLinkRule(LinkRule(kind:.equals,pattern:"127.0.0.1:443",destination:.space(portTargetSpace)))
+        let plainHTTP = try portStore.linkDecision(for:URL(string:"http://127.0.0.1/")!)
+        check(plainHTTP.rule == nil && plainHTTP.destination == .space(spaceID:safeSpace,profileID:ports.profile), "A port443 condition cannot select another profile for implicit HTTP port80")
+        let explicitHTTP80 = try portStore.linkDecision(for:URL(string:"http://127.0.0.1:80/")!)
+        check(explicitHTTP80.rule == nil && explicitHTTP80.destination == .space(spaceID:safeSpace,profileID:ports.profile), "An explicit HTTP default port cannot cross into the port443 profile")
+        check(try portStore.linkDecision(for:URL(string:"http://127.0.0.1:443/")!).destination == .space(spaceID:portTargetSpace,profileID:portTargetProfile), "The port443 condition still routes its actual HTTP endpoint to the selected profile")
+        check(try portStore.linkDecision(for:URL(string:"https://127.0.0.1/")!).destination == .space(spaceID:portTargetSpace,profileID:portTargetProfile), "The port443 condition routes the canonical HTTPS default to the selected profile")
+        _ = try portStore.openExternalPage(URL(string:"http://127.0.0.1:80/")!)
+        check(portStore.activeProfileID == ports.profile && portStore.space.id == safeSpace, "Actual external dispatch preserves the default profile when the rule's port does not match")
         guard failures == 0 else { throw LinkRoutingCheckError.failed }
     }
 }

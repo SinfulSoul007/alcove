@@ -76,6 +76,7 @@ public enum LinkRuleError: LocalizedError {
 }
 
 private struct RoutingAddress {
+    let scheme: String
     let full: String, withoutScheme: String, root: Bool
     var equalFull: String { root ? String(full.dropLast()) : full }
     var equalWithoutScheme: String { root ? String(withoutScheme.dropLast()) : withoutScheme }
@@ -87,7 +88,7 @@ private struct RoutingAddress {
         if (scheme == "http" && parts.port == 80) || (scheme == "https" && parts.port == 443) { parts.port = nil }
         parts.percentEncodedPath = Self.path(parts.percentEncodedPath)
         guard let canonical = parts.url?.absoluteString else { return nil }
-        full = canonical; withoutScheme = String(canonical.dropFirst(scheme.count + 3))
+        self.scheme = scheme; full = canonical; withoutScheme = String(canonical.dropFirst(scheme.count + 3))
         root = parts.percentEncodedPath == "/" && parts.percentEncodedQuery == nil && parts.percentEncodedFragment == nil
     }
     private static func path(_ raw: String) -> String {
@@ -105,7 +106,7 @@ private struct RoutingAddress {
         }
         return "/" + kept.joined(separator: "/")
     }
-    static func pattern(_ pattern: String, kind: LinkRuleKind) -> String? {
+    static func pattern(_ pattern: String, kind: LinkRuleKind, scheme: String = "https") -> String? {
         let lower = pattern.lowercased(), explicit = lower.hasPrefix("https://") || lower.hasPrefix("http://")
         if explicit, let url = URL(string: pattern), let address = RoutingAddress(url) {
             if kind == .equals { return address.equalFull }
@@ -113,7 +114,7 @@ private struct RoutingAddress {
             return address.root && suppliedPath == "" ? address.equalFull : address.full
         }
         if kind == .contains { return RoutingHost.normalized(pattern) ?? pattern }
-        guard !pattern.contains("://"), let url = URL(string: "https://" + pattern), let address = RoutingAddress(url) else { return nil }
+        guard !pattern.contains("://"), let url = URL(string: scheme + "://" + pattern), let address = RoutingAddress(url) else { return nil }
         return address.equalWithoutScheme
     }
 }
@@ -131,24 +132,29 @@ public struct LinkRule: Codable, Equatable, Identifiable, Sendable {
         var value = self; value.pattern = pattern.trimmingCharacters(in: .whitespacesAndNewlines).precomposedStringWithCanonicalMapping
         guard !value.pattern.isEmpty, value.pattern.utf8.count <= 2048,
               !value.pattern.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
-              RoutingAddress.pattern(value.pattern, kind: value.kind) != nil else { throw LinkRuleError.invalidPattern }
+              RoutingAddress.pattern(value.pattern, kind: value.kind) != nil,
+              RoutingAddress.pattern(value.pattern, kind: value.kind, scheme: "http") != nil else { throw LinkRuleError.invalidPattern }
         return value
     }
 }
 
 public struct LinkRuleCatalog: Sendable {
-    private struct Prepared: Sendable { let rule: LinkRule, text: String }
+    private struct Prepared: Sendable { let rule: LinkRule, text: String, httpText: String }
+    private struct ConditionKey: Hashable { let kind: String, http: String, https: String }
     public let entries: [LinkRule]
     private let prepared: [Prepared]
     private static let locale = Locale(identifier: "en_US_POSIX")
-    private static func key(_ rule: LinkRule, _ text: String) -> String { rule.kind.rawValue + ":" + text.folding(options: .caseInsensitive, locale: locale) }
+    private static func key(_ rule: LinkRule, _ text: String, _ httpText: String) -> ConditionKey {
+        ConditionKey(kind: rule.kind.rawValue, http: httpText.folding(options: .caseInsensitive, locale: locale), https: text.folding(options: .caseInsensitive, locale: locale))
+    }
     public init(_ saved: [LinkRule]?) {
-        var result: [Prepared] = [], ids = Set<UUID>(), conditions = Set<String>()
+        var result: [Prepared] = [], ids = Set<UUID>(), conditions = Set<ConditionKey>()
         for raw in saved ?? [] {
             guard result.count < 128 else { break }
             guard let rule = try? raw.validated(), let text = RoutingAddress.pattern(rule.pattern, kind: rule.kind),
-                  !ids.contains(rule.id), !conditions.contains(Self.key(rule,text)) else { continue }
-            ids.insert(rule.id); conditions.insert(Self.key(rule,text)); result.append(Prepared(rule:rule,text:text))
+                  let httpText = RoutingAddress.pattern(rule.pattern, kind: rule.kind, scheme: "http"),
+                  !ids.contains(rule.id), !conditions.contains(Self.key(rule,text,httpText)) else { continue }
+            ids.insert(rule.id); conditions.insert(Self.key(rule,text,httpText)); result.append(Prepared(rule:rule,text:text,httpText:httpText))
         }
         prepared = result; entries = result.map(\.rule)
     }
@@ -157,13 +163,16 @@ public struct LinkRuleCatalog: Sendable {
         for item in prepared where item.rule.enabled {
             if item.rule.kind == .contains {
                 if address.full.range(of:item.text,options:.caseInsensitive,locale:Self.locale) != nil { return item.rule }
-            } else if address.equalFull.compare(item.text,options:.caseInsensitive,locale:Self.locale) == .orderedSame || address.equalWithoutScheme.compare(item.text,options:.caseInsensitive,locale:Self.locale) == .orderedSame { return item.rule }
+            } else {
+                let pattern = address.scheme == "http" ? item.httpText : item.text
+                if address.equalFull.compare(pattern,options:.caseInsensitive,locale:Self.locale) == .orderedSame || address.equalWithoutScheme.compare(pattern,options:.caseInsensitive,locale:Self.locale) == .orderedSame { return item.rule }
+            }
         }
         return nil
     }
     public func upserting(_ raw: LinkRule) throws -> [LinkRule] {
-        let rule = try raw.validated(), text = RoutingAddress.pattern(rule.pattern,kind:rule.kind)!
-        guard !prepared.contains(where:{ $0.rule.id != rule.id && Self.key($0.rule,$0.text) == Self.key(rule,text) }) else { throw LinkRuleError.duplicateCondition }
+        let rule = try raw.validated(), text = RoutingAddress.pattern(rule.pattern,kind:rule.kind)!, httpText = RoutingAddress.pattern(rule.pattern,kind:rule.kind,scheme:"http")!
+        guard !prepared.contains(where:{ $0.rule.id != rule.id && Self.key($0.rule,$0.text,$0.httpText) == Self.key(rule,text,httpText) }) else { throw LinkRuleError.duplicateCondition }
         var result = entries
         if let index = result.firstIndex(where:{$0.id==rule.id}) { result[index] = rule }
         else { guard result.count < 128 else { throw LinkRuleError.tooManyRules }; result.append(rule) }
