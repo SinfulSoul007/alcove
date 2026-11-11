@@ -169,7 +169,8 @@ import BrowserCore
         let restoredWork = try guarded.restoreDeletedSpace(lostRecord,profileID:conflictProfile)
         rejects("Collision recovery cannot reactivate an old named route into another account") { _ = try guarded.linkDecision(for:lostURL) }
         rejects("Collision recovery cannot reactivate an old default into another account") { _ = try guarded.linkDecision(for:defaultURL) }
-        check(restoredWork != lostSpace && guarded.linkRuleCatalog.entries.contains(unrelated) && (try guarded.linkDecision(for:chosenURL).destination) == .space(spaceID:lostSpace,profileID:BrowserProfile.defaultID), "Recovery preserves unrelated rules and deliberate collision selections")
+        let preservedChoice = try guarded.linkDecision(for:chosenURL).destination
+        check(restoredWork != lostSpace && guarded.linkRuleCatalog.entries.contains(unrelated) && preservedChoice == .space(spaceID:lostSpace,profileID:BrowserProfile.defaultID), "Recovery preserves unrelated rules and deliberate collision selections")
         try guarded.setDefaultLinkDestination(.space(restoredWork))
         check(try guarded.linkDecision(for:defaultURL).destination == .space(spaceID:restoredWork,profileID:conflictProfile), "The recovered account can be deliberately selected as the default")
         guarded.shutdown()
