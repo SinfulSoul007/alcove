@@ -50,8 +50,21 @@ import BrowserCore
         window.isReleasedWhenClosed = false; window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true
         window.contentView = hosting
         await settle()
-        web.loadHTMLString("<input id='owned' value='before'><div style='height:6000px'></div>", baseURL: nil)
-        for _ in 0..<200 { if !web.isLoading { break }; try? await Task.sleep(for: .milliseconds(20)) }
+        // Exercise an initially idle web view whose owned document arrives later.
+        let ownedLoad = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            web.loadHTMLString("<input id='owned' value='before'><div style='height:6000px'></div>", baseURL: nil)
+        }
+        let readyDeadline = ContinuousClock.now.advanced(by: .seconds(10))
+        var ownedReady = false
+        while !ownedReady && ContinuousClock.now < readyDeadline {
+            ownedReady = (try? await web.evaluateJavaScript("document.readyState !== 'loading' && document.getElementById('owned') !== null")) as? Bool == true
+            if !ownedReady { try? await Task.sleep(for: .milliseconds(20)) }
+        }
+        check(ownedReady, "Owned form is ready before layout and page-state assertions")
+        guard ownedReady else { ownedLoad.cancel(); window.contentView = nil; window.close(); store.shutdown(); exit(1) }
+        await ownedLoad.value
         _ = try await web.evaluateJavaScript("document.getElementById('owned').value='kept'; window.scrollTo(0,600)")
         await settle()
         for crowded in [false, true] {

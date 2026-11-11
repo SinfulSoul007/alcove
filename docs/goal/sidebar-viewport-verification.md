@@ -51,6 +51,8 @@ Additional final rulings, in chronological order (these supplement1–7 above):
 22. D3 regraded after live QA as Important N1 — empty BrowserUI has no alternate valid key view, and Tab/Shift-Tab/Escape stayed on the focused divider (unlike review's linked-field probe). Add a fallback focus release when ordinary Tab traversal returns to the same divider, retaining normal traversal when another view exists — cost if wrong: Tab can clear focus rather than land on a control when AppKit supplies no alternate destination.
 23. Treat synchronous Keychain startup blocking as the next independent full-goal defect — actual sample/user prompt prove a broader startup problem unrelated to sidebar code; retain source/native recovery work after this unit rather than weaken Keychain permissions — cost if wrong: re-signed previews can still wait on a macOS prompt until responsive startup is implemented.
 
+24. Fix CI readiness in the owned fixture only and run full local/remote gates on frozen source; the exact log and delayed-DOM reproduction identify a harness race. Cost if wrong: the fixture may still time out or race; packaging remains gated on new CI.
+
 Deferred minors: Sidebar M1 floating-layout automated coverage only includes crowded Favorites/text1.35; empty/text1 floating combinations remain to cover. Separately retained Boost M1 Copy Appearance after Unhide can carry stale selectors.
 
 ## Remaining full-goal gates
@@ -58,3 +60,8 @@ Deferred minors: Sidebar M1 floating-layout automated coverage only includes cro
 The installed Alcove Visual Four is now0.7.1/build13/dev.openbrowser.mac.visual4. Its owned/source/native checks above are bounded evidence; live VoiceOver/rotor order, full floating/animation/fidelity, current-source Arc comparison and remaining native output/device behavior are unverified. Hidden windows do not establish composited smoothness. No Safari speed, independently audited security, trusted signing, real Intel/macOS14 hardware or quarantined installation claim is made.
 
 Space management/deletion remains missing (including the empty Sidebar Test Space from native QA). Boost minor M1 Copy Appearance after Unhide remains deferred. All broader original browser requirements in acceptance.md remain active, including richer tabs/splits, media, permissions/downloads/import/reader, extensions, sync, Easels/capture and assisted workflows.
+
+
+## CI readiness correction checkpoint
+
+CI42941134404 at50f241e failed/exit133 after the54 native checks passed: the owned input was still absent when the layout harness tried to set its value. No download artifact was produced. A delayed-load fixture reproduced this locally as an explicit readiness failure (0 PASS/1 FAIL); a10s actual-DOM/document-readiness poll now passes63 focused checks with zero diagnostics. Production Sources/Info/Entitlements/Icon are byte-identical to the previously verified optimized/native bundles. The new complete local suite and exact-source CI/package are pending at this checkpoint; prior1,462-pass evidence is retained as its historical checkpoint.
