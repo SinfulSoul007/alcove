@@ -31,8 +31,8 @@
 
 - [x] Step1: Add owned blocking-key regression for the existing retry lifetime; run startup-test. Expected: closed store remains retained (FAIL), disk unchanged (PASS).
 - [x] Step2: Extend regressions for responsive initial loading, off-main lookup, coalescing, close/reopen, error/retry, ciphertext preservation, private independence, normal profile/view gates, and queued routing. Implement service/restore/UI/window integration. Run startup-test and store-test sequentially. Expected: PASS, zero diagnostics.
-- [ ] Step3: Set version; run focused native/Quick checks and verify loading view through mounted native state plus live stable app when accessible. Expected: PASS, private/quit available, no premature named stores. Record native limitations honestly.
-- [ ] Step4: Commit; task-done with `caffeinate -is scripts/build.sh test`. Expected: complete suite PASS, zero compiler diagnostics. Reuse exact-source c499631/605080c baseline1463 rather than repeat baseline.
+- [x] Step3: Set version; run focused native/Quick checks and verify loading view through mounted native state plus live stable app when accessible. Expected: PASS, private/quit available, no premature named stores. Record native limitations honestly.
+- [x] Step4: Commit; task-done with `caffeinate -is scripts/build.sh test`. Expected: complete suite PASS, zero compiler diagnostics. Reuse exact-source c499631/605080c baseline1463 rather than repeat baseline.
 - [ ] Step5: Build optimized arm64/x86_64 sequentially and check signatures/runtime/min14/exact6 entitlements/Info. Expected: PASS.
 - [ ] Step6: ONE fresh gpt-6-astra/high whole-plan review; regrade every finding and declined judgment. ONE Critical/Important RED→GREEN fix pass, then full suite/build gates. Defer minors; no second review.
 - [ ] Step7: Push authorized main, wait for exact-source CI, verify download-back DMG/ZIP and hashes; deliver via thread outputs. Archive evidence then remove only this plan workspace. Full browser goal remains active.
