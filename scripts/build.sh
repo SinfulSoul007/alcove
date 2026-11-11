@@ -88,6 +88,16 @@ run_boosts_website_checks() {
     rm -f "$boost_port_file"
     trap - EXIT
 }
+run_startup_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/StartupChecks.swift -o "$MANUAL/startup-checks"
+    "$MANUAL/startup-checks"
+}
+if [[ "${1:-}" == "startup-test" ]]; then run_startup_checks; exit; fi
+if [[ "${1:-}" == "store-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/StoreChecks.swift -o "$MANUAL/store-checks"
+    "$MANUAL/store-checks"
+    exit
+fi
 if [[ "${1:-}" == "boosts-input-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostInputChecks.swift -o "$MANUAL/boosts-input-checks"
     "$MANUAL/boosts-input-checks"
@@ -213,6 +223,7 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    run_startup_checks
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostInputChecks.swift -o "$MANUAL/boosts-input-checks"
     "$MANUAL/boosts-input-checks"
     run_boosts_website_checks

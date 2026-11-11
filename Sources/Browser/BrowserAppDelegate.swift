@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var primaryLeases: [NSWindow: UUID] = [:]
     var owners: [UUID: BrowserWindowOwner] = [:]
     var normalOwner: BrowserWindowOwner?
+    var temporaryStartupOwners: Set<UUID> = []
+    var preparingMetadataOwners: Set<UUID> = []
     var quickWindows: [QuickWindowKey: QuickBrowseWindowController] = [:]
     let pageOutput: PageOutputCoordinator
     let outputTermination: PageOutputTermination
@@ -64,7 +66,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular); buildMenu()
         let owner = ensureNormalOwner()
-        if owner.store.onboardingVisible || owner.store.allQuickPages.isEmpty { openPrimary(owner) }
+        if owner.store.awaitingInitialMetadata { openPrimary(owner, startupPlaceholder: true) }
+        else if owner.store.onboardingVisible || owner.store.allQuickPages.isEmpty { openPrimary(owner) }
         else { syncQuickWindows(owner); quickWindows.values.first(where: { $0.windowOwner === owner })?.surface() }
         NSApp.activate(ignoringOtherApps: true)
         updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
@@ -105,16 +108,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func makeOwner(_ store: BrowserStore) -> BrowserWindowOwner {
         let owner = BrowserWindowOwner(store: store) { [weak self, weak store] in
             guard let self, let store else { return }
+            if let id = self.owners.first(where: { $0.value.store === store })?.key { self.temporaryStartupOwners.remove(id) }
             self.owners = self.owners.filter { $0.value.store !== store }
             if self.normalOwner?.store === store { self.normalOwner = nil }
         }
         owners[owner.id] = owner
+        store.privateWindowRequested = { [weak self] in self?.openWindow(isPrivate: true) }
+        store.metadataDidLoad = { [weak self, weak owner] in if let owner { self?.metadataDidLoad(owner) } }
         store.onboardingDidFinish = { [weak self, weak store] in if let store { self?.checkAutomaticallyIfNeeded(store) } }
         store.automaticUpdatesDidChange = { [weak self, weak store] in if let store { self?.checkAutomaticallyIfNeeded(store) } }
         store.quickPagesDidChange = { [weak self, weak owner] in if let owner { self?.syncQuickWindows(owner) } }
         store.quickPageRequested = { [weak self, weak owner] id in
             guard let self, let owner else { return }
-            self.syncQuickWindows(owner); self.quickWindows[QuickWindowKey(ownerID: owner.id, pageID: id)]?.surface()
+            self.syncQuickWindows(owner)
+            if !self.preparingMetadataOwners.contains(owner.id) { self.quickWindows[QuickWindowKey(ownerID: owner.id, pageID: id)]?.surface() }
         }
         return owner
     }
@@ -122,11 +129,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let normalOwner, !normalOwner.isClosed { return normalOwner }
         let owner = makeOwner(BrowserStore()); normalOwner = owner
         // Restored records have no native media yet; expire them before mounting windows.
-        owner.store.archiveInactiveQuickPages(); syncQuickWindows(owner)
+        if !owner.store.awaitingInitialMetadata { owner.store.archiveInactiveQuickPages(); syncQuickWindows(owner) }
         return owner
     }
-    func syncQuickWindows(_ owner: BrowserWindowOwner) {
-        guard !owner.isClosed else { return }
+    func metadataDidLoad(_ owner: BrowserWindowOwner) {
+        guard !owner.isClosed, !owner.store.awaitingInitialMetadata else { return }
+        let mayActivate = NSApp.isActive && (activeStore == nil || activeStore === owner.store)
+        preparingMetadataOwners.insert(owner.id)
+        owner.store.archiveInactiveQuickPages()
+        let destinations = owner.drainExternalLinks()
+        preparingMetadataOwners.remove(owner.id)
+        syncQuickWindows(owner, orderFront: mayActivate)
+        let needsPrimary = destinations.contains { if case .space = $0 { return true }; return false }
+        let temporary = temporaryStartupOwners.remove(owner.id) != nil
+        if temporary && !needsPrimary && !owner.store.onboardingVisible && !owner.store.allQuickPages.isEmpty,
+           let primary = primaryOwners.first(where: { $0.value === owner })?.key,
+           quickWindows.values.contains(where: { $0.windowOwner === owner }) {
+            // Compact controllers hold leases before the placeholder releases its lease.
+            primary.close()
+            if mayActivate { quickWindows.values.first(where: { $0.windowOwner === owner })?.surface() }
+        } else if needsPrimary { openPrimary(owner, activate: mayActivate) }
+        checkAutomaticallyIfNeeded(owner.store)
+    }
+    func syncQuickWindows(_ owner: BrowserWindowOwner, orderFront: Bool = true) {
+        guard !owner.isClosed, !owner.store.awaitingInitialMetadata, !preparingMetadataOwners.contains(owner.id) else { return }
         let pages = owner.store.allQuickPages
         let ids = Set(pages.map(\.id))
         let removed = quickWindows.values.filter { $0.windowOwner === owner && !ids.contains($0.pageID) }
@@ -139,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     requestPrimary: { [weak self, weak owner] in if let owner { self?.openPrimary(owner) } },
                     requestProfiles: { [weak self] in self?.manageProfiles() },
                     didClose: { [weak self] in self?.quickWindows.removeValue(forKey: key) })
-                quickWindows[key] = controller; controller.window?.orderFront(nil)
+                quickWindows[key] = controller; if orderFront { controller.window?.orderFront(nil) }
             } catch { owner.store.message = error.localizedDescription }
         }
     }
@@ -152,10 +178,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         openPrimary(makeOwner(store))
     }
-    func openPrimary(_ owner: BrowserWindowOwner) {
+    func openPrimary(_ owner: BrowserWindowOwner, startupPlaceholder: Bool = false, activate: Bool = true) {
         guard !owner.isClosed else { return }
+        if startupPlaceholder { temporaryStartupOwners.insert(owner.id) } else { temporaryStartupOwners.remove(owner.id) }
         if let window = primaryOwners.first(where: { $0.value === owner })?.key {
-            if window.isMiniaturized { window.deminiaturize(nil) }; window.makeKeyAndOrderFront(nil); return
+            if activate { if window.isMiniaturized { window.deminiaturize(nil) }; window.makeKeyAndOrderFront(nil) }; return
         }
         let store = owner.store
         guard let lease = try? owner.acquirePrimary() else { return }
@@ -166,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         hosting.safeAreaRegions = []; hosting.sizingOptions = [.minSize]; window.contentView = hosting
         windows[window] = store; primaryOwners[window] = owner; primaryLeases[window] = lease
         if !store.isPrivate { normalWindow = window }
-        window.center(); window.makeKeyAndOrderFront(nil); checkAutomaticallyIfNeeded(store)
+        window.center(); if activate { window.makeKeyAndOrderFront(nil) }; checkAutomaticallyIfNeeded(store)
     }
     func checkAutomaticallyIfNeeded(_ store: BrowserStore) {
         guard !store.isPrivate, !store.onboardingVisible, store.savingEnabled, store.preferences.automaticUpdateChecks == true, !updates.checking else { return }
@@ -190,7 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func applicationWillTerminate(_ notification: Notification) {
         updateTimer?.invalidate()
-        for owner in owners.values { owner.store.flush() }
+        for owner in owners.values { owner.store.shutdown() }
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
         if let paneFocusMonitor { NSEvent.removeMonitor(paneFocusMonitor) }
     }
@@ -203,7 +230,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func application(_ application: NSApplication, open urls: [URL]) {
         let owner = ensureNormalOwner()
         for url in urls where QuickBrowseRouting.host(for: url) != nil {
-            do { if case .space = try owner.dispatchExternal(url) { openPrimary(owner) } }
+            do {
+                switch try owner.dispatchExternal(url) {
+                case .space: openPrimary(owner)
+                case .pending:
+                    let temporary = temporaryStartupOwners.contains(owner.id) || !primaryOwners.values.contains { $0 === owner }
+                    openPrimary(owner, startupPlaceholder: temporary)
+                case .quick: break
+                }
+            }
             catch { openPrimary(owner); owner.store.message = "This link could not open. " + error.localizedDescription }
         }
     }
@@ -260,6 +295,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let action = menuItem.action, outputActions.contains(action) {
             guard let target = outputTarget(in: activeBrowserWindow) else { return false }
             return pageOutput.canBegin(web: target.web, store: target.store, window: target.window)
+        }
+        if activeStore?.awaitingInitialMetadata == true {
+            return [#selector(openMain), #selector(privateWindow), #selector(quit), #selector(about)].contains(menuItem.action)
         }
         let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings), #selector(customize), #selector(checkUpdates), #selector(siteSearchSettings), #selector(linkRoutingSettings), #selector(websiteBoosts)]
         if let action = menuItem.action, general.contains(action) { return true }

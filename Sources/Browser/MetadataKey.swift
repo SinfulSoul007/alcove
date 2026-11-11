@@ -17,7 +17,7 @@ enum MetadataKey {
         let status = SecItemCopyMatching(lookup as CFDictionary, &result)
         if status == errSecSuccess, let data = result as? Data, data.count == 32 { return SymmetricKey(data: data) }
         guard status == errSecItemNotFound && createIfMissing else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [NSLocalizedDescriptionKey: "Alcove couldn’t unlock its local data key. Existing data has been preserved. Check Keychain access, then restart Alcove."])
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [NSLocalizedDescriptionKey: "Alcove couldn’t unlock its local data key. Existing data has been preserved. Complete any macOS Keychain prompt, then choose Unlock Local Data."])
         }
         let key = SymmetricKey(size: .bits256)
         var insert = query

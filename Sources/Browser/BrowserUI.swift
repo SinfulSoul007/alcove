@@ -49,7 +49,11 @@ struct BrowserUI: View {
     var motion: Animation? { reduceMotion || !appearance.animationsEnabled ? nil : .spring(response: 0.28, dampingFraction: 0.88) }
     var pins: [BrowserCore.Tab] { store.space.tabs.filter { $0.pinned && $0.favorite != true } }
     var today: [BrowserCore.Tab] { store.space.tabs.filter { !$0.pinned && !$0.url.isEmpty } }
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if store.awaitingInitialMetadata { MetadataStartupView(store: store) }
+        else { browserBody }
+    }
+    private var browserBody: some View {
         GeometryReader { geometry in
             let width = SidebarSizing.width(saved: resize.temporaryWidth ?? sidebarWidth, windowWidth: geometry.size.width)
             let shown = store.sidebarVisible || reveal.revealed

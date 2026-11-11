@@ -13,15 +13,21 @@ struct DownloadItem: Identifiable {
 
 extension BrowserStore {
     @discardableResult func unlockLocalData(keyProvider: (() throws -> SymmetricKey)? = nil, persist: @escaping (MetadataStore, BrowserDocument) throws -> Void = { try $0.save($1) }) -> Bool {
-        guard !isPrivate, !savingEnabled, !unlocking else { return false }
+        guard !isPrivate, !savingEnabled, !unlocking, !isShuttingDown else { return false }
+        let access = keyProvider.map { provider in MetadataKeyAccess { _, _ in try provider() } } ?? metadataKeyAccess
+        if awaitingInitialMetadata { return beginInitialMetadataLoad(access: access, allowInteraction: true) }
         unlocking = true
         let url = sessionURL
         let previousURL = previousSessionURL
-        Task {
-            defer { unlocking = false }
+        let create = canCreateMetadataKey
+        Task { [weak self] in
+            let result: Result<SymmetricKey, Error>
+            do { result = .success(try await access.load(createIfMissing: create, allowInteraction: true)) }
+            catch { result = .failure(error) }
+            guard let self, !self.isShuttingDown else { return }
+            defer { self.unlocking = false }
             do {
-                let key = try await Task.detached { if let keyProvider { return try keyProvider() }; return try MetadataKey.load(createIfMissing: !FileManager.default.fileExists(atPath: url.path) && !FileManager.default.fileExists(atPath: previousURL.path), allowInteraction: true) }.value
-                guard !isShuttingDown else { return }
+                let key = try result.get()
                 let storage = MetadataStore(url: url, key: key)
                 let pending = makeDocument()
                 var document = try storage.load(BrowserDocument.self)

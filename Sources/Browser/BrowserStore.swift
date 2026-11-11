@@ -90,6 +90,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var vault: MetadataStore?
     @Published var savingEnabled = true
     @Published var unlocking = false
+    @Published var awaitingInitialMetadata = false
+    let metadataKeyAccess: MetadataKeyAccess
+    var metadataDidLoad: (() -> Void)?
+    var privateWindowRequested: (() -> Void)?
     var downloadIDs: [ObjectIdentifier: UUID] = [:]
     var archiveTimer: Timer?
     var views: [UUID: WKWebView] = [:]
@@ -121,8 +125,9 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var currentView: WKWebView? { focusedID.flatMap { views[$0] } }
     func focusPane(_ id: UUID) { if id == selectedID || id == splitID { activePaneID = id } }
 
-    init(isPrivate: Bool = false, dataRoot: URL? = nil, keyProvider: (Bool) throws -> SymmetricKey = { try MetadataKey.load(createIfMissing: $0) }) {
+    init(isPrivate: Bool = false, dataRoot: URL? = nil, keyProvider: ((Bool) throws -> SymmetricKey)? = nil, metadataKeyAccess: MetadataKeyAccess? = nil) {
         self.isPrivate = isPrivate
+        self.metadataKeyAccess = metadataKeyAccess ?? .shared
         privateDataStore = isPrivate ? .nonPersistent() : nil
         let root = dataRoot ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("OpenBrowser", isDirectory: true)
         sessionURL = root.appendingPathComponent("session-v2.sealed")
@@ -130,41 +135,13 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         super.init()
         guard !isPrivate else { return }
         profileOperationSubscription = ProfileDataOperations.shared.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
-        do {
-            let exists = FileManager.default.fileExists(atPath: sessionURL.path) || FileManager.default.fileExists(atPath: previousSessionURL.path)
-            let key = try keyProvider(!exists)
-            let storage = MetadataStore(url: sessionURL, key: key)
-            vault = storage
-            var document = try storage.load(BrowserDocument.self)
-            if document == nil { document = try MetadataStore(url: previousSessionURL, key: key).load(BrowserDocument.self) }
-            var migratedLegacyURL: URL?
-            if document != nil { hasSavedDocument = true }
-            else {
-                let legacyURL = root.appendingPathComponent("session.json")
-                if FileManager.default.fileExists(atPath: legacyURL.path) {
-                    hasSavedDocument = true
-                    var migrated = BrowserDocument(session: try JSONDecoder().decode(Session.self, from: Data(contentsOf: legacyURL)))
-                    migrated.preferences.onboardingCompleted = true; document = migrated; migratedLegacyURL = legacyURL
-                }
-            }
-            var prepared = document ?? BrowserDocument(); try prepared.repairProfiles(); prepared.session = Self.repairedSession(prepared.session)
-            if let document {
-                persistedProfileIDs.formUnion((document.profiles ?? []).map(\.id).filter { $0 != BrowserProfile.zeroID })
-                persistedProfileIDs.formUnion(document.session.spaces.map(\.effectiveProfileID).filter { $0 != BrowserProfile.zeroID })
-                persistedProfileIDs.formUnion((document.profileLibraries ?? []).map(\.profileID).filter { $0 != BrowserProfile.zeroID })
-            }
-            try applyDocument(prepared)
-            // Save recovered identifiers before WebKit can create a named website store.
-            let canonical = JSONEncoder(); canonical.outputFormatting = [.sortedKeys]
-            let previous = try document.map { try canonical.encode($0) }
-            let current = try canonical.encode(prepared)
-            if !FileManager.default.fileExists(atPath: sessionURL.path) || previous != current { try storage.save(prepared) }
-            persistedProfileIDs = Set((prepared.profiles ?? []).map(\.id))
-            if let migratedLegacyURL { try FileManager.default.removeItem(at: migratedLegacyURL) }
-            startArchiveTimer()
-        } catch { savingEnabled = false; message = "Local data is locked or unreadable. Saving is disabled to preserve it. \(error.localizedDescription)" }
-        onboardingVisible = OnboardingPolicy.shouldPresent(isPrivate: isPrivate, savingEnabled: savingEnabled, completed: preferences.onboardingCompleted, hasSavedDocument: hasSavedDocument)
-        if hasSavedDocument && preferences.onboardingCompleted == nil { preferences.onboardingCompleted = true }
+        if let keyProvider {
+            do { try restoreInitialMetadata(using: keyProvider(canCreateMetadataKey)) }
+            catch { savingEnabled = false; message = "Local data is locked or unreadable. Saving is disabled to preserve it. \(error.localizedDescription)" }
+        } else {
+            awaitingInitialMetadata = true; savingEnabled = false; persistedProfileIDs = []
+            beginInitialMetadataLoad()
+        }
     }
     func startArchiveTimer() {
         guard !isShuttingDown, archiveTimer?.isValid != true, !isPrivate || !allQuickPages.isEmpty else { return }
@@ -326,6 +303,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return placeTab(id, in: destination, section: source.favorite == true ? .favorites : (source.pinned ? .pinned : .today), folder: source.folder, allowProfileChange: allowProfileChange)
     }
     func showCommand(new: Bool = false) {
+        guard !awaitingInitialMetadata, !isShuttingDown else { return }
         commandFocusRequest += 1
         commandOpensNewTab = new
         commandSiteSearch = nil; commandError = nil; commandContext = searchInputContext()
