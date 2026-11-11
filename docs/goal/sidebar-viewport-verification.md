@@ -1,5 +1,7 @@
 # Sidebar viewport and accessibility verification
 
+Verified product source: [c499631](https://github.com/SinfulSoul007/alcove/commit/c49963160398b6c2ccd28acce39811698d380717). Complete local suite:1,463 PASS/0 FAIL/0 compiler diagnostics. [Exact-source CI42943318357](https://github.com/SinfulSoul007/alcove/actions/runs/42943318357) passes1,463 browser plus2 ZIP checks. The downloaded universal DMG/ZIP and mounted contents pass all recorded gates. Later pending statements below are historical checkpoints, superseded by this result. Final documentation is a separate commit with unchanged114-file product/test inputs.
+
 Source increment: 0.7.1/build13, candidate v0.7.1-preview.1; baseline 903655397c2ec1ef23492ab5de4c588bd9767cb9. No public release/tag. The existing Visual Four app was updated in place after CUA-confirmed Quit, retaining its path/bundle ID/display name; prior bundles were preserved.
 
 The actual BrowserUI root now fills its received viewport instead of imposing an internal 800×540 canvas. The normal NSWindow minimum stays unchanged. The native divider exposes its width/range, numeric setter, increment/decrement, Reset Sidebar Width and actual responder focus. A dedicated keyboard-focus hold retains a floating sidebar until focus is released. Overlay/hide/close/detach cancellation protects saved width.
@@ -53,6 +55,8 @@ Additional final rulings, in chronological order (these supplement1–7 above):
 
 24. Fix CI readiness in the owned fixture only and run full local/remote gates on frozen source; the exact log and delayed-DOM reproduction identify a harness race. Cost if wrong: the fixture may still time out or race; packaging remains gated on new CI.
 
+25. Record final documentation with `[skip ci]`, retaining exact verified product source c499631 and identical114-file inputs; this avoids a full build just to record its completed evidence. Cost if wrong: the later docs-only HEAD has no separate CI run; artifact provenance remains the verified product commit. This uses GitHub’s documented [workflow-skip mechanism](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs).
+
 Deferred minors: Sidebar M1 floating-layout automated coverage only includes crowded Favorites/text1.35; empty/text1 floating combinations remain to cover. Separately retained Boost M1 Copy Appearance after Unhide can carry stale selectors.
 
 ## Remaining full-goal gates
@@ -65,3 +69,14 @@ Space management/deletion remains missing (including the empty Sidebar Test Spac
 ## CI readiness correction checkpoint
 
 CI42941134404 at50f241e failed/exit133 after the54 native checks passed: the owned input was still absent when the layout harness tried to set its value. No download artifact was produced. A delayed-load fixture reproduced this locally as an explicit readiness failure (0 PASS/1 FAIL); a10s actual-DOM/document-readiness poll now passes63 focused checks with zero diagnostics. Production Sources/Info/Entitlements/Icon are byte-identical to the previously verified optimized/native bundles. The new complete local suite and exact-source CI/package are pending at this checkpoint; prior1,462-pass evidence is retained as its historical checkpoint.
+
+## Verified downloadable package
+
+CI artifact13822457161:8,054,737 bytes; outer SHA256 `31bc8a3e1b8fe4ac01824484a956f843fb92610711e22c1bd2dc786bddcf427c`. GitHub artifact retention is14 days; local output copies are retained. No new public release/tag was created; public0.6.2 remains unchanged.
+
+- `Alcove-0.7.1-universal-unsigned-preview.dmg`: 4,421,019 bytes; SHA256 `bdd84ead20d3c483047b624747f1779ca06973f0ef78838ba4a405bcd65187ab`.
+- `Alcove-0.7.1-universal-unsigned-preview.zip`: 3,668,027 bytes; SHA256 `ba1af59a26c924e462522458b62912780918230468405c0fdaf6a11bc408e6fe`.
+
+The universal executable SHA256 is `fe4493100edfbbebcce16730e640202d03352c36bb5ed7a4fb5242d4be183264`. Both architecture slices pass strict signature/Hardened Runtime/exact-six-entitlement/minimum14 checks; Info and license match source. ZIP and mounted DMG executable/Info/license agree; the DMG has its Applications link and README and was detached. Preview remains ad hoc signed, not Developer ID signed/notarized. CI’s Node20→24/deprecation/capacity notices are retained as noncompiler notices; compiler diagnostics are zero.
+
+This scoped sidebar plan is complete. The original full-browser objective remains active, with responsive Keychain startup next, then Space management and the full acceptance inventory. No full Arc parity, Safari speed or independent security-audit claim is made.
