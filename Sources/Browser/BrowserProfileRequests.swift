@@ -30,13 +30,7 @@ extension BrowserStore {
         guard let name = profileNamePrompt(title: "Create a Space", detail: detail, value: "", action: "Create") else { return }
         guard !isShuttingDown, canModifyLocalMetadata, !profileDataOperationInProgress else { return }
         if !isPrivate { guard availableProfileForRequest(id) != nil else { return } }
-        var newSpace = Space(name: name); newSpace.profileID = id
-        if isPrivate { session.spaces.append(newSpace); selectSpace(newSpace.id) }
-        else {
-            var candidate = makeDocument(); candidate.session.spaces.append(newSpace); candidate.session.activateSpace(newSpace.id)
-            do { try commitProfileDocument(candidate); closePrimaryPeek(); splitID = nil; activePaneID = nil }
-            catch { message = error.localizedDescription }
-        }
+        do { try createSpace(name:name,profileID:id) } catch { message = error.localizedDescription }
     }
 
     func requestAssignProfile(_ id: UUID, to spaceID: UUID) {

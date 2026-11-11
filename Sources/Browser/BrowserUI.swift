@@ -44,6 +44,11 @@ struct BrowserUI: View {
     var sidebarInteractionBlocked: Bool {
         store.commandVisible || store.onboardingVisible || store.primaryPeekView != nil || store.presentedPanel != nil
     }
+    var sheetPanel: Binding<BrowserPanel?> {
+        Binding(get:{ store.presentedPanel == .spaces ? nil : store.presentedPanel },set:{ next in
+            if next != nil || store.presentedPanel != .spaces { store.presentedPanel = next }
+        })
+    }
     var theme: AppearanceTheme { store.activeTheme }
     var appearance: AppearanceSettings { store.appearance }
     var motion: Animation? { reduceMotion || !appearance.animationsEnabled ? nil : .spring(response: 0.28, dampingFraction: 0.88) }
@@ -56,12 +61,15 @@ struct BrowserUI: View {
     private var browserBody: some View {
         GeometryReader { geometry in
             let width = SidebarSizing.width(saved: resize.temporaryWidth ?? sidebarWidth, windowWidth: geometry.size.width)
+            let managerShown = store.presentedPanel == .spaces
+            let managerWidth = max(0,min(geometry.size.width - 16,min(900,max(520,geometry.size.width * 0.62))))
             let shown = store.sidebarVisible || reveal.revealed
             let floatingAllowed = !store.sidebarVisible && !sidebarInteractionBlocked
             ZStack(alignment: .leading) {
                 // Keep web content and sidebar mounted; transitions change layout, not view ownership.
-                content.padding(8).padding(.leading, store.sidebarVisible ? width : 0)
+                content.padding(8).padding(.leading, managerShown ? managerWidth : (store.sidebarVisible ? width : 0))
                     .animation(resize.temporaryWidth == nil ? motion : nil, value: store.sidebarVisible)
+                    .animation(motion,value:managerShown)
                 HStack(spacing: 7) {
                     Color.clear.frame(width: max(0, chrome.leadingEdge - 17)).allowsHitTesting(false)
                     mini("sidebar.left", "Show Sidebar") { store.sidebarVisible = true }
@@ -106,12 +114,12 @@ struct BrowserUI: View {
                 if let picker = store.boostPicker, case .primary = picker.source.inputContext {
                     BoostPickerBanner(store: store, session: picker).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(.top, chrome.height + 10).padding(.trailing, 18)
                 }
-                if let message = store.message {
-                    VStack { Spacer(); HStack {
-                        if !store.savingEnabled && !store.isPrivate { Button("Unlock") { store.unlockLocalData() } }
-                        Text(message).font(.system(size: 12)).textSelection(.enabled)
-                        Button { store.message = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
-                    }.padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)).shadow(radius: 10).padding(24) }.frame(maxWidth: .infinity)
+                if managerShown {
+                    SpacesPanel(store:store,topInset:chrome.height).frame(width:managerWidth).frame(maxHeight:.infinity)
+                        .transition(reduceMotion ? .opacity : .move(edge:.leading).combined(with:.opacity))
+                }
+                if let message = store.message,!managerShown {
+                    VStack { Spacer(); BrowserStatusBanner(store:store,message:message).shadow(radius:10).padding(24) }.frame(maxWidth:.infinity)
                 }
                 if store.onboardingVisible { OnboardingView(store: store).transition(.opacity).zIndex(10) }
             }
@@ -123,7 +131,7 @@ struct BrowserUI: View {
             .onAppear { reveal.setEnabled(floatingAllowed) }
             .onChange(of: floatingAllowed) { _, value in reveal.setEnabled(value) }
             .onChange(of: store.sidebarVisible) { _, _ in resize.cancel(); reveal.endResize() }
-            .sheet(item: $store.presentedPanel) { panel in
+            .sheet(item: sheetPanel) { panel in
                 switch panel {
                 case .library: LibraryPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .settings: SettingsPanel(store: store, availableHeight: geometry.size.height - 40)
@@ -133,6 +141,7 @@ struct BrowserUI: View {
                 case .appearance:
                     if store.canModifyLocalMetadata { AppearancePanel(store: store, availableHeight: geometry.size.height - 40) }
                     else { lockedAppearancePanel }
+                case .spaces: EmptyView()
                 case .profiles: ProfilesPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .updates: UpdatesPanel(controller: updates, channel: Binding(get: { UpdateChannel(rawValue: store.preferences.updateChannel ?? "preview") ?? .preview }, set: { guard store.canModifyLocalMetadata else { return }; store.preferences.updateChannel = $0.rawValue; store.save() }), availableHeight: geometry.size.height - 40, canModifyChannel: store.canModifyLocalMetadata, onClose: { store.presentedPanel = nil })
                 }
@@ -209,6 +218,8 @@ struct BrowserUI: View {
                 Text(store.space.name.isEmpty ? "Space" : store.space.name).font(.system(size: 12, weight: .semibold)).opacity(0.5)
                 Spacer()
                 Menu {
+                    Button("Manage Spaces…") { store.showSpacesManager() }
+                    Button("Rename Space…") { store.requestRenameSpace(store.space.id) }.disabled(!store.canManageSpace(store.space.id))
                     Button("New Space…") { store.requestNewSpace() }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(store.activeProfileID)))
                     Button("Customize…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata)
                     Button("Boost This Site…") { do { try store.requestBoostEditor(for: store.primaryPeekView ?? store.currentView) } catch { store.message = error.localizedDescription } }
@@ -247,14 +258,18 @@ struct BrowserUI: View {
                         HStack(spacing: 10) {
                             ForEach(Array(store.session.spaces.enumerated()), id: \.element.id) { index, space in
                                 Button { store.selectSpace(space.id) } label: {
-                                    Image(systemName: space.icon ?? ["circle.fill", "moon.fill", "leaf.fill", "sun.max.fill", "star.fill", "square.fill"][index % 6]).font(.system(size: 11)).opacity(store.session.selectedSpace == space.id ? 1 : 0.3).frame(width: 19, height: 26)
+                                    Image(systemName: space.icon ?? SpaceSymbol.defaultName(at:index)).font(.system(size: 11)).opacity(store.session.selectedSpace == space.id ? 1 : 0.3).frame(width: 19, height: 26)
                                 }.buttonStyle(.plain).help(store.isPrivate ? space.name : "\(space.name) · \(store.profiles.first(where: { $0.id == space.effectiveProfileID })?.name ?? "Profile")").id(space.id)
+                                    .onDrag { NSItemProvider(object:("alcove-space:" + space.id.uuidString) as NSString) }
+                                    .onDrop(of:[.text],delegate:SpaceDrop(store:store,target:space.id))
+                                    .contextMenu { SpaceActionItems(store:store,spaceID:space.id) }
                             }
                         }.frame(minHeight: 26)
                     }.onChange(of: store.session.selectedSpace) { _, id in proxy.scrollTo(id, anchor: .center) }
+                        .onChange(of:store.session.spaces.map(\.id)) { _,_ in proxy.scrollTo(store.session.selectedSpace,anchor:.center) }
                 }
                 Spacer(minLength: 0)
-                Menu { spaceProfileMenu; Button("New Space…") { store.requestNewSpace() }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(store.activeProfileID))); Button("Settings…") { store.settingsVisible = true }; Button("Customize…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata); ForEach(store.session.spaces) { s in Button(s.name) { store.selectSpace(s.id) } } } label: { Image(systemName: "plus").font(.system(size: 15)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("More Spaces and settings")
+                Menu { Button("Manage Spaces…") { store.showSpacesManager() }; Button("Recently Deleted Spaces") { store.showSpacesManager(deleted:true) }; spaceProfileMenu; Button("New Space…") { store.requestNewSpace() }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(store.activeProfileID))); Button("Settings…") { store.settingsVisible = true }; Button("Customize…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata); ForEach(store.session.spaces) { s in Button(s.name) { store.selectSpace(s.id) } } } label: { Image(systemName: "plus").font(.system(size: 15)) }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("More Spaces and settings")
             }.padding(.horizontal, 14).frame(height: 42)
         }.padding(.bottom, 4)
     }

@@ -36,7 +36,7 @@ doc.formatVersion = 2; doc.session.spaces = [source]; doc.session.selectedSpace 
 try doc.repairProfiles()
 let allQuick = (doc.profileLibraries ?? []).flatMap { $0.library.quickPages ?? [] }
 let ids = doc.session.spaces.flatMap(\.tabs).map(\.id) + allQuick.map(\.id)
-check(doc.formatVersion == 3 && allQuick.count == 3 && Set(ids).count == ids.count, "Format-2 migration preserves colliding quick/live pages with globally unique native identities")
+check(doc.formatVersion == 4 && allQuick.count == 3 && Set(ids).count == ids.count, "Format-2 migration preserves colliding quick/live pages with globally unique native identities")
 check(doc.session.spaces[0].tabs[0].url == regular.url && doc.library(for: personal).quickPages?.first?.tab.url == quickTab.url, "Quick-page repair cannot overwrite an existing Space tab")
 check(doc.library(for: personal).quickPages?.first?.intendedSpaceID == source.id && doc.library(for: work.id).quickPages?.first?.intendedSpaceID == nil, "Quick destinations are retained only for Spaces in their actual owning profile")
 let originalIDs = allQuick.map(\.id)

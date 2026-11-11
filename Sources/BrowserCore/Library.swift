@@ -9,6 +9,7 @@ public struct PageRecord: Codable, Identifiable, Equatable {
 }
 public struct BrowserLibrary: Codable {
     public var siteBoosts: [SiteBoost]?
+    public var deletedSpaces: [DeletedSpace]?
     public var favoriteTabs: [Tab]?
     public var quickPages: [QuickPage]?
     public var bookmarks: [PageRecord] = []
@@ -52,6 +53,6 @@ public struct BrowserDocument: Codable {
     public var profiles: [BrowserProfile]?
     public var profileLibraries: [ProfileLibrary]?
     public init(session: Session = Session(), library: BrowserLibrary = BrowserLibrary(), preferences: Preferences = Preferences(), profiles: [BrowserProfile]? = nil, profileLibraries: [ProfileLibrary]? = nil) {
-        formatVersion = 3; self.session = session; self.library = library; self.preferences = preferences; self.profiles = profiles; self.profileLibraries = profileLibraries
+        formatVersion = 4; self.session = session; self.library = library; self.preferences = preferences; self.profiles = profiles; self.profileLibraries = profileLibraries
     }
 }

@@ -36,7 +36,7 @@ public struct Tab: Codable, Identifiable, Equatable {
         self.title = title; self.url = url; self.pinned = pinned; self.lastAccessed = Date()
     }
 }
-public struct Space: Codable, Identifiable {
+public struct Space: Codable, Identifiable, Equatable {
     public var id = UUID()
     public var name: String
     public var theme: String?

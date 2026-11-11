@@ -88,6 +88,16 @@ run_boosts_website_checks() {
     rm -f "$boost_port_file"
     trap - EXIT
 }
+run_spaces_layout_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SpacesLayoutChecks.swift -o "$MANUAL/spaces-layout-checks"
+    "$MANUAL/spaces-layout-checks"
+}
+if [[ "${1:-}" == "spaces-layout-test" ]]; then run_spaces_layout_checks; exit; fi
+run_space_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SpaceManagementChecks.swift -o "$MANUAL/space-checks"
+    "$MANUAL/space-checks"
+}
+if [[ "${1:-}" == "space-test" ]]; then run_space_checks; exit; fi
 run_writer_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/WriterOwnershipChecks.swift -o "$MANUAL/writer-checks"
     "$MANUAL/writer-checks"
@@ -228,6 +238,8 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    run_spaces_layout_checks
+    run_space_checks
     run_writer_checks
     run_startup_checks
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostInputChecks.swift -o "$MANUAL/boosts-input-checks"

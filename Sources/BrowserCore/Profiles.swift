@@ -50,8 +50,8 @@ extension BrowserDocument {
     }
     /// Repair metadata without moving an existing valid profile to another cookie store.
     public mutating func repairProfiles() throws {
-        guard formatVersion == nil || formatVersion == 1 || formatVersion == 2 || formatVersion == 3 else { throw MetadataFormatError.unsupportedVersion }
-        formatVersion = 3
+        guard formatVersion == nil || formatVersion == 1 || formatVersion == 2 || formatVersion == 3 || formatVersion == 4 else { throw MetadataFormatError.unsupportedVersion }
+        formatVersion = 4
         let replacementForZero = UUID()
         func valid(_ id: UUID) -> UUID { id == BrowserProfile.zeroID ? replacementForZero : id }
         var registry = profiles ?? []
@@ -107,6 +107,16 @@ extension BrowserDocument {
                 profileLibraries![index].library.siteBoosts = BoostCatalog(saved).entries
             }
             let owner = profileLibraries![index].profileID
+            if let snapshots = profileLibraries![index].library.deletedSpaces {
+                var normalized: [DeletedSpace] = []
+                for var record in snapshots {
+                    record.space.profileID = owner
+                    if normalized.contains(record) { continue }
+                    if normalized.contains(where: { $0.id == record.id }) { record.id = UUID() }
+                    normalized.append(record)
+                }
+                profileLibraries![index].library.deletedSpaces = normalized
+            }
             var favorites = profileLibraries![index].library.favoriteTabs ?? []
             let live = session.spaces.filter { $0.effectiveProfileID == owner }.flatMap(\.tabs).filter { $0.favorite == true }
             for tab in live {
@@ -180,6 +190,14 @@ extension BrowserLibrary {
                 merged.append(page)
             }
             quickPages = merged
+        }
+        if deletedSpaces != nil || other.deletedSpaces != nil {
+            var merged = deletedSpaces ?? []
+            for var record in other.deletedSpaces ?? [] where !merged.contains(record) {
+                if merged.contains(where: { $0.id == record.id }) { record.id = UUID() }
+                merged.append(record)
+            }
+            deletedSpaces = merged
         }
         if favoriteTabs != nil || other.favoriteTabs != nil { favoriteTabs = tabs(favoriteTabs ?? [], other.favoriteTabs ?? []) }
         bookmarks = pages(bookmarks, other.bookmarks); history = pages(history, other.history)

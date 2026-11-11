@@ -93,14 +93,14 @@ var oldObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(Brow
 oldObject.removeValue(forKey: "formatVersion"); oldObject["preferences"] = ["suspendTabs": false, "archiveAfterDays": 0]
 var legacy = try JSONDecoder().decode(BrowserDocument.self, from: JSONSerialization.data(withJSONObject: oldObject))
 try legacy.repairProfiles()
-check(legacy.formatVersion == 3 && legacy.preferences.siteSearches == nil && SiteSearchCatalog(legacy.preferences.siteSearches).preferredMatch("wiki") != nil, "Legacy documents retain format3 and receive defaults without losing their session")
+check(legacy.formatVersion == 4 && legacy.preferences.siteSearches == nil && SiteSearchCatalog(legacy.preferences.siteSearches).preferredMatch("wiki") != nil, "Legacy documents upgrade to format4 and receive defaults without losing their session")
 let root = FileManager.default.temporaryDirectory.appendingPathComponent("Alcove.SiteSearchCore.\(UUID())")
 defer { try? FileManager.default.removeItem(at: root) }
 let vault = MetadataStore(url: root.appendingPathComponent("metadata.sealed"), key: SymmetricKey(size: .bits256))
 legacy.preferences.siteSearches = changed
 try vault.save(legacy)
 let restored = try vault.load(BrowserDocument.self)
-check(restored?.preferences.siteSearches == changed && restored?.formatVersion == 3, "Encrypted metadata restores custom shortcuts and enabled state")
+check(restored?.preferences.siteSearches == changed && restored?.formatVersion == 4, "Encrypted metadata restores custom shortcuts and enabled state")
 check(!String(decoding: try Data(contentsOf: vault.url), as: UTF8.self).contains("example.test"), "Saved search templates are not plaintext metadata")
 legacy.preferences.siteSearches = []; try vault.save(legacy)
 check(try vault.load(BrowserDocument.self)?.preferences.siteSearches == [], "An intentionally empty catalog survives encrypted relaunch")

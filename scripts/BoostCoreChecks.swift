@@ -115,7 +115,7 @@ let sealedURL = root.appendingPathComponent("metadata.sealed")
 let vault = MetadataStore(url: sealedURL, key: SymmetricKey(size: .bits256))
 try vault.save(legacy)
 let recovered = try vault.load(BrowserDocument.self)!
-check(recovered.formatVersion == 3 && recovered.library(for: BrowserProfile.defaultID).siteBoosts?.first?.isJavaScriptApproved == true && recovered.library(for: profile.id).siteBoosts == nil && recovered.preferences.boostsEnabled == false, "Encrypted metadata roundtrip preserves profile ownership and exact local approval")
+check(recovered.formatVersion == 4 && recovered.library(for: BrowserProfile.defaultID).siteBoosts?.first?.isJavaScriptApproved == true && recovered.library(for: profile.id).siteBoosts == nil && recovered.preferences.boostsEnabled == false, "Encrypted metadata roundtrip preserves profile ownership and exact local approval")
 let ciphertext = try Data(contentsOf: sealedURL)
 check(ciphertext.range(of: Data("window.counter".utf8)) == nil && ciphertext.range(of: Data("Quiet Café".utf8)) == nil, "Profile customization names and code do not appear in plaintext on disk")
 var repairedOwner = BrowserDocument(profiles: [BrowserProfile(id: BrowserProfile.zeroID, name: "Recovered")], profileLibraries: [ProfileLibrary(profileID: BrowserProfile.zeroID, library: library)])

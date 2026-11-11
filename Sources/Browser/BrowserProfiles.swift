@@ -98,7 +98,7 @@ extension BrowserStore {
         var records = library(for: id)
         if !resuming {
             affected += (records.quickPages ?? []).map(\.id)
-            records.quickPages = []; records.favoriteTabs = []; records.history = []; records.archive = []; records.closedTabs = []
+            records.quickPages = []; records.favoriteTabs = []; records.history = []; records.archive = []; records.closedTabs = []; records.deletedSpaces = []
         }
         candidate.setLibrary(records, for: id)
         if isPrivate { try commitQuickDocument(candidate, discarding: affected, beforePublish: { self.splitID = nil; self.activePaneID = nil }) }

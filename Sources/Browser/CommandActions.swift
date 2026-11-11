@@ -14,6 +14,9 @@ extension BrowserStore {
             case .unfavorite: return canChangeTabMetadata && selectedTab?.favorite == true
             case .copyURL: return currentView?.url != nil
             case .profiles: return !isPrivate
+            case .spaces,.deletedSpaces: return !isShuttingDown && !awaitingInitialMetadata
+            case .newSpace,.renameSpace,.deleteSpace: return canManageSpace(space.id)
+            case .restoreSpace: return canUndoSpaceDeletion
             default: return true
             }
         }
@@ -31,6 +34,12 @@ extension BrowserStore {
         case .library: libraryVisible = true
         case .settings: settingsVisible = true
         case .profiles: if !isPrivate { profilesVisible = true }
+        case .spaces: showSpacesManager()
+        case .deletedSpaces: showSpacesManager(deleted:true)
+        case .newSpace: requestNewSpace()
+        case .renameSpace: requestRenameSpace(space.id)
+        case .deleteSpace: requestDeleteSpace(space.id)
+        case .restoreSpace: undoSpaceDeletion()
         case .siteSearch: presentedPanel = .siteSearch
         case .linkRouting: presentedPanel = .links
         case .boosts:

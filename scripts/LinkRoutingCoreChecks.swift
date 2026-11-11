@@ -158,10 +158,11 @@ defer { try? FileManager.default.removeItem(at:root) }
 let vault = MetadataStore(url:root.appendingPathComponent("metadata.sealed"),key:SymmetricKey(size:.bits256))
 try vault.save(doc)
 let restored = try vault.load(BrowserDocument.self)!
-check(restored.formatVersion == 3 && restored.preferences.linkRules == [first,second] && restored.preferences.linkDefaultDestination == .space(b), "Routing preferences survive encrypted format3 relaunch")
+check(restored.formatVersion == 4 && restored.preferences.linkRules == [first,second] && restored.preferences.linkDefaultDestination == .space(b), "Routing preferences survive encrypted format4 relaunch")
 check(restored.session.lastUsedSpaces?[profile.id] == other.id && restored.library.archive.first?.archivedSpaceID == originalSpace, "Recent and archive hints survive encrypted relaunch")
 check(!String(decoding:try Data(contentsOf:vault.url),as:UTF8.self).contains("example.test"), "Routing expressions are not plaintext metadata")
 var legacy = try JSONSerialization.jsonObject(with:JSONEncoder().encode(BrowserDocument())) as! [String:Any]
+legacy["formatVersion"] = 3
 legacy["preferences"] = ["suspendTabs":false,"archiveAfterDays":0]
 let decoded = try JSONDecoder().decode(BrowserDocument.self,from:JSONSerialization.data(withJSONObject:legacy))
 check(decoded.formatVersion == 3 && decoded.preferences.linkRules == nil && decoded.preferences.linkDefaultDestination == nil && decoded.session.lastUsedSpaces == nil, "Legacy format3 data remains readable without routing or recent fields")

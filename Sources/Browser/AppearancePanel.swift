@@ -6,7 +6,13 @@ struct AppearancePanel: View {
     var availableHeight: Double = 640
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("sidebarWidth") private var sidebarWidth = 236.0
-    private let icons = ["circle.fill", "moon.fill", "leaf.fill", "briefcase.fill", "sparkles", "graduationcap.fill", "chevron.left.forwardslash.chevron.right", "heart.fill", "globe", "paperplane.fill"]
+    @State private var nameDraft = ""
+    @State private var editedSpaceID: UUID?
+    private func loadName() { nameDraft = store.space.name; editedSpaceID = store.space.id }
+    private func saveName() {
+        guard editedSpaceID == store.space.id,let id = editedSpaceID else { return }
+        do { try store.renameSpace(id,name:nameDraft); nameDraft = store.space.name } catch { store.message = error.localizedDescription }
+    }
     var body: some View {
         VStack(spacing: 0) {
             HStack { VStack(alignment: .leading, spacing: 4) { Text("Make it yours").font(.title2.bold()); Text("Customize \(store.space.name)").font(.caption).foregroundStyle(.secondary) }; Spacer(); Button("Done") { store.appearanceVisible = false }.keyboardShortcut(.cancelAction) }.padding(24)
@@ -16,10 +22,13 @@ struct AppearancePanel: View {
                     HStack(alignment: .top, spacing: 24) {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("SPACE").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                            TextField("Space name", text: Binding(get: { store.space.name }, set: { store.session.spaces[store.spaceIndex].name = String($0.prefix(60)); store.save() })).textFieldStyle(.roundedBorder)
+                            HStack {
+                                TextField("Space name",text:$nameDraft).textFieldStyle(.roundedBorder).onSubmit(saveName)
+                                Button("Save",action:saveName).disabled(nameDraft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || nameDraft == store.space.name)
+                            }
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 8) {
-                                ForEach(icons, id: \.self) { icon in
-                                    Button { store.session.spaces[store.spaceIndex].icon = icon; store.save() } label: { Image(systemName: icon).frame(width: 32, height: 30).background(store.space.icon == icon ? store.activeTheme.accent.opacity(0.25) : .primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7)) }.buttonStyle(.plain).help(icon.replacingOccurrences(of: ".fill", with: ""))
+                                ForEach(SpaceSymbol.allCases) { icon in
+                                    Button { do { try store.setSpaceIcon(store.space.id,icon:icon.rawValue) } catch { store.message = error.localizedDescription } } label: { Image(systemName: icon.rawValue).frame(width: 32, height: 30).background(store.space.icon == icon.rawValue ? store.activeTheme.accent.opacity(0.25) : .primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7)) }.buttonStyle(.plain).help(icon.name).accessibilityLabel("Space icon: \(icon.name)")
                                 }
                             }
                         }.frame(width: 230)
@@ -70,7 +79,7 @@ struct AppearancePanel: View {
                     }.font(.system(size: 12))
                 }.padding(24)
             }
-        }.frame(width: 720, height: min(640, max(360, availableHeight)))
+        }.frame(width: 720, height: min(640, max(360, availableHeight))).onAppear(perform:loadName).onChange(of:store.space.id) { _,_ in loadName() }
     }
     private var motion: Animation? { store.appearance.animationsEnabled && !reduceMotion ? .easeInOut(duration: 0.2) : nil }
     private func appearanceBinding<Value>(_ path: WritableKeyPath<AppearanceSettings, Value>) -> Binding<Value> {

@@ -5,7 +5,7 @@ import BrowserCore
 import CryptoKit
 import Combine
 
-enum BrowserPanel: String, Identifiable { case library, settings, appearance, updates, profiles, siteSearch, links, boosts; var id: String { rawValue } }
+enum BrowserPanel: String, Identifiable { case library, settings, appearance, updates, profiles, siteSearch, links, boosts, spaces; var id: String { rawValue } }
 
 @MainActor
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
@@ -37,6 +37,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var profilesVisible: Bool { get { presentedPanel == .profiles } set { if newValue { presentedPanel = .profiles } else if profilesVisible { presentedPanel = nil } } }
     @Published var onboardingVisible = false
     var hasSavedDocument = false
+    @Published var lastSpaceDeletion: DeletedSpaceReference?
+    @Published var spacesShowingDeleted = false
     var onboardingDidFinish: (() -> Void)?
     var quickPagesDidChange: (() -> Void)?
     var quickPageRequested: ((UUID) -> Void)?

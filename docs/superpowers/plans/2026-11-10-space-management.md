@@ -4,7 +4,7 @@
 
 **Goal:** Provide safe, recoverable Space management and prevent cooperating Alcove processes from writing the same profile concurrently.
 
-**Architecture:** A process-shared, cross-process exclusive metadata-directory lease protects normal writers. Encrypted per-profile deleted Space snapshots feed durable lifecycle operations and a responsive management sheet/sidebar actions.
+**Architecture:** A process-shared, cross-process exclusive metadata-directory lease protects normal writers. Encrypted per-profile deleted Space snapshots feed durable lifecycle operations and an in-window themed-card manager/sidebar actions.
 
 **Tech Stack:** Swift, Darwin file locks, CryptoKit, AppKit, SwiftUI, WebKit, manual native/core checks.
 
@@ -32,17 +32,17 @@
 
 - [x] Step1: Add self-spawning owned-key process regressions using current BrowserStore API. Run `caffeinate -is scripts/build.sh writer-test`. Expected: FAIL because secondary normal writer/key requests and direct saves currently succeed; process cleanup bounded.
 - [x] Step2: Implement lease and startup/retry/shutdown integration, safe0600 O_NOFOLLOW/CLOEXEC regular lock file in0700 metadata directory, never unlink. Add alias/crash/private/symlink/release tests. Run writer-test then startup-test sequentially. Expected: PASS, zero diagnostics.
-- [ ] Step3: Commit; task-done with `caffeinate -is scripts/build.sh test`. Expected: complete suite PASS, zero diagnostics. Keep source frozen through that run.
+- [x] Step3: Commit; task-done with `caffeinate -is scripts/build.sh test`. Expected: complete suite PASS, zero diagnostics. Keep source frozen through that run.
 
 ### Task 2: Build durable Space lifecycle and accessible controls
 
-**Files:** new BrowserCore/SpaceManagement.swift, Browser/SpaceActions.swift and SpacesPanel.swift; BrowserCore Library/Profiles/BrowserCommand; Browser UI/Store/AppDelegate/CommandActions/Profiles; scripts/SpaceManagementChecks.swift, existing core format fixtures, build.sh, Info.plist and goal evidence.
+**Files:** new BrowserCore/SpaceManagement.swift, Browser/SpaceActions.swift, SpaceDrop.swift and SpacesPanel.swift; BrowserCore Library/Profiles/BrowserCommand; Browser UI/Store/AppDelegate/CommandActions/Profiles; scripts/SpaceManagementChecks.swift, existing core format fixtures, build.sh, Info.plist and goal evidence.
 
-**Interfaces:** profile-owned DeletedSpace snapshot with original index/date; optional BrowserLibrary.deletedSpaces. Store renameSpace/setSpaceIcon/moveSpace/deleteSpace/restoreDeletedSpace/permanentlyDeleteSpace use persist-before-publish. lastSpaceDeletion enables Undo. BrowserPanel.spaces, command palette/menu/footer/context/drop controls call these operations. Private commits remain ephemeral. Existing profile.clear removes deletedSpaces; merges preserve distinct snapshots.
+**Interfaces:** profile-owned DeletedSpace snapshot with original index/date; optional BrowserLibrary.deletedSpaces. Store renameSpace/setSpaceIcon/moveSpace/deleteSpace/restoreDeletedSpace/permanentlyDeleteSpace use persist-before-publish. lastSpaceDeletion enables Undo. BrowserPanel.spaces is an overlay (excluded from the sheet binding); command palette/dynamic Spaces menu/footer/context/drop controls call these operations. Existing name/icon fields in AppearancePanel use the durable operations. Private commits remain ephemeral. Existing profile.clear removes deletedSpaces; merges preserve distinct snapshots.
 
-- [ ] Step1: Add encrypted, owned-store regressions for rename/reorder/deletion/relaunch/recovery, Favorites/profile retention, last-Space fallback, ID collisions, routes, private isolation and failed saves. Update explicit format-version assertions to4/future5 while retaining legacy3 fixtures. Run space-test. Expected: missing lifecycle behavior FAIL before implementation.
-- [ ] Step2: Implement model/migration/lifecycle operations and tests; run space-test and core/profile/store focused checks as needed. Expected: PASS, no key/website-store access from private operations or unavailable profiles, zero diagnostics.
-- [ ] Step3: Add management sheet, quick/context/footer/command actions and sidebar reordering, safe confirmations and Undo. Add meaningful mounted short/large-text UI and action/lifetime checks; run space-test/sidebar-layout-test. Expected: controls bounded and operations preserve mounted website identity.
+- [x] Step1: Add encrypted, owned-store regressions for rename/reorder/deletion/relaunch/recovery, Favorites/profile retention, last-Space fallback, ID collisions, routes, private isolation and failed saves. Update explicit format-version assertions to4/future5 while retaining legacy3 fixtures. Run space-test. Expected: missing lifecycle behavior FAIL before implementation.
+- [x] Step2: Implement model/migration/lifecycle operations and tests; run space-test and core/profile/store focused checks as needed. Expected: PASS, no key/website-store access from private operations or unavailable profiles, zero diagnostics.
+- [x] Step3: Add in-window themed-card management, quick/context/footer/Spaces-menu/command actions and sidebar reordering, safe confirmations and Undo. Add meaningful mounted short/large-text UI and action/lifetime checks; run space-test/sidebar-layout-test. Expected: controls bounded and operations preserve mounted website identity.
 - [ ] Step4: Set0.8.0/build15; commit; task-done with `caffeinate -is scripts/build.sh test`. Expected: full suite PASS, zero diagnostics. Build optimized arm64/x86_64 sequentially and verify Info/signature/runtime/min14/exact6 entitlements.
 - [ ] Step5: ONE fresh gpt-6-astra/high whole-plan review, regrade every finding/declined judgment; ONE Critical/Important RED→GREEN fix pass and full suite/build gates. No second review. Address directly related minors under the user's explicit remaining-issues request; leave unrelated older items separate.
 - [ ] Step6: Push authorized main; inspect exact-source CI to terminal, verify downloaded universal artifact/DMG/hash contents. Update stable Visual Four only after CUA-confirmed quit and test real rename/reorder/delete/recover with owned temporary Spaces. Copy deliverables/evidence to thread outputs, record all rulings/costs and remaining scope; archive and remove only this plan workspace. Full goal remains active.

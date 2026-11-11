@@ -7,7 +7,7 @@ struct QuickWindowKey: Hashable { let ownerID: UUID; let pageID: UUID }
 enum PageOutputCommand { case printPage, pdf, webArchive }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation, NSMenuDelegate {
     var windows: [NSWindow: BrowserStore] = [:]
     var primaryOwners: [NSWindow: BrowserWindowOwner] = [:]
     var primaryLeases: [NSWindow: UUID] = [:]
@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let outputTermination: PageOutputTermination
     let updates = UpdateController(installedTag: Bundle.main.object(forInfoDictionaryKey: "AlcoveReleaseTag") as? String ?? "unknown")
     var normalWindow: NSWindow?
+    var spacesMenu: NSMenu?
     var escapeMonitor: Any?
     var paneFocusMonitor: Any?
     var updateTimer: Timer?
@@ -288,6 +289,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(view, "Next Tab", #selector(nextTab), "\t", .control); add(view, "Previous Tab", #selector(previousTab), "\t", [.control, .shift])
         add(view, "Next Space", #selector(nextSpace), "\u{f703}", [.command, .option]); add(view, "Previous Space", #selector(previousSpace), "\u{f702}", [.command, .option])
         add(view, "Zoom In", #selector(zoomIn), "="); add(view, "Zoom Out", #selector(zoomOut), "-"); add(view, "Actual Size", #selector(resetZoom), "0")
+        spacesMenu = submenu("Spaces"); spacesMenu?.delegate = self
+        if let spacesMenu { rebuildSpacesMenu(spacesMenu) }
         let library = submenu("Library")
         add(library, "Show Library", #selector(showLibrary), "b", [.command, .shift]); add(library, "Bookmark This Page", #selector(bookmark), "d")
         let history = submenu("History")
@@ -306,9 +309,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if activeStore?.awaitingInitialMetadata == true {
             return [#selector(openMain), #selector(privateWindow), #selector(quit), #selector(about)].contains(menuItem.action)
         }
-        let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings), #selector(customize), #selector(checkUpdates), #selector(siteSearchSettings), #selector(linkRoutingSettings), #selector(websiteBoosts)]
+        let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings), #selector(customize), #selector(checkUpdates), #selector(siteSearchSettings), #selector(linkRoutingSettings), #selector(websiteBoosts), #selector(manageSpaces), #selector(recentlyDeletedSpaces)]
         if let action = menuItem.action, general.contains(action) { return true }
         guard let store = activeStore else { return menuItem.action == #selector(newTab) || menuItem.action == #selector(newQuick) || menuItem.action == #selector(location) }
+        if menuItem.action == #selector(selectSpaceMenu(_:)),let id = menuItem.representedObject as? UUID {
+            return store.session.spaces.contains(where:{$0.id == id})
+        }
+        if menuItem.action == #selector(undoSpaceDeletion) { return store.canUndoSpaceDeletion }
+        if [#selector(renameCurrentSpace),#selector(deleteCurrentSpace),#selector(moveCurrentSpaceLeft),#selector(moveCurrentSpaceRight)].contains(menuItem.action) {
+            guard activeQuick == nil,store.canManageSpace(store.space.id) else { return false }
+            if menuItem.action == #selector(moveCurrentSpaceLeft) { return store.spaceIndex > 0 }
+            if menuItem.action == #selector(moveCurrentSpaceRight) { return store.spaceIndex < store.session.spaces.count - 1 }
+            return true
+        }
         let quick = activeQuick
         let profile = quick.flatMap { store.quickProfileID($0.pageID) } ?? store.activeProfileID
         let available = !store.profileUnavailable(profile)
