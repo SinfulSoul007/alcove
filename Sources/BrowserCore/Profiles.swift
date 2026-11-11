@@ -108,14 +108,7 @@ extension BrowserDocument {
             }
             let owner = profileLibraries![index].profileID
             if let snapshots = profileLibraries![index].library.deletedSpaces {
-                var normalized: [DeletedSpace] = []
-                for var record in snapshots {
-                    record.space.profileID = owner
-                    if normalized.contains(record) { continue }
-                    if normalized.contains(where: { $0.id == record.id }) { record.id = UUID() }
-                    normalized.append(record)
-                }
-                profileLibraries![index].library.deletedSpaces = normalized
+                profileLibraries![index].library.deletedSpaces = DeletedSpace.uniqueSnapshots(snapshots.map { var record = $0; record.space.profileID = owner; return record })
             }
             var favorites = profileLibraries![index].library.favoriteTabs ?? []
             let live = session.spaces.filter { $0.effectiveProfileID == owner }.flatMap(\.tabs).filter { $0.favorite == true }
@@ -158,6 +151,7 @@ extension BrowserDocument {
                 ids.contains(owner) && session.spaces.contains { $0.id == spaceID && $0.effectiveProfileID == owner }
             }
         }
+        protectDeletedSpaceRoutes()
         library = self.library(for: BrowserProfile.defaultID)
     }
 }
@@ -192,12 +186,7 @@ extension BrowserLibrary {
             quickPages = merged
         }
         if deletedSpaces != nil || other.deletedSpaces != nil {
-            var merged = deletedSpaces ?? []
-            for var record in other.deletedSpaces ?? [] where !merged.contains(record) {
-                if merged.contains(where: { $0.id == record.id }) { record.id = UUID() }
-                merged.append(record)
-            }
-            deletedSpaces = merged
+            deletedSpaces = DeletedSpace.uniqueSnapshots((deletedSpaces ?? []) + (other.deletedSpaces ?? []))
         }
         if favoriteTabs != nil || other.favoriteTabs != nil { favoriteTabs = tabs(favoriteTabs ?? [], other.favoriteTabs ?? []) }
         bookmarks = pages(bookmarks, other.bookmarks); history = pages(history, other.history)

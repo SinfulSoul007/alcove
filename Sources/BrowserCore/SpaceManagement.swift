@@ -5,8 +5,62 @@ public struct DeletedSpace: Codable, Identifiable, Equatable {
     public var space: Space
     public var originalIndex: Int
     public var deletedAt: Date
+    // Acknowledges one collision repair, so a later deliberate route selection stays valid.
+    public var routingCollisionHandled: Bool?
     public init(space:Space,originalIndex:Int,deletedAt:Date = Date()) {
         id = UUID(); self.space = space; self.originalIndex = originalIndex; self.deletedAt = deletedAt
+    }
+}
+
+extension DeletedSpace {
+    static func uniqueSnapshots(_ records:[DeletedSpace]) -> [DeletedSpace] {
+        var result:[DeletedSpace] = []
+        for var record in records {
+            if let index = result.firstIndex(where:{$0.space == record.space && $0.originalIndex == record.originalIndex && $0.deletedAt == record.deletedAt}) {
+                if record.routingCollisionHandled == true { result[index].routingCollisionHandled = true }
+                continue
+            }
+            while result.contains(where:{$0.id == record.id}) { record.id = UUID() }
+            result.append(record)
+        }
+        return result
+    }
+}
+
+extension BrowserDocument {
+    public func hasUnhandledSpaceRoutingCollision(_ id:UUID) -> Bool {
+        session.spaces.contains(where:{$0.id == id}) && (profileLibraries ?? []).contains { entry in
+            (entry.library.deletedSpaces ?? []).contains {$0.space.id == id && $0.routingCollisionHandled != true}
+        }
+    }
+    /// Keep matching routes enabled but unavailable rather than silently selecting either account.
+    @discardableResult public mutating func protectDeletedSpaceRoutes() -> Bool {
+        let live = Set(session.spaces.map(\.id))
+        var ambiguous = Set<UUID>()
+        for index in (profileLibraries ?? []).indices {
+            for recordIndex in (profileLibraries![index].library.deletedSpaces ?? []).indices {
+                let record = profileLibraries![index].library.deletedSpaces![recordIndex]
+                if live.contains(record.space.id) && record.routingCollisionHandled != true {
+                    ambiguous.insert(record.space.id)
+                    profileLibraries![index].library.deletedSpaces![recordIndex].routingCollisionHandled = true
+                }
+            }
+        }
+        guard !ambiguous.isEmpty else { return false }
+        var occupied = live.union((profileLibraries ?? []).flatMap { ($0.library.deletedSpaces ?? []).map { $0.space.id } })
+        var unavailable:[UUID:UUID] = [:]
+        for id in ambiguous {
+            var replacement = UUID(); while occupied.contains(replacement) { replacement = UUID() }
+            occupied.insert(replacement); unavailable[id] = replacement
+        }
+        func repaired(_ destination:LinkDestination) -> LinkDestination {
+            if case .space(let id) = destination, let replacement = unavailable[id] { return .space(replacement) }
+            return destination
+        }
+        preferences.linkRules = preferences.linkRules?.map { var rule = $0; rule.destination = repaired(rule.destination); return rule }
+        if let destination = preferences.linkDefaultDestination { preferences.linkDefaultDestination = repaired(destination) }
+        library = self.library(for:BrowserProfile.defaultID)
+        return true
     }
 }
 public struct DeletedSpaceReference: Equatable, Hashable {

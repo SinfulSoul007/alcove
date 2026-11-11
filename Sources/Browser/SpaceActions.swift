@@ -77,12 +77,12 @@ extension BrowserStore {
     }
     @discardableResult func restoreDeletedSpace(_ recordID:UUID,profileID:UUID) throws -> UUID {
         try requireSpaceProfile(profileID)
-        var candidate = makeDocument(); var records = candidate.library(for:profileID)
+        var candidate = makeDocument(); let collision = candidate.protectDeletedSpaceRoutes(); var records = candidate.library(for:profileID)
         guard let index = records.deletedSpaces?.firstIndex(where:{$0.id == recordID}),let record = records.deletedSpaces?[index] else { throw SpaceManagementError.missingSnapshot }
         SpaceSymbol.stabilize(in:&candidate.session)
         var restored = record.space; restored.profileID = profileID
         restored.name = (try? SpaceSymbol.cleanedName(restored.name)) ?? "Recovered Space"
-        if candidate.session.spaces.contains(where:{$0.id == restored.id}) { restored.id = UUID() }
+        if record.routingCollisionHandled == true || candidate.session.spaces.contains(where:{$0.id == restored.id}) { restored.id = UUID() }
         var occupied = Set(candidate.session.spaces.flatMap(\.tabs).map(\.id)).union(views.keys)
         for library in candidate.profileLibraries ?? [] {
             occupied.formUnion((library.library.favoriteTabs ?? []).map(\.id)); occupied.formUnion((library.library.quickPages ?? []).map(\.id))
@@ -102,6 +102,7 @@ extension BrowserStore {
         try commitSpaceDocument(candidate,beforePublish:{ self.closePrimaryPeek(); self.splitID = nil; self.activePaneID = nil })
         if lastSpaceDeletion == DeletedSpaceReference(profileID:profileID,recordID:recordID) { lastSpaceDeletion = nil }
         message = "\(restored.name) restored. Saved pages reopen with their original profile."
+        if collision || record.routingCollisionHandled == true { message! += " Conflicting link destinations remain unavailable. Choose the intended Space in Link Routing Settings." }
         return restored.id
     }
     func permanentlyDeleteSpace(_ recordID:UUID,profileID:UUID) throws {

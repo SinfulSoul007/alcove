@@ -134,6 +134,48 @@ import BrowserCore
         let restoredRoute = try routing.linkDecision(for:routeURL)
         check(routeRestored == routeSpace && restoredRoute.destination == .space(spaceID:routeSpace,profileID:BrowserProfile.defaultID), "Restoring the exact Space reactivates its original route")
         routing.shutdown()
+        let conflictRoot = root.appendingPathComponent("routing-collision")
+        let conflict = BrowserStore(dataRoot:conflictRoot,keyProvider:{_ in key})
+        let conflictProfile = try conflict.createProfile(name:"Work")
+        conflict.namedDataStores[conflictProfile] = .nonPersistent()
+        let lostSpace = conflict.session.spaces.first(where:{$0.effectiveProfileID == conflictProfile})!.id
+        let lostRule = LinkRule(pattern:"/lost",destination:.space(lostSpace))
+        let unrelated = LinkRule(pattern:"/unrelated",destination:.quickBrowse)
+        try conflict.saveLinkRule(lostRule); try conflict.saveLinkRule(unrelated)
+        try conflict.setDefaultLinkDestination(.space(lostSpace))
+        let lostRecord = try conflict.deleteSpace(lostSpace)
+        var conflictedDocument = conflict.makeDocument()
+        var collidingPersonal = Space(name:"Personal collision"); collidingPersonal.id = lostSpace; collidingPersonal.profileID = BrowserProfile.defaultID
+        conflictedDocument.session.spaces.append(collidingPersonal)
+        conflict.shutdown()
+        try MetadataStore(url:conflict.sessionURL,key:key).save(conflictedDocument)
+        let guarded = BrowserStore(dataRoot:conflictRoot,keyProvider:{_ in key})
+        let lostURL = URL(string:"https://example.com/lost")!, defaultURL = URL(string:"https://example.com/default")!
+        rejects("A relaunched ambiguous named route cannot select the colliding account") { _ = try guarded.linkDecision(for:lostURL) }
+        rejects("A relaunched ambiguous default cannot select the colliding account") { _ = try guarded.linkDecision(for:defaultURL) }
+        let deliberatelyChosen = LinkRule(pattern:"/chosen",destination:.space(lostSpace))
+        try guarded.saveLinkRule(deliberatelyChosen)
+        let chosenURL = URL(string:"https://example.com/chosen")!
+        check(try guarded.linkDecision(for:chosenURL).destination == .space(spaceID:lostSpace,profileID:BrowserProfile.defaultID), "Deliberate destination selection resolves a live/deleted collision")
+        let retiredRoot = root.appendingPathComponent("retired-collision")
+        try MetadataStore(url:retiredRoot.appendingPathComponent("session-v2.sealed"),key:key).save(guarded.makeDocument())
+        let retired = BrowserStore(dataRoot:retiredRoot,keyProvider:{_ in key})
+        let retiredPersonal = try retired.deleteSpace(lostSpace)
+        try retired.permanentlyDeleteSpace(retiredPersonal,profileID:BrowserProfile.defaultID)
+        let recoveredAfterRetirement = try retired.restoreDeletedSpace(lostRecord,profileID:conflictProfile)
+        check(recoveredAfterRetirement != lostSpace, "Recovery never reuses an identity previously shared with a different Space")
+        rejects("Removing the colliding Space first cannot revive its explicit route into the recovered account") { _ = try retired.linkDecision(for:chosenURL) }
+        retired.shutdown()
+        let restoredWork = try guarded.restoreDeletedSpace(lostRecord,profileID:conflictProfile)
+        rejects("Collision recovery cannot reactivate an old named route into another account") { _ = try guarded.linkDecision(for:lostURL) }
+        rejects("Collision recovery cannot reactivate an old default into another account") { _ = try guarded.linkDecision(for:defaultURL) }
+        check(restoredWork != lostSpace && guarded.linkRuleCatalog.entries.contains(unrelated) && (try guarded.linkDecision(for:chosenURL).destination) == .space(spaceID:lostSpace,profileID:BrowserProfile.defaultID), "Recovery preserves unrelated rules and deliberate collision selections")
+        try guarded.setDefaultLinkDestination(.space(restoredWork))
+        check(try guarded.linkDecision(for:defaultURL).destination == .space(spaceID:restoredWork,profileID:conflictProfile), "The recovered account can be deliberately selected as the default")
+        guarded.shutdown()
+        let guardedAgain = BrowserStore(dataRoot:conflictRoot,keyProvider:{_ in key})
+        rejects("Invalidated collision routes remain unavailable after another encrypted relaunch") { _ = try guardedAgain.linkDecision(for:lostURL) }
+        guardedAgain.shutdown()
         let profiles = BrowserStore(dataRoot:root.appendingPathComponent("profiles"),keyProvider:{_ in key})
         let work = try profiles.createProfile(name:"Work")
         profiles.namedDataStores[work] = .nonPersistent()
@@ -167,6 +209,12 @@ import BrowserCore
         var repaired = BrowserDocument(); repaired.library.deletedSpaces = [firstVersion,secondVersion]
         try repaired.repairProfiles()
         check(repaired.library.deletedSpaces?.count == 2 && Set((repaired.library.deletedSpaces ?? []).map(\.id)).count == 2 && repaired.library.deletedSpaces?.allSatisfy({$0.space.effectiveProfileID == BrowserProfile.defaultID}) == true, "Profile repair normalizes recovery IDs and preserves the owning account")
+        incoming.deletedSpaces = [secondVersion,secondVersion]
+        merged.mergePreservingRecords(incoming); merged.mergePreservingRecords(incoming)
+        check(merged.deletedSpaces?.count == 2, "Repeated merges do not duplicate a previously remapped recovery snapshot")
+        var duplicateRepair = BrowserDocument(); duplicateRepair.library.deletedSpaces = [firstVersion,secondVersion,secondVersion]
+        try duplicateRepair.repairProfiles(); try duplicateRepair.repairProfiles()
+        check(duplicateRepair.library.deletedSpaces?.count == 2, "Repair deduplicates identical snapshots even after a conflicting record ID changes")
 
         exit(failures == 0 ? 0 : 1)
     }

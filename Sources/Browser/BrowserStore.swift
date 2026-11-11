@@ -134,7 +134,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         self.isPrivate = isPrivate
         self.metadataKeyAccess = metadataKeyAccess ?? .shared
         privateDataStore = isPrivate ? .nonPersistent() : nil
-        let root = dataRoot ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("OpenBrowser", isDirectory: true)
+        let requestedRoot = dataRoot ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("OpenBrowser", isDirectory: true)
+        let root = isPrivate ? requestedRoot : requestedRoot.standardizedFileURL.resolvingSymlinksInPath()
         sessionURL = root.appendingPathComponent("session-v2.sealed")
         previousSessionURL = root.appendingPathComponent("session.sealed")
         super.init()

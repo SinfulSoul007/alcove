@@ -60,6 +60,7 @@ extension BrowserStore {
         let rule = isPrivate || explicitDestination != nil ? nil : linkRuleCatalog.matching(url)
         let choice = explicitDestination ?? rule?.destination ?? (useExternalDefault && !isPrivate ? effectiveDefaultLinkDestination : nil)
         if case .space(let id) = choice {
+            if explicitDestination == nil && makeDocument().hasUnhandledSpaceRoutingCollision(id) { throw LinkRoutingError.unavailableDestination }
             guard let target = session.spaces.first(where:{$0.id == id}) else { throw LinkRoutingError.unavailableDestination }
             let owner = isPrivate ? BrowserProfile.defaultID : target.effectiveProfileID
             try requireQuickProfile(owner)

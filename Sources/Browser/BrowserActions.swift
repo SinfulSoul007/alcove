@@ -16,6 +16,8 @@ extension BrowserStore {
         guard !isPrivate, !savingEnabled, !unlocking, !isShuttingDown else { return false }
         let access = keyProvider.map { provider in MetadataKeyAccess { _, _ in try provider() } } ?? metadataKeyAccess
         if awaitingInitialMetadata { return beginInitialMetadataLoad(access: access, allowInteraction: true) }
+        do { try acquireMetadataOwnership() }
+        catch { message = error.localizedDescription; return false }
         unlocking = true
         let url = sessionURL
         let previousURL = previousSessionURL
@@ -28,10 +30,11 @@ extension BrowserStore {
             defer { self.unlocking = false }
             do {
                 let key = try result.get()
-                let storage = MetadataStore(url: url, key: key)
+                try self.metadataOwnership?.validate()
+                let storage = MetadataStore(url: url, key: key, ownership:self.metadataOwnership)
                 let pending = makeDocument()
                 var document = try storage.load(BrowserDocument.self)
-                if document == nil { document = try MetadataStore(url: previousURL, key: key).load(BrowserDocument.self) }
+                if document == nil { document = try MetadataStore(url: previousURL, key: key, ownership:self.metadataOwnership).load(BrowserDocument.self) }
                 var migratedLegacyURL: URL?
                 if document == nil {
                     let legacyURL = url.deletingLastPathComponent().appendingPathComponent("session.json")

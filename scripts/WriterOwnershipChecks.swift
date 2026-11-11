@@ -98,6 +98,52 @@ import CryptoKit
         check(!aliasedFile.savingEnabled && hardlinkKeys == 0, "A hard-linked control file fails closed before key access")
         aliasedFile.shutdown()
         check(FileManager.default.fileExists(atPath:lockPath.path), "Releasing ownership preserves the lock inode for future processes")
+        for replaceDirectory in [false,true] {
+            let changed = root.appendingPathComponent(replaceDirectory ? "replaced-directory" : "replaced-lock")
+            let original = BrowserStore(dataRoot:changed,keyProvider:{_ in key})
+            if replaceDirectory { try FileManager.default.moveItem(at:changed,to:root.appendingPathComponent("old-directory")) }
+            else { try FileManager.default.moveItem(at:changed.appendingPathComponent("metadata-writer.lock"),to:changed.appendingPathComponent("old-lock")) }
+            let replacement = try launch("hold",changed); try await ready(replacement,changed)
+            let replacementURL = changed.appendingPathComponent("session-v2.sealed")
+            let replacementBytes = try Data(contentsOf:replacementURL)
+            var browserRefused = false, rawRefused = false
+            do { try original.renameSpace(original.space.id,name:"Stale overwrite") } catch { browserRefused = true }
+            do { try MetadataStore(url:replacementURL,key:key).save(BrowserDocument()) } catch { rawRefused = true }
+            check(browserRefused && rawRefused, "Settled \(replaceDirectory ? "directory" : "lock inode") replacement invalidates the original writer")
+            check(try Data(contentsOf:replacementURL) == replacementBytes, "A replacement owner's ciphertext survives every stale save attempt")
+            try Data().write(to:changed.appendingPathComponent("stop")); _ = try await finish(replacement)
+            original.shutdown()
+        }
+        let targetA = root.appendingPathComponent("target-a"), targetB = root.appendingPathComponent("target-b")
+        let destination = BrowserStore(dataRoot:targetB,keyProvider:{_ in key}); destination.shutdown()
+        let untouched = try Data(contentsOf:targetB.appendingPathComponent("session-v2.sealed"))
+        try FileManager.default.createDirectory(at:targetA,withIntermediateDirectories:true)
+        let alias = root.appendingPathComponent("root-alias")
+        try FileManager.default.createSymbolicLink(at:alias,withDestinationURL:targetA)
+        let bound = BrowserStore(dataRoot:alias,keyProvider:{_ in key})
+        let stableAlias = BrowserStore(dataRoot:targetA,keyProvider:{_ in key})
+        check(bound.savingEnabled && stableAlias.savingEnabled, "A stable symlink alias shares canonical ownership")
+        stableAlias.shutdown()
+        try FileManager.default.removeItem(at:alias); try FileManager.default.createSymbolicLink(at:alias,withDestinationURL:targetB)
+        bound.session.spaces[0].name = "Still target A"; bound.flush()
+        let savedA = try MetadataStore(url:targetA.appendingPathComponent("session-v2.sealed"),key:key).load(BrowserDocument.self)
+        let savedB = try Data(contentsOf:targetB.appendingPathComponent("session-v2.sealed"))
+        check(savedA?.session.spaces[0].name == "Still target A" && savedB == untouched, "Retargeting a root alias cannot redirect the loaded session into another folder")
+        bound.shutdown()
+        let replacedRoot = root.appendingPathComponent("replaced-by-alias")
+        let displaced = BrowserStore(dataRoot:replacedRoot,keyProvider:{_ in key})
+        try FileManager.default.moveItem(at:replacedRoot,to:root.appendingPathComponent("displaced-folder"))
+        try FileManager.default.createSymbolicLink(at:replacedRoot,withDestinationURL:targetB)
+        var displacedRefused = false
+        do { try displaced.renameSpace(displaced.space.id,name:"Do not write to B") } catch { displacedRefused = true }
+        let afterDisplacement = try Data(contentsOf:targetB.appendingPathComponent("session-v2.sealed"))
+        check(displacedRefused && afterDisplacement == untouched, "Replacing the canonical directory with a symlink cannot transfer a loaded writer")
+        var retryKeys = 0
+        let retryStarted = displaced.unlockLocalData(keyProvider:{ retryKeys += 1; return key })
+        for _ in 0..<500 where displaced.unlocking { try await Task.sleep(for:.milliseconds(10)) }
+        check(!retryStarted && retryKeys == 0 && !displaced.savingEnabled, "Retry after directory replacement refuses before requesting a key")
+        check(try Data(contentsOf:targetB.appendingPathComponent("session-v2.sealed")) == untouched, "A rejected unlock retry preserves the replacement folder's ciphertext")
+        displaced.shutdown()
         exit(failures == 0 ? 0 : 1)
     }
 }

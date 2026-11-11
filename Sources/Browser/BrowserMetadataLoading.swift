@@ -5,6 +5,7 @@ import BrowserCore
 extension BrowserStore {
     func acquireMetadataOwnership() throws {
         if metadataOwnership == nil { metadataOwnership = try MetadataOwnership.acquire(for:sessionURL) }
+        else { try metadataOwnership?.validate() }
         profileInUse = false
     }
     func metadataOwnershipFailed(_ error: Error) {
@@ -40,9 +41,10 @@ extension BrowserStore {
         return true
     }
     func restoreInitialMetadata(using key: SymmetricKey) throws {
-        let storage = MetadataStore(url: sessionURL, key: key)
+        try metadataOwnership?.validate()
+        let storage = MetadataStore(url: sessionURL, key: key, ownership:metadataOwnership)
         var document = try storage.load(BrowserDocument.self)
-        if document == nil { document = try MetadataStore(url: previousSessionURL, key: key).load(BrowserDocument.self) }
+        if document == nil { document = try MetadataStore(url: previousSessionURL, key: key, ownership:metadataOwnership).load(BrowserDocument.self) }
         var migratedLegacyURL: URL?
         if document != nil { hasSavedDocument = true }
         else {
