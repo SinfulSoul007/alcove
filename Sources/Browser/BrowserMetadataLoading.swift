@@ -3,12 +3,23 @@ import CryptoKit
 import BrowserCore
 
 extension BrowserStore {
+    func acquireMetadataOwnership() throws {
+        if metadataOwnership == nil { metadataOwnership = try MetadataOwnership.acquire(for:sessionURL) }
+        profileInUse = false
+    }
+    func metadataOwnershipFailed(_ error: Error) {
+        savingEnabled = false; awaitingInitialMetadata = true; persistedProfileIDs = []
+        profileInUse = (error as? MetadataOwnershipError) == .inUse
+        metadataLoadError = error.localizedDescription
+    }
     var canCreateMetadataKey: Bool {
         !FileManager.default.fileExists(atPath: sessionURL.path) && !FileManager.default.fileExists(atPath: previousSessionURL.path)
     }
     // Security calls may wait indefinitely for macOS; never await them with a strong store reference.
     @discardableResult func beginInitialMetadataLoad(access: MetadataKeyAccess? = nil, allowInteraction: Bool = false) -> Bool {
         guard awaitingInitialMetadata, !unlocking, !isShuttingDown else { return false }
+        do { try acquireMetadataOwnership() }
+        catch { metadataOwnershipFailed(error); return false }
         unlocking = true; metadataLoadError = nil
         let access = access ?? metadataKeyAccess, create = canCreateMetadataKey
         Task { [weak self] in

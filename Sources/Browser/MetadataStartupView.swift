@@ -5,14 +5,14 @@ struct MetadataStartupView: View {
     var body: some View {
         VStack(spacing: 20) {
             Image(systemName: "lock.shield").font(.system(size: 38, weight: .light)).foregroundStyle(.secondary)
-            Text(store.unlocking ? "Opening your Alcove" : "Your saved data is locked").font(.title.bold())
+            Text(store.profileInUse ? "Your data is open in another Alcove" : (store.unlocking ? "Opening your Alcove" : "Your saved data is locked")).font(.title.bold())
             Text(store.unlocking
                  ? "Waiting for macOS Keychain. Complete any Keychain prompt on your Mac to open your saved tabs."
-                 : "Your encrypted tabs and profiles are preserved. Unlock local data to continue.")
+                 : (store.profileInUse ? "Close the other copy of Alcove, then try again. You can use a private window meanwhile." : "Your encrypted tabs and profiles are preserved. Unlock local data to continue."))
                 .multilineTextAlignment(.center).foregroundStyle(.secondary).frame(maxWidth: 430)
             if store.unlocking { ProgressView().controlSize(.small) }
             else {
-                Button("Unlock Local Data…") { store.unlockLocalData() }.buttonStyle(.borderedProminent)
+                Button(store.profileInUse ? "Try Again" : "Unlock Local Data…") { store.unlockLocalData() }.buttonStyle(.borderedProminent)
                 if let error = store.metadataLoadError { Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: 480) }
             }
             if let message = store.message { Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: 480) }

@@ -8,6 +8,7 @@ public struct MetadataStore {
     public init(url: URL, key: SymmetricKey, isPrivate: Bool = false) { self.url = url; self.key = key; self.isPrivate = isPrivate }
     public func save<T: Encodable>(_ value: T) throws {
         guard !isPrivate else { return }
+        let ownership = try MetadataOwnership.acquire(for:url); defer { ownership.release() }
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)

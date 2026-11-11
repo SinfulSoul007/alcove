@@ -92,6 +92,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var unlocking = false
     @Published var awaitingInitialMetadata = false
     @Published var metadataLoadError: String?
+    @Published var profileInUse = false
+    var metadataOwnership: MetadataOwnershipLease?
     let metadataKeyAccess: MetadataKeyAccess
     var metadataDidLoad: (() -> Void)?
     var privateWindowRequested: (() -> Void)?
@@ -137,6 +139,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         guard !isPrivate else { return }
         profileOperationSubscription = ProfileDataOperations.shared.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         if let keyProvider {
+            do { try acquireMetadataOwnership() }
+            catch { metadataOwnershipFailed(error); return }
             do { try restoreInitialMetadata(using: keyProvider(canCreateMetadataKey)) }
             catch { savingEnabled = false; message = "Local data is locked or unreadable. Saving is disabled to preserve it. \(error.localizedDescription)" }
         } else {
@@ -182,6 +186,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         flush(); isShuttingDown = true; cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
+        metadataOwnership?.release(); metadataOwnership = nil
     }
     func closePrimaryWindowPages() {
         closePrimaryPeek()
