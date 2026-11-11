@@ -248,6 +248,22 @@ import BrowserCore
         handle.mouseUp(with: mouse(.leftMouseUp, x: 110, owner: focusWindow))
         check(cancels == beforeFocusCancel + 1 && storedWidth == 248 && width.temporaryWidth == nil,
               "Moving keyboard focus away from an active grip cancels its transient resize")
+        func tab(_ backwards: Bool) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: backwards ? [.shift] : [], timestamp: 0,
+                windowNumber: focusWindow.windowNumber, context: nil, characters: backwards ? "\u{19}" : "\t",
+                charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48)!
+        }
+        focusWindow.recalculateKeyViewLoop(); focusWindow.makeFirstResponder(handle)
+        handle.keyDown(with: tab(false))
+        check(focusWindow.firstResponder !== handle, "Tab releases the divider when an empty window has no other key view")
+        focusWindow.makeFirstResponder(handle); handle.keyDown(with: tab(true))
+        check(focusWindow.firstResponder !== handle, "Shift-Tab releases the divider when no previous key view exists")
+        let field = NSTextField(string: "Owned next key view")
+        focusParent.addSubview(field); handle.nextKeyView = field; field.nextKeyView = handle
+        focusWindow.makeFirstResponder(handle); handle.keyDown(with: tab(false))
+        check(field.currentEditor() === focusWindow.firstResponder, "Tab preserves normal traversal into an available native text field")
+        focusWindow.makeFirstResponder(handle); handle.keyDown(with: tab(true))
+        check(field.currentEditor() === focusWindow.firstResponder, "Shift-Tab preserves an available previous key view")
         for w in [resizeWindow, replacementWindow, focusWindow] { w.contentView = nil; w.close() }
         if failures > 0 { exit(1) }
     }

@@ -1,6 +1,6 @@
 # Sidebar viewport and accessibility verification
 
-Source increment: 0.7.1/build13, candidate v0.7.1-preview.1; baseline 903655397c2ec1ef23492ab5de4c588bd9767cb9. No public release/tag and no replacement of the running Visual Four app.
+Source increment: 0.7.1/build13, candidate v0.7.1-preview.1; baseline 903655397c2ec1ef23492ab5de4c588bd9767cb9. No public release/tag. The existing Visual Four app was updated in place after CUA-confirmed Quit, retaining its path/bundle ID/display name; prior bundles were preserved.
 
 The actual BrowserUI root now fills its received viewport instead of imposing an internal 800×540 canvas. The normal NSWindow minimum stays unchanged. The native divider exposes its width/range, numeric setter, increment/decrement, Reset Sidebar Width and actual responder focus. A dedicated keyboard-focus hold retains a floating sidebar until focus is released. Overlay/hide/close/detach cancellation protects saved width.
 
@@ -11,7 +11,7 @@ The actual BrowserUI root now fills its received viewport instead of imposing an
 - Follow-up delayed-focus regression:48 PASS/1 FAIL before rejecting stale focus callbacks while disabled. Final native sidebar suite:50 PASS/0 FAIL, retaining original mouse, cancellation, window and tracking assertions.
 - Existing browser chrome suite:55 PASS/0 FAIL. All focused checks have zero compiler diagnostics.
 - Optimized arm64 and x86_64 bundles pass strict signature, Hardened Runtime, byte-identical Info, exact architecture, minimum macOS14 and unchanged exact six-entitlement gates. Their receipts are retained with the plan evidence.
-- Complete local suite:1,445 PASS/0 FAIL/0 compiler diagnostics, terminal exit0. The frozen114-file product/test manifest remained unchanged through focused/full/build gates, and the installed Visual Four executable remains unchanged. Final fresh review and exact-source CI/package checks are pending at this checkpoint.
+- Pre-review complete local suite:1,445 PASS/0 FAIL/0 compiler diagnostics. One fresh whole-plan review found Important I1 native-modal input blocking and Minor Sidebar M1 floating-matrix coverage. The single fix pass reproduced/fixed I1; live QA then reproduced/fixed Important N1 empty-root Tab focus retention. Final suites pass62 mounted-root,54 native interaction and55 chrome checks; the complete final suite passes1,462/0 failures/0 compiler diagnostics, terminal0. Both final optimized bundles pass all recorded gates. The final114-file source manifest stayed unchanged before/after the serialized gate. No second reviewer. Exact-source CI/package remains pending at this checkpoint.
 
 ## Rulings and costs
 
@@ -23,8 +23,38 @@ The actual BrowserUI root now fills its received viewport instead of imposing an
 6. Dynamic root canInteract supplements the rendered enabled flag so a new overlay immediately rejects stale actions. Cost if wrong: AppKit input synchronously consults observable/controller state.
 7. Treat review/distribution as post-task whole-plan workflow, with implementation completion recording its full test gate first. Cost if wrong: these workflow steps are reported separately from task1 completion.
 
+## Final review, native QA and failed/intermediate checks
+
+I1 corrected RED:51 PASS/11 FAIL; GREEN:62 PASS. Native sheets and other app-modal windows now synchronously disable commands/refocus, and willBeginSheet cancels an active drag/focus hold without relying on key resignation. N1 RED:50 PASS/2 FAIL; GREEN:54 PASS. Ordinary Tab/back-Tab uses native traversal, then releases focus only if it returned to the same divider; available native text-field destinations remain intact.
+
+The initial modality harness used direct NSApplication construction and exited133/Trace-BPT before assertions; it was corrected to the shared subclass singleton and not counted as behavioral RED. A subsequent full run consumed an in-progress Tab test edit and ended912 PASS/2 FAIL. An attempted stop had reached only its caffeinate helper, not its command parent; that mixed-source run is not final verification. Both sessions were confirmed terminal before the final serialized driver, which checks the frozen source before/after and passes1,462/0/0.
+
+Live0.7.1/build13 QA exposed the new splitter through the OS AX tree. Numeric260, Right272, Left260 and custom Reset236 worked; mouse drag236→276 worked. Bottom-edge window shrink retained visible footer controls, then height/width were restored. The focus ring rendered; hiding a focused sidebar cleared focus. On the final N1 build, Tab and Shift-Tab now move from the divider to the standard window on an empty page. No private browsing data was used as a fixture. Pure hover/floating and later native quarter tiling remain unverified: edge-click attempts did not establish hover, and native menu automation produced invalid/ambiguous element references; the user confirmed dismissing that menu.
+
+A re-signed preview startup then waited on macOS Keychain. A read-only owned-process sample located the main-thread wait in BrowserStore.init→MetadataKey.load→SecItemCopyMatching. The user confirmed and completed the visible macOS prompt; the same process immediately became accessible again. No password was requested in chat and no Keychain/Gatekeeper protection changed. Responsive Keychain startup is a new outstanding full-goal defect.
+
+Additional final rulings, in chronological order (these supplement1–7 above):
+27. D1 live VoiceOver/external AX under real modal UI — remain unverified, owned methods are narrower — cost if wrong: actual assistive-tech integration may differ.
+28. D2 composited ring/motion/tiling/Arc fidelity — user has now unlocked, perform live current-build QA without certifying all fidelity — cost if wrong: unobserved visual defects remain.
+29. D3 mounted-root Tab order — retain native traversal probe as narrow evidence; live root traversal remains to check — cost if wrong: production navigation order may differ from adjacent-field probe.
+30. D4 focus on other sidebar controls — remains broader accessibility work, divider hold does not prove global parity — cost if wrong: another focused control may hide with the panel.
+31. D5 viewport changes during a mouse gesture — no reproduced defect; existing captured-geometry path stands for this increment, retain native concurrency QA — cost if wrong: stale mouse bounds may allow an incorrect commit.
+32. D6 retained custom action after same Handle reattachment — actions intentionally address its current live attachment; no demonstrated OS old-window binding sequence — cost if wrong: an old client reference could resize the new window.
+33. D7 smaller/unusual viewports and all banners — tested bounds do not certify arbitrary sizes or combinations; retain broader visual gate — cost if wrong: untested combinations may clip.
+34. D8 Space management — still missing; next coherent feature, not waived — cost if wrong: leftover test Space and management gaps persist meanwhile.
+35. D9 Boost minor and site behavior — preserve separate deferred Boost M1 and site/native QA; untouched source stands — cost if wrong: known Copy Appearance mismatch remains until its own task.
+36. D10 full browser features — all stay in original acceptance scope, no parity claim from sidebar work — cost if wrong: remaining browser scope takes further work.
+37. D11 Safari performance/site reliability/security audit — remain unproven with explicit measured/audited gates — cost if wrong: users may encounter compatibility or resource/security issues.
+38. D12 hardware/quarantine/signing/update trust/native output — structural builds do not certify these; retain original gates and unsigned labeling — cost if wrong: real-device/install/native behavior can differ.
+39. D13 CI/artifacts/publication — finish exact-source CI/download-back; no public0.7.1 release in this unit, update same-identity test app now authorized/unlocked — cost if wrong: public0.6.2 stays behind source features until later publication.
+40. D14 missing floating matrix behavior — M1 remains a deferred coverage gap, not proof of failure — cost if wrong: untested empty/text1 floating cases may regress.
+45. D3 regraded after live QA as Important N1 — empty BrowserUI has no alternate valid key view, and Tab/Shift-Tab/Escape stayed on the focused divider (unlike review's linked-field probe). Add a fallback focus release when ordinary Tab traversal returns to the same divider, retaining normal traversal when another view exists — cost if wrong: Tab can clear focus rather than land on a control when AppKit supplies no alternate destination.
+57. Treat synchronous Keychain startup blocking as the next independent full-goal defect — actual sample/user prompt prove a broader startup problem unrelated to sidebar code; retain source/native recovery work after this unit rather than weaken Keychain permissions — cost if wrong: re-signed previews can still wait on a macOS prompt until responsive startup is implemented.
+
+Deferred minors: Sidebar M1 floating-layout automated coverage only includes crowded Favorites/text1.35; empty/text1 floating combinations remain to cover. Separately retained Boost M1 Copy Appearance after Unhide can carry stale selectors.
+
 ## Remaining full-goal gates
 
-The installed Alcove Visual Four is still0.6.2/build9/dev.openbrowser.mac.visual4. Computer Use reports the Mac locked; live sidebar/animation/VoiceOver/focus-ring and current-source Arc comparison are unverified. Hidden owned windows prove geometry/input only. No Safari speed, independently audited security, trusted signing, real Intel/macOS14 hardware or quarantined installation claim is made.
+The installed Alcove Visual Four is now0.7.1/build13/dev.openbrowser.mac.visual4. Its owned/source/native checks above are bounded evidence; live VoiceOver/rotor order, full floating/animation/fidelity, current-source Arc comparison and remaining native output/device behavior are unverified. Hidden windows do not establish composited smoothness. No Safari speed, independently audited security, trusted signing, real Intel/macOS14 hardware or quarantined installation claim is made.
 
 Space management/deletion remains missing (including the empty Sidebar Test Space from native QA). Boost minor M1 Copy Appearance after Unhide remains deferred. All broader original browser requirements in acceptance.md remain active, including richer tabs/splits, media, permissions/downloads/import/reader, extensions, sync, Easels/capture and assisted workflows.

@@ -53,7 +53,11 @@ struct SidebarResizeHandle: View {
             setAccessibilityLabel("Sidebar width"); setAccessibilityHelp("Use Left and Right to resize. Double-click or use Reset Sidebar Width to restore the default.")
             setAccessibilityOrientation(.vertical); focusRingType = .exterior
         }
-        private var available: Bool { interactionEnabled && !closed && window != nil && !isHiddenOrHasHiddenAncestor && canInteract() }
+        private var available: Bool {
+            guard interactionEnabled, !closed, let window, !isHiddenOrHasHiddenAncestor,
+                  canInteract(), window.attachedSheet == nil else { return false }
+            return NSApp.modalWindow == nil || NSApp.modalWindow === window
+        }
         private var viewportWidth: Double { Double(window?.contentView?.bounds.width ?? 0) }
         private var currentWidth: Double { SidebarSizing.width(saved: width, windowWidth: viewportWidth) }
         override var acceptsFirstResponder: Bool { available }
@@ -125,14 +129,20 @@ struct SidebarResizeHandle: View {
             guard dragging else { return false }; dragging = false; width = originWidth; cancel(); return true
         }
         override func keyDown(with event: NSEvent) {
-            guard event.windowNumber == window?.windowNumber else { return }
+            guard let owner = window, event.windowNumber == owner.windowNumber else { return }
             if event.keyCode == 53, cancelResize() { return }
             guard available else { return }
             if event.keyCode == 123 || event.keyCode == 124 {
                 guard !dragging else { return }
                 commitWidth(currentWidth + (event.keyCode == 123 ? -12 : 12))
             }
-            else { super.keyDown(with: event) }
+            else {
+                super.keyDown(with: event)
+                // An empty browser can have no other valid AppKit key view. Do not
+                // retain the floating-panel focus hold when Tab loops back here.
+                if event.keyCode == 48, event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+                   window === owner, owner.firstResponder === self { owner.makeFirstResponder(nil) }
+            }
         }
         override func resignFirstResponder() -> Bool {
             let resigned = super.resignFirstResponder()
@@ -147,7 +157,7 @@ struct SidebarResizeHandle: View {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard let window else { return }; closed = false
-            for name in [NSWindow.didResignKeyNotification, NSWindow.willCloseNotification] {
+            for name in [NSWindow.didResignKeyNotification, NSWindow.willCloseNotification, NSWindow.willBeginSheetNotification] {
                 observations.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] notification in
                     MainActor.assumeIsolated {
                         guard let self, let sender = notification.object as? NSWindow, self.window === sender else { return }

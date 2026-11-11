@@ -4,17 +4,24 @@ import WebKit
 import Combine
 import BrowserCore
 
+@MainActor final class SidebarViewportApplication: NSApplication {
+    var fixtureModalWindow: NSWindow?
+    override var modalWindow: NSWindow? { fixtureModalWindow ?? super.modalWindow }
+}
 @MainActor final class SidebarViewportWindow: NSWindow {
     var fixtureKey = true
     var pointer = NSPoint(x: -1000, y: -1000)
     override var isKeyWindow: Bool { fixtureKey }
     override var mouseLocationOutsideOfEventStream: NSPoint { pointer }
+    var fixtureSheet: NSWindow?
+    override var attachedSheet: NSWindow? { fixtureSheet ?? super.attachedSheet }
 }
 
 /// Actual production root in an owned, never-shown window. No user profile or desktop control.
 @main struct SidebarLayoutChecks {
     @MainActor static func main() async throws {
-        NSApplication.shared.setActivationPolicy(.prohibited)
+        let application = SidebarViewportApplication.shared as! SidebarViewportApplication
+        application.setActivationPolicy(.prohibited)
         setbuf(stdout, nil)
         var failures = 0
         func check(_ ok: Bool, _ name: String) {
@@ -150,6 +157,45 @@ import BrowserCore
         check(window.firstResponder !== grip && grip.convert(grip.bounds, to: nil).midX < 0,
               "Releasing accessibility focus permits the floating sidebar to hide")
         store.sidebarVisible = true; await settle()
+        grip.setAccessibilityValue(236 as NSNumber); await settle()
+        let modal = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [], backing: .buffered, defer: false)
+        modal.isReleasedWhenClosed = false
+        func mouse(_ type: NSEvent.EventType, x: CGFloat) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 100), modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)!
+        }
+        // Override native modality attributes only; never present a sheet or enter a modal loop.
+        grip.mouseDown(with: mouse(.leftMouseDown, x: 200)); grip.mouseDragged(with: mouse(.leftMouseDragged, x: 220))
+        window.fixtureSheet = modal
+        NotificationCenter.default.post(name: NSWindow.willBeginSheetNotification, object: window)
+        check(window.firstResponder !== grip && !grip.isAccessibilityEnabled(), "Entering native sheet modality releases divider focus and disables actions")
+        grip.mouseUp(with: mouse(.leftMouseUp, x: 220))
+        check(saved() == 236, "Native sheet entry cancels a held resize before late release")
+        check(!grip.accessibilityPerformIncrement() && saved() == 236, "A retained AX increment cannot resize behind a native sheet")
+        check(!grip.accessibilityPerformDecrement() && saved() == 236, "A retained AX decrement cannot resize behind a native sheet")
+        check(reset?.handler?() == false && saved() == 236, "A retained reset action cannot resize behind a native sheet")
+        grip.setAccessibilityValue(340 as NSNumber)
+        check(saved() == 236, "A retained AX value setter cannot resize behind a native sheet")
+        window.makeFirstResponder(nil); grip.setAccessibilityFocused(true)
+        check(window.firstResponder !== grip && !grip.isAccessibilityFocused(), "AX focus cannot reacquire a native sheet's blocked parent")
+        window.fixtureSheet = nil
+        NotificationCenter.default.post(name: NSWindow.didEndSheetNotification, object: window)
+        grip.mouseUp(with: mouse(.leftMouseUp, x: 220))
+        check(saved() == 236, "Ending native modality never revives an abandoned gesture")
+        grip.setAccessibilityValue(236 as NSNumber)
+        check(grip.accessibilityPerformIncrement() && saved() == 248, "Normal divider actions recover after native sheet completion")
+        grip.setAccessibilityValue(236 as NSNumber); await settle()
+        application.fixtureModalWindow = modal; window.fixtureKey = false
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        check(!grip.isAccessibilityEnabled() && !grip.accessibilityPerformIncrement() && saved() == 236,
+              "A different application-modal window blocks retained divider actions")
+        grip.setAccessibilityValue(340 as NSNumber)
+        check(reset?.handler?() == false && saved() == 236, "App-modal state blocks retained setter and reset commands")
+        grip.setAccessibilityFocused(true)
+        check(window.firstResponder !== grip && !grip.isAccessibilityFocused(), "AX focus cannot reacquire an application-modal dialog's parent")
+        application.fixtureModalWindow = nil; window.fixtureKey = true
+        check(grip.accessibilityPerformIncrement() && saved() == 248, "Divider actions recover after application modality ends")
+        modal.close()
         let beforeClose = saved()
         window.close()
         check(!grip.accessibilityPerformIncrement() && saved() == beforeClose, "Closed-window divider rejects retained AX actions")
