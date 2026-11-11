@@ -6,7 +6,7 @@ A native, open-source WebKit browser for Mac, inspired by Arc’s sidebar, Space
 
 ## Download
 
-Latest preview: [Download 0.6.2 DMG](https://github.com/SinfulSoul007/alcove/releases/download/v0.6.2-preview.1/Alcove-0.6.2-universal-unsigned-preview.dmg) · [ZIP](https://github.com/SinfulSoul007/alcove/releases/download/v0.6.2-preview.1/Alcove-0.6.2-universal-unsigned-preview.zip).
+Latest preview: [Download 0.8.0 DMG](https://github.com/SinfulSoul007/alcove/releases/download/v0.8.0-preview.1/Alcove-0.8.0-universal-unsigned-preview.dmg) · [ZIP](https://github.com/SinfulSoul007/alcove/releases/download/v0.8.0-preview.1/Alcove-0.8.0-universal-unsigned-preview.zip).
 
 Download the universal DMG or ZIP from [GitHub Releases](https://github.com/SinfulSoul007/alcove/releases). The app is self-contained: you do **not** need Xcode or developer tools to use a download. Open the DMG and drag **Alcove.app** to Applications, or unzip it and move the app there.
 
@@ -18,6 +18,8 @@ Download the universal DMG or ZIP from [GitHub Releases](https://github.com/Sinf
 - Twelve per-Space themes, custom gradients/accent colors, Space icons and a live appearance preview.
 - Tab density, text size, corner rounding, responsive Favorite columns, icon/close-button visibility and reduced-motion support.
 - A bottom Space dock and delayed collapsed-sidebar edge reveal; sidebar drag width saves on release.
+- Themed Spaces overview, rename/icons/reordering, and encrypted Recently Deleted/Undo recovery.
+- Responsive startup while Keychain approval waits, with private browsing available immediately.
 - Animated, skippable first-launch setup, plus a replayable welcome tour. Existing sessions and private windows skip setup.
 - Manual GitHub update checks, stable/preview channels and optional daily checks. Downloads and installation remain explicit actions.
 - Drag tabs between sections and into folders. Pinned tabs keep their title and saved home URL when closed.
@@ -59,29 +61,29 @@ Quick pages and their archive are encrypted with their owning profile’s metada
 
 Exported PDF/WebArchive files, printer output and print-system artifacts are outside Alcove's metadata encryption. They can contain sensitive page content and metadata, including from private windows. Saved archives are not yet opened through Alcove's UI, and website print buttons using `window.print()` are not wired to native printing yet. Native dialog/printer testing remains pending.
 
-## Site search (source development)
+## Site search
 
-The developing 0.7.0 source includes configured site shortcuts; the public download above remains 0.6.2. Type `yt`, `wiki` or `gh` in the command bar or Quick Browse address field, press Tab, then type a query and press Return. Empty Backspace restores the shortcut; the pill's close button leaves site mode and keeps your query. Normal Return behavior stays unchanged until you select a site.
+The 0.8 preview includes configured site shortcuts. Type `yt`, `wiki` or `gh` in the command bar or Quick Browse address field, press Tab, then type a query and press Return. Empty Backspace restores the shortcut; the pill's close button leaves site mode and keeps your query. Normal Return behavior stays unchanged until you select a site.
 
 Use **Alcove → Site Search Settings…**, Settings, or the command list to add, edit, disable or remove shortcuts. A search URL uses one `%s` for the query, with complete URL escapes for other literal percent signs. Path templates reject queries that would become dot-only path segments. Matching stays local and sends nothing before submission. Normal profiles share encrypted shortcut settings; searches use the current page's actual profile. Private windows start with presets and keep changes temporary. Editing or removing a selected provider requires selecting it again before submission. Automatic site discovery is still pending.
 
-## Link routing (source development)
+## Link routing
 
-Developing 0.7.0 includes **Alcove → Link Routing Settings…** (also Settings → Links, or “Link Preferences”/“Air Traffic Control” in the command list). Add ordered Contains/Equals URL conditions and choose Quick Browse, Most Recent Space or a named Space. The first enabled match wins. The default applies to links from other apps; routing and its test-URL preview stay local. Named Spaces select their own profile; Quick Browse/recent routes retain the source or remembered account. An unavailable matching destination blocks the opening until edited.
+The 0.8 preview includes **Alcove → Link Routing Settings…** (also Settings → Links, or “Link Preferences”/“Air Traffic Control” in the command list). Add ordered Contains/Equals URL conditions and choose Quick Browse, Most Recent Space or a named Space. The first enabled match wins. The default applies to links from other apps; routing and its test-URL preview stay local. Named Spaces select their own profile; Quick Browse/recent routes retain the source or remembered account. An unavailable matching destination blocks the opening until edited.
 
-Archive restoration follows matching routes, otherwise its original same-profile Space. Opening a Peek within its profile keeps its live page state; changing profiles asks to reload with separate website logins. Cancellation, a changed route/document or a failed metadata write preserves the original preview. Private windows ignore normal link rules. See the [source verification record](docs/goal/link-routing-verification.md) for evidence and remaining native QA. The public downloadable preview remains 0.6.2.
+Archive restoration follows matching routes, otherwise its original same-profile Space. Opening a Peek within its profile keeps its live page state; changing profiles asks to reload with separate website logins. Cancellation, a changed route/document or a failed metadata write preserves the original preview. Private windows ignore normal link rules. See the [source verification record](docs/goal/link-routing-verification.md) for evidence and remaining native QA.
 
-## Website Boosts (source development)
+## Website Boosts
 
-Developing 0.7.0 adds **Alcove → Website Boosts…**, Settings → Website Boosts, the command “Create Boost”, and **Boost This Site…** in the main and Quick Browse action menus. Each profile keeps its own saved looks for an exact hostname across HTTP, HTTPS and ports. Choose colors, fonts, relative text size, a preset or Shuffle. Appearance choices save immediately; name/site/CSS/JavaScript drafts use **Save Changes** or **Done**. Unsaved drafts survive switching panels, and a Quick Browse editor stays bound to its original profile.
+The 0.8 preview includes **Alcove → Website Boosts…**, Settings → Website Boosts, the command “Create Boost”, and **Boost This Site…** in the main and Quick Browse action menus. Each profile keeps its own saved looks for an exact hostname across HTTP, HTTPS and ports. Choose colors, fonts, relative text size, a preset or Shuffle. Appearance choices save immediately; name/site/CSS/JavaScript drafts use **Save Changes** or **Done**. Unsaved drafts survive switching panels, and a Quick Browse editor stays bound to its original profile.
 
 Use **Hide an Element…** to choose page elements without deleting their DOM nodes or reloading a form. **Undo**, individual **Unhide**, and **Unhide All** restore them. **Done** or Escape leaves picker mode; text composition receives Escape first. Styles apply to the main document. Frame contents and shadow roots keep their own styling.
 
 JavaScript requires local approval for its exact code and site. Approval applies to future loads; **Run on This Page** is explicit and runs the saved script once per document. Editing code requires fresh approval. Turning a Boost off stops future runs; reloading may be needed to undo earlier script effects. **Share Appearance → Copy/Paste** transfers local JSON containing styles and hidden-element rules. Imported looks start disabled and contain no JavaScript or approval. Review custom CSS before enabling it: styles can change page behavior and request resources. Private definitions and approvals stay temporary and separate.
 
-The public download remains 0.6.2. Source fixtures cover storage, WebKit effects and owned native control logic. Live control colors, focus, accessibility, animations, Arc fidelity and broad website compatibility remain under verification; offscreen renders do not establish visual perfection.
+Source fixtures cover storage, WebKit effects and owned native control logic. Live control colors, focus, accessibility, animations, Arc fidelity and broad website compatibility remain under verification; offscreen renders do not establish visual perfection.
 
-## Manage Spaces (source development)
+## Manage Spaces
 
 Choose **Spaces → Manage Spaces…**, use the sidebar’s Space menu, or type **Manage Spaces** in the command bar. The manager shows themed cards with saved tab previews beside the current page. It keeps the current website mounted; card previews do not open extra websites. Use a card’s menu or right-click its sidebar icon to rename, change its icon, move it or delete it. Drag a card’s move handle or a sidebar Space icon to reorder; move controls provide a keyboard alternative. Customize retains name/icon/theme controls, with explicit saving for names.
 
@@ -93,7 +95,7 @@ Only one cooperating Alcove process owns a normal metadata directory at a time. 
 
 ## Privacy and security
 
-Alcove has no analytics, sync server or account service. Sites you visit receive their normal web requests; ordinary web searches go to DuckDuckGo; configured site searches in developing source go to the selected site. No remote search suggestions are sent while you type.
+Alcove has no analytics, sync server or account service. Sites you visit receive their normal web requests; ordinary web searches go to DuckDuckGo; configured site searches go to the selected site. No remote search suggestions are sent while you type.
 
 Profiles separate website storage and organization within one Mac account; they are not separate user accounts or protection against someone using the unlocked app.
 
