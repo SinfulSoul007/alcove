@@ -13,8 +13,9 @@ struct MetadataStartupView: View {
             if store.unlocking { ProgressView().controlSize(.small) }
             else {
                 Button("Unlock Local Data…") { store.unlockLocalData() }.buttonStyle(.borderedProminent)
-                if let message = store.message { Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: 480) }
+                if let error = store.metadataLoadError { Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: 480) }
             }
+            if let message = store.message { Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: 480) }
             Button("Open Private Window") { store.privateWindowRequested?() }
             Text("Private browsing uses temporary website storage and does not need your saved-data key.")
                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 430)

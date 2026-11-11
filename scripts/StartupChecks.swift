@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import WebKit
+import Vision
 import CryptoKit
 import BrowserCore
 
@@ -11,7 +12,12 @@ final class KeyGate: @unchecked Sendable {
 }
 @MainActor final class StartupApplication: NSApplication {
     var fixtureWindow: NSWindow?
+    var fixtureActive: Bool?
+    override var isActive: Bool { fixtureActive ?? super.isActive }
     override var keyWindow: NSWindow? { fixtureWindow ?? super.keyWindow }
+}
+@MainActor final class StartupWindow: NSWindow {
+    override func makeKeyAndOrderFront(_ sender: Any?) { }
 }
 @MainActor final class WeakStore { weak var value: BrowserStore?; init(_ value: BrowserStore) { self.value = value } }
 @main struct StartupChecks {
@@ -54,7 +60,7 @@ final class KeyGate: @unchecked Sendable {
         check(try owner.dispatchExternal(link) == .pending && reopened.views.isEmpty, "OS link waits without opening a default-profile website")
         let hosting = NSHostingView(rootView: BrowserUI(store: reopened).environmentObject(UpdateController(installedTag: "test")))
         hosting.safeAreaRegions = []; hosting.sizingOptions = []
-        let window = NSWindow(contentRect: NSRect(x:0,y:0,width:800,height:540), styleMask:[.titled,.closable,.resizable], backing:.buffered, defer:false)
+        let window = StartupWindow(contentRect: NSRect(x:0,y:0,width:800,height:540), styleMask:[.titled,.closable,.resizable], backing:.buffered, defer:false)
         window.isReleasedWhenClosed = false; window.contentView = hosting
         try await Task.sleep(for: .milliseconds(80)); hosting.layoutSubtreeIfNeeded()
         func descendants<T: NSView>(_ view: NSView, _ type: T.Type) -> [T] { (view as? T).map { [$0] } ?? view.subviews.flatMap { descendants($0,type) } }
@@ -75,6 +81,16 @@ final class KeyGate: @unchecked Sendable {
         let privateStore = BrowserStore(isPrivate: true, dataRoot: root.appendingPathComponent("private"), metadataKeyAccess: access)
         check(!privateStore.awaitingInitialMetadata && privateStore.privateDataStore?.isPersistent == false, "Private browsing is independent of a blocked normal key")
         for _ in 0..<100 where !startupGate.pollStarted() { try await Task.sleep(for: .milliseconds(10)) }
+        // Exercise the actual OS-link handler's rejection while the provider stays blocked.
+        delegate.normalOwner = owner; delegate.primaryOwners[window] = owner; delegate.windows[window] = reopened
+        delegate.application(application, open: Array(repeating:link,count:64))
+        let renderer = ImageRenderer(content:MetadataStartupView(store:reopened).frame(width:800,height:540))
+        let raster = renderer.cgImage
+        let recognition = VNRecognizeTextRequest(); recognition.recognitionLevel = .accurate
+        if let raster { try VNImageRequestHandler(cgImage:raster).perform([recognition]) }
+        let visibleFeedback = (recognition.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator:" ")
+        check(reopened.unlocking && owner.pendingExternalURLs.count == 64 && visibleFeedback.contains("Too many links"), "The 65th OS link has visible rejection feedback while Keychain remains blocked")
+        delegate.normalOwner = nil; delegate.primaryOwners = [:]; delegate.windows = [:]
         let overflowOwner = BrowserWindowOwner(store: reopened); let overflowLease = try overflowOwner.acquirePrimary()
         for _ in 0..<64 { _ = try overflowOwner.dispatchExternal(link) }
         var overflowRejected = false
@@ -85,22 +101,28 @@ final class KeyGate: @unchecked Sendable {
         for _ in 0..<200 where reopened.unlocking { try await Task.sleep(for: .milliseconds(10)) }
         check(reopened.savingEnabled && !reopened.awaitingInitialMetadata && !reopened.onboardingVisible, "Background lookup restores saved state after close/reopen")
         check(try Data(contentsOf: reopened.sessionURL) == before, "Unchanged saved document is not rewritten during initial restore")
+        check(reopened.message?.contains("Too many links") == true, "Successful restore preserves the waiting-link rejection message")
         check(callbacks == 1 && readyAtCallback, "Ready callback follows durable profile identity and enabled saving")
         try await Task.sleep(for: .milliseconds(100)); hosting.layoutSubtreeIfNeeded()
         check(descendants(hosting, SidebarResizeHandle.Handle.self).count == 1, "Successful restore mounts normal chrome in the same native host")
         reopened.metadataDidLoad = nil; window.contentView = nil; window.close()
         let routed = owner.drainExternalLinks()
-        check(routed.count == 1 && owner.pendingExternalURLs.isEmpty && routed.first == .space(reopened.space.id) && reopened.space.tabs.contains { $0.url == link.absoluteString }, "Queued link uses recovered routing once")
+        check(routed.count == 64 && owner.pendingExternalURLs.isEmpty && routed.first == .space(reopened.space.id) && reopened.space.tabs.contains { $0.url == link.absoluteString }, "Queued link uses recovered routing once")
         check(owner.drainExternalLinks().isEmpty, "Repeated readiness cannot duplicate queued links")
         overflowOwner.release(overflowLease)
         check(overflowOwner.pendingExternalURLs.isEmpty && overflowOwner.drainExternalLinks().isEmpty, "Closed owners discard queued links and reject late draining")
         owner.release(lease); privateStore.shutdown()
         let rejected = BrowserStore(dataRoot: root, metadataKeyAccess: MetadataKeyAccess { _, _ in throw CocoaError(.fileReadNoPermission) })
         for _ in 0..<100 where rejected.unlocking { try await Task.sleep(for: .milliseconds(10)) }
-        check(rejected.awaitingInitialMetadata && !rejected.unlocking && !rejected.savingEnabled, "Rejected access leaves a responsive recovery state")
+        check(rejected.awaitingInitialMetadata && !rejected.unlocking && !rejected.savingEnabled && rejected.metadataLoadError != nil, "Rejected access leaves a responsive recovery state")
+        rejected.message = "A waiting link could not open."
+        _ = rejected.unlockLocalData(keyProvider:{ throw CocoaError(.fileReadNoPermission) })
+        for _ in 0..<100 where rejected.unlocking { try await Task.sleep(for: .milliseconds(10)) }
+        check(rejected.message == "A waiting link could not open." && rejected.metadataLoadError != nil, "Failed key retry preserves unrelated link feedback")
         check(rejected.unlockLocalData(keyProvider: { key }), "Explicit retry can recover an initially rejected key")
         for _ in 0..<200 where rejected.unlocking { try await Task.sleep(for: .milliseconds(10)) }
         check(rejected.savingEnabled && !rejected.awaitingInitialMetadata, "Successful retry exits startup recovery")
+        check(rejected.message == "A waiting link could not open." && rejected.metadataLoadError == nil, "Successful retry clears its obsolete protected-data error and preserves link feedback")
         rejected.shutdown()
         let rejectedBytes = try Data(contentsOf: rejected.sessionURL)
         let wrong = BrowserStore(dataRoot: root, metadataKeyAccess: MetadataKeyAccess { _, _ in SymmetricKey(size: .bits256) })
@@ -109,6 +131,33 @@ final class KeyGate: @unchecked Sendable {
         let afterWrong = try Data(contentsOf: wrong.sessionURL)
         check(!wrong.savingEnabled && wrong.awaitingInitialMetadata && afterWrong == rejectedBytes, "Wrong-key startup preserves unreadable ciphertext")
         wrong.shutdown()
+        let quickStore = BrowserStore(dataRoot:root.appendingPathComponent("background-quick"),keyProvider:{ _ in key })
+        quickStore.finishOnboarding()
+        let quickID = try quickStore.openQuickPage()
+        let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
+        quickStore.registerView(WKWebView(frame:.zero,configuration:config),for:quickID,profile:BrowserProfile.defaultID)
+        let background = AppDelegate(); let quickOwner = background.makeOwner(quickStore)
+        let quickController = try QuickBrowseWindowController(owner:quickOwner,pageID:quickID,requestPrimary:{},requestProfiles:{},didClose:{})
+        quickController.window!.alphaValue = 0
+        background.quickWindows[QuickWindowKey(ownerID:quickOwner.id,pageID:quickID)] = quickController
+        let placeholder = NSWindow(contentRect:.zero,styleMask:[],backing:.buffered,defer:false)
+        placeholder.isReleasedWhenClosed = false; placeholder.delegate = background
+        background.primaryOwners[placeholder] = quickOwner; background.primaryLeases[placeholder] = try quickOwner.acquirePrimary(); background.windows[placeholder] = quickStore
+        background.temporaryStartupOwners.insert(quickOwner.id)
+        let foregroundPrivate = NSWindow(contentRect:.zero,styleMask:[],backing:.buffered,defer:false)
+        foregroundPrivate.isReleasedWhenClosed = false
+        let privateForegroundStore = BrowserStore(isPrivate:true)
+        background.windows[foregroundPrivate] = privateForegroundStore; application.fixtureWindow = foregroundPrivate
+        application.fixtureActive = true
+        background.metadataDidLoad(quickOwner)
+        check(quickController.window!.isVisible && background.primaryOwners[placeholder] == nil && !quickOwner.isClosed && application.keyWindow === foregroundPrivate, "Background restore reveals compact windows behind Private before closing its placeholder")
+        quickController.window!.orderOut(nil); application.fixtureWindow = nil
+        application.fixtureActive = false
+        background.metadataDidLoad(quickOwner)
+        check(quickController.window!.isVisible, "Inactive synchronization restores an existing hidden compact window")
+        application.fixtureActive = nil
+        quickController.window!.close(); placeholder.close(); foregroundPrivate.close(); privateForegroundStore.shutdown(); quickStore.shutdown()
+
         let fresh = BrowserStore(dataRoot: root.appendingPathComponent("fresh"), metadataKeyAccess: MetadataKeyAccess { create, interactive in
             guard create && !interactive && !Thread.isMainThread else { throw CocoaError(.coderInvalidValue) }; return key
         })

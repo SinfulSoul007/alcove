@@ -157,15 +157,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let ids = Set(pages.map(\.id))
         let removed = quickWindows.values.filter { $0.windowOwner === owner && !ids.contains($0.pageID) }
         for controller in removed { controller.modelDidRemovePage() }
+        func present(_ window: NSWindow?) {
+            if orderFront { window?.orderFront(nil) }
+            else { window?.orderBack(nil) }
+        }
         for page in pages {
             let key = QuickWindowKey(ownerID: owner.id, pageID: page.id)
-            guard quickWindows[key] == nil else { continue }
+            if let existing = quickWindows[key] {
+                if existing.window?.isVisible == false { present(existing.window) }
+                continue
+            }
             do {
                 let controller = try QuickBrowseWindowController(owner: owner, pageID: page.id,
                     requestPrimary: { [weak self, weak owner] in if let owner { self?.openPrimary(owner) } },
                     requestProfiles: { [weak self] in self?.manageProfiles() },
                     didClose: { [weak self] in self?.quickWindows.removeValue(forKey: key) })
-                quickWindows[key] = controller; if orderFront { controller.window?.orderFront(nil) }
+                quickWindows[key] = controller; present(controller.window)
             } catch { owner.store.message = error.localizedDescription }
         }
     }

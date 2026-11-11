@@ -91,6 +91,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var savingEnabled = true
     @Published var unlocking = false
     @Published var awaitingInitialMetadata = false
+    @Published var metadataLoadError: String?
     let metadataKeyAccess: MetadataKeyAccess
     var metadataDidLoad: (() -> Void)?
     var privateWindowRequested: (() -> Void)?

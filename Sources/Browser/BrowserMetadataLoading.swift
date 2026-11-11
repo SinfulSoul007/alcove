@@ -9,7 +9,7 @@ extension BrowserStore {
     // Security calls may wait indefinitely for macOS; never await them with a strong store reference.
     @discardableResult func beginInitialMetadataLoad(access: MetadataKeyAccess? = nil, allowInteraction: Bool = false) -> Bool {
         guard awaitingInitialMetadata, !unlocking, !isShuttingDown else { return false }
-        unlocking = true
+        unlocking = true; metadataLoadError = nil
         let access = access ?? metadataKeyAccess, create = canCreateMetadataKey
         Task { [weak self] in
             let result: Result<SymmetricKey, Error>
@@ -19,11 +19,11 @@ extension BrowserStore {
             self.unlocking = false
             do {
                 try self.restoreInitialMetadata(using: result.get())
-                self.awaitingInitialMetadata = false
+                self.metadataLoadError = nil; self.awaitingInitialMetadata = false
                 self.metadataDidLoad?()
             } catch {
                 self.savingEnabled = false; self.persistedProfileIDs = []
-                self.message = "Your saved data is still protected. Complete any macOS Keychain prompt, or choose Unlock Local Data to try again. \(error.localizedDescription)"
+                self.metadataLoadError = "Your saved data is still protected. Complete any macOS Keychain prompt, or choose Unlock Local Data to try again. \(error.localizedDescription)"
             }
         }
         return true
@@ -58,7 +58,10 @@ extension BrowserStore {
         persistedProfileIDs = Set((prepared.profiles ?? []).map(\.id))
         if let migratedLegacyURL {
             do { try FileManager.default.removeItem(at: migratedLegacyURL) }
-            catch { message = "Your tabs were encrypted and restored, but the original legacy JSON could not be removed. It still contains readable URLs." }
+            catch {
+                let warning = "Your tabs were encrypted and restored, but the original legacy JSON could not be removed. It still contains readable URLs."
+                message = [message, warning].compactMap { $0 }.joined(separator: "\n")
+            }
         }
         startArchiveTimer()
         savingEnabled = true
