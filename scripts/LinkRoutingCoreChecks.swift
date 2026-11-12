@@ -158,7 +158,7 @@ defer { try? FileManager.default.removeItem(at:root) }
 let vault = MetadataStore(url:root.appendingPathComponent("metadata.sealed"),key:SymmetricKey(size:.bits256))
 try vault.save(doc)
 let restored = try vault.load(BrowserDocument.self)!
-check(restored.formatVersion == 4 && restored.preferences.linkRules == [first,second] && restored.preferences.linkDefaultDestination == .space(b), "Routing preferences survive encrypted format4 relaunch")
+check(restored.formatVersion == 5 && restored.preferences.linkRules == [first,second] && restored.preferences.linkDefaultDestination == .space(b), "Routing preferences survive encrypted format5 relaunch")
 check(restored.session.lastUsedSpaces?[profile.id] == other.id && restored.library.archive.first?.archivedSpaceID == originalSpace, "Recent and archive hints survive encrypted relaunch")
 check(!String(decoding:try Data(contentsOf:vault.url),as:UTF8.self).contains("example.test"), "Routing expressions are not plaintext metadata")
 var legacy = try JSONSerialization.jsonObject(with:JSONEncoder().encode(BrowserDocument())) as! [String:Any]

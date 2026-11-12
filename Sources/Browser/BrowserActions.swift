@@ -18,6 +18,7 @@ extension BrowserStore {
         if awaitingInitialMetadata { return beginInitialMetadataLoad(access: access, allowInteraction: true) }
         do { try acquireMetadataOwnership() }
         catch { message = error.localizedDescription; return false }
+        resetExtensionReviewEpochs()
         unlocking = true
         let url = sessionURL
         let previousURL = previousSessionURL

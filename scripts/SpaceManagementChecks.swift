@@ -24,14 +24,14 @@ import BrowserCore
             return (raw["library"] as? [String:Any])?["deletedSpaces"] as? [[String:Any]] ?? []
         }
         check(try records(upgraded).first?["id"] as? String == schemaRecordID, "Profile repair preserves saved Space recovery records")
-        check(upgraded.formatVersion == 4, "Space recovery advances the document so older readers reject a lossy downgrade")
+        check(upgraded.formatVersion == 5, "Space recovery advances the document so older readers reject a lossy downgrade")
         let key = SymmetricKey(size:.bits256), url = root.appendingPathComponent("metadata.sealed")
         let vault = MetadataStore(url:url,key:key); try vault.save(upgraded)
         let restored = try vault.load(BrowserDocument.self)!
         let restoredName = try records(restored).first?["space"] as? [String:Any]
         check(restoredName?["name"] as? String == "Research", "Encrypted recovery retains the deleted Space identity and contents")
         check(try Data(contentsOf:url).range(of:Data("https://example.com/deleted-space".utf8)) == nil, "Deleted Space URLs are never stored as plaintext metadata")
-        object["formatVersion"] = 5
+        object["formatVersion"] = 6
         var future = try JSONDecoder().decode(BrowserDocument.self,from:JSONSerialization.data(withJSONObject:object))
         var rejected = false; do { try future.repairProfiles() } catch { rejected = true }
         check(rejected, "Unknown future documents remain protected")

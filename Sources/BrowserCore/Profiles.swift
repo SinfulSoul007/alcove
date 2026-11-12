@@ -14,6 +14,7 @@ public struct BrowserProfile: Codable, Identifiable, Equatable {
     public var icon: String
     public var pendingDeletion: Bool?
     public var pendingDataClear: Bool?
+    public var extensionControllerID: UUID?
     public var isDefault: Bool { id == Self.defaultID }
     public var isPendingDeletion: Bool { pendingDeletion == true }
     public var isPendingClear: Bool { pendingDataClear == true }
@@ -50,12 +51,15 @@ extension BrowserDocument {
     }
     /// Repair metadata without moving an existing valid profile to another cookie store.
     public mutating func repairProfiles() throws {
-        guard formatVersion == nil || formatVersion == 1 || formatVersion == 2 || formatVersion == 3 || formatVersion == 4 else { throw MetadataFormatError.unsupportedVersion }
-        formatVersion = 4
+        guard formatVersion == nil || formatVersion == 1 || formatVersion == 2 || formatVersion == 3 || formatVersion == 4 || formatVersion == 5 else { throw MetadataFormatError.unsupportedVersion }
+        formatVersion = 5
         let replacementForZero = UUID()
         func valid(_ id: UUID) -> UUID { id == BrowserProfile.zeroID ? replacementForZero : id }
         var registry = profiles ?? []
-        for index in registry.indices { registry[index].id = valid(registry[index].id); registry[index].name = BrowserProfile.cleanedName(registry[index].name) }
+        for index in registry.indices {
+            if registry[index].id == BrowserProfile.zeroID { registry[index].extensionControllerID = nil }
+            registry[index].id = valid(registry[index].id); registry[index].name = BrowserProfile.cleanedName(registry[index].name)
+        }
         for index in session.spaces.indices {
             if let id = session.spaces[index].profileID { session.spaces[index].profileID = valid(id) }
         }
@@ -85,11 +89,20 @@ extension BrowserDocument {
         let referenced = [BrowserProfile.defaultID] + registry.map(\.id) + session.spaces.map(\.effectiveProfileID) + entries.map(\.profileID)
         var ids: [UUID] = []
         for id in referenced where !ids.contains(id) { ids.append(id) }
+        var usedControllers = Set<UUID>()
+        var reservedControllers = Set(registry.compactMap(\.extensionControllerID))
         profiles = ids.map { id in
             var result = registry.first(where: { $0.id == id }) ?? (id == BrowserProfile.defaultID ? .defaultProfile : BrowserProfile(id: id, name: "Recovered Profile"))
             if registry.contains(where: { $0.id == id && $0.isPendingDeletion }) { result.pendingDeletion = true }
             if registry.contains(where: { $0.id == id && $0.isPendingClear }) { result.pendingDataClear = true }
             if id == BrowserProfile.defaultID { result.pendingDeletion = false }
+            let candidates = Set(registry.filter { $0.id == id }.compactMap(\.extensionControllerID))
+            if candidates.count > 1 || result.extensionControllerID == nil || result.extensionControllerID == BrowserProfile.zeroID || result.extensionControllerID.map({ usedControllers.contains($0) }) == true {
+                var fresh = UUID()
+                while reservedControllers.contains(fresh) || fresh == BrowserProfile.zeroID { fresh = UUID() }
+                result.extensionControllerID = fresh; reservedControllers.insert(fresh)
+            }
+            usedControllers.insert(result.extensionControllerID!)
             return result
         }
         profileLibraries = ids.map { id in
@@ -107,6 +120,9 @@ extension BrowserDocument {
                 profileLibraries![index].library.siteBoosts = BoostCatalog(saved).entries
             }
             let owner = profileLibraries![index].profileID
+            if let saved = profileLibraries![index].library.extensions, let profile = profiles?.first(where:{$0.id == owner}), let controller = profile.extensionControllerID {
+                profileLibraries![index].library.extensions = ExtensionCatalog.repaired(saved,profileID:owner,controllerID:controller,paused:profile.isPendingClear || profile.isPendingDeletion)
+            }
             if let snapshots = profileLibraries![index].library.deletedSpaces {
                 profileLibraries![index].library.deletedSpaces = DeletedSpace.uniqueSnapshots(snapshots.map { var record = $0; record.space.profileID = owner; return record })
             }
@@ -158,6 +174,7 @@ extension BrowserDocument {
 
 extension BrowserLibrary {
     public mutating func mergePreservingRecords(_ other: BrowserLibrary) {
+        if extensions != nil || other.extensions != nil { extensions = ExtensionCatalog.merged(extensions ?? [],other.extensions ?? []) }
         if siteBoosts != nil || other.siteBoosts != nil { siteBoosts = BoostCatalog((siteBoosts ?? []) + (other.siteBoosts ?? [])).entries }
         func pages(_ current: [PageRecord], _ incoming: [PageRecord]) -> [PageRecord] {
             var result = current

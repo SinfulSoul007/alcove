@@ -12,7 +12,7 @@ An owned, explicitly transient runtime probe already passes five checks on macOS
 
 Support unpacked folders, ZIP and authenticated CRX3 packages; add Chrome Web Store URL/ID installation and manual update checks. No Arc profile files, extension source or browsing data are imported. Third-party code is neither executed nor committed as a test fixture without the required specific authorization. Tests create and sign their own packages.
 
-Copy validated packages into Alcove-owned immutable revision directories under the metadata directory. Derive paths only from profile UUID, record UUID and SHA-256 digest; never persist a caller-supplied absolute resource path. Imported resources are plaintext code/assets, not part of metadata encryption. Names, preferences, grants and installed-package references belong to encrypted per-profile libraries. WebKit owns extension runtime storage, isolated through a durable controller identifier per profile and the profile's explicit website data store.
+Copy validated packages into Alcove-owned immutable revision directories under the metadata directory. Derive paths only from profile UUID, controlled package UUID (normally the record UUID) and SHA-256 digest; never persist a caller-supplied absolute resource path. Imported resources are plaintext code/assets, not part of metadata encryption. Names, preferences, grants and installed-package references belong to encrypted per-profile libraries. WebKit owns extension runtime storage, isolated through a durable controller identifier per profile and the profile's explicit website data store.
 
 Bound imports before allocation/extraction:128MiB input,256MiB total expanded data,64MiB per file,10,000 entries,1MiB manifest,16MiB CRX header and64 signature proofs. Accept stored/deflated ZIP entries with validated central/local headers, sizes, CRC and normalized unique names. Reject traversal, absolute/drive/backslash paths, special files, links, encrypted/multipart archives and ambiguous overlapping entries. Do not run a shell extractor on untrusted paths. Use system zlib for bounded raw-deflate decoding. Exclude source-control/Finder metadata when copying a folder; pin the selected root and do not follow nested links. Check actual descriptor sizes and cap bytes while reading, not only declared archive sizes.
 
@@ -42,7 +42,7 @@ Web Store requests use an ephemeral session without account cookies/credentials 
 
 ## Delivery and boundaries
 
-Target0.9.0/build16/candidate`v0.9.0-preview.1`; macOS14; unchanged six entitlements and Keychain namespace/key/access policy. No private WebKit APIs, Chromium dependency, JIT entitlement or paid signing requirement. Keep the0.8 release tag`f1b34451c088ffaf3d10eb3af61562a169aaf2eb` immutable; its in-flight release is verified against pinned files, independently of newer main development.
+Target0.9.0/build16/candidate`v0.9.0-preview.1`; macOS14; unchanged six entitlements and Keychain namespace/key/access policy. No private WebKit APIs, Chromium dependency, JIT entitlement or paid signing requirement. Keep the0.8 release tag`f1b34451c088ffaf3d10eb3af61562a169aaf2eb` immutable; its published release was verified against pinned files, independently of newer main development.
 
 Use inline execution with one fresh whole-plan final reviewer and one verified author fix pass. Final full checks, optimized arm64/x86_64 builds, exact-source CI/download-back validation and native owned-fixture QA precede0.9 distribution. Other original browser/UI/performance/security requirements remain active.
 

@@ -8,6 +8,7 @@ public struct PageRecord: Codable, Identifiable, Equatable {
     public init(title: String, url: String, date: Date = Date()) { id = UUID(); self.title = title; self.url = url; self.date = date }
 }
 public struct BrowserLibrary: Codable {
+    public var extensions: [BrowserExtensionRecord]?
     public var siteBoosts: [SiteBoost]?
     public var deletedSpaces: [DeletedSpace]?
     public var favoriteTabs: [Tab]?
@@ -53,6 +54,6 @@ public struct BrowserDocument: Codable {
     public var profiles: [BrowserProfile]?
     public var profileLibraries: [ProfileLibrary]?
     public init(session: Session = Session(), library: BrowserLibrary = BrowserLibrary(), preferences: Preferences = Preferences(), profiles: [BrowserProfile]? = nil, profileLibraries: [ProfileLibrary]? = nil) {
-        formatVersion = 4; self.session = session; self.library = library; self.preferences = preferences; self.profiles = profiles; self.profileLibraries = profileLibraries
+        formatVersion = 5; self.session = session; self.library = library; self.preferences = preferences; self.profiles = profiles; self.profileLibraries = profileLibraries
     }
 }

@@ -41,6 +41,7 @@ extension BrowserStore {
         return true
     }
     func restoreInitialMetadata(using key: SymmetricKey) throws {
+        resetExtensionReviewEpochs()
         try metadataOwnership?.validate()
         let storage = MetadataStore(url: sessionURL, key: key, ownership:metadataOwnership)
         var document = try storage.load(BrowserDocument.self)

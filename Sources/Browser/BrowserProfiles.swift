@@ -165,6 +165,7 @@ extension BrowserStore {
     }
     func applyDocument(_ document: BrowserDocument) throws {
         var prepared = document; try prepared.repairProfiles()
+        invalidateExtensionReviewEpochs(from:profiles,to:prepared.profiles ?? [])
         session = Self.repairedSession(prepared.session); profiles = prepared.profiles ?? [.defaultProfile]
         profileLibraries = prepared.profileLibraries ?? [ProfileLibrary(profileID: BrowserProfile.defaultID, library: prepared.library)]
         preferences = prepared.preferences; reconcileSearchInputContext(); pruneQuickActivity(); quickPagesDidChange?(); refreshBoosts()

@@ -89,6 +89,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var siteIcons: [UUID: NSImage] = [:]
     let isPrivate: Bool
     let privateDataStore: WKWebsiteDataStore?
+    var extensionReviewEpochs:[UUID:UUID] = [:]
+    @Published var extensionInstallationInProgress = false
+    var extensionPublication:Task<InstalledExtensionPackage,Error>?
+    var extensionMaintenance:Task<Int,Error>?
     var vault: MetadataStore?
     @Published var savingEnabled = true
     @Published var unlocking = false
@@ -186,7 +190,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
-        flush(); isShuttingDown = true; cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
+        flush(); isShuttingDown = true; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
         metadataOwnership?.release(); metadataOwnership = nil

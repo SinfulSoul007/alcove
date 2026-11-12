@@ -88,6 +88,16 @@ run_boosts_website_checks() {
     rm -f "$boost_port_file"
     trap - EXIT
 }
+run_extension_core_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/ExtensionCoreChecks.swift scripts/ExtensionManifestChecks.swift scripts/ExtensionZIPChecks.swift scripts/ExtensionPackageChecks.swift scripts/ExtensionCRXChecks.swift -o "$MANUAL/extension-core-checks"
+    "$MANUAL/extension-core-checks"
+}
+if [[ "${1:-}" == "extension-core-test" ]]; then run_extension_core_checks; exit; fi
+run_extension_store_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ExtensionStoreChecks.swift -o "$MANUAL/extension-store-checks"
+    "$MANUAL/extension-store-checks"
+}
+if [[ "${1:-}" == "extension-store-test" ]]; then run_extension_store_checks; exit; fi
 run_spaces_layout_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SpacesLayoutChecks.swift -o "$MANUAL/spaces-layout-checks"
     "$MANUAL/spaces-layout-checks"
@@ -238,6 +248,8 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    run_extension_core_checks
+    run_extension_store_checks
     run_spaces_layout_checks
     run_space_checks
     run_writer_checks

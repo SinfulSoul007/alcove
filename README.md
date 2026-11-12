@@ -125,6 +125,8 @@ If a legacy `session.json` already exists inside Alcove’s own storage director
 
 ## Build from source
 
+The developing 0.9 source upgrades metadata to format 5 for extension identities and permissions. Public 0.8 downloads use format 4 and cannot read format 5. Keep a backup and quit Alcove before replacing its bundle; extension installation and hosting are still in development.
+
 Install Apple Command Line Tools, then:
 
 ```sh
