@@ -23,7 +23,7 @@ extension BrowserStore {
         let replace = wasExtension != isExtension || (isExtension && (previous?.host != url.host || existing?.url?.scheme?.lowercased() != "webkit-extension"))
         let configuration:WKWebViewConfiguration?
         if isExtension {
-            guard let value = extensionHosting?.configuration(for:url,profileID:profileID) else {throw ExtensionHostError.stale};configuration = value
+            guard let value = extensionHosting?.configuration(for:url,profileID:profileID) else {throw isPrivate ? ExtensionHostError.unsupportedPrivatePage : ExtensionHostError.stale};configuration = value
         } else {configuration = nil}
         update(id){$0.url = url.absoluteString}
         guard let existing else {_ = view(for:id,configuration:configuration);return}
@@ -39,6 +39,7 @@ extension BrowserStore {
     @discardableResult func openExtensionOptions(_ id:UUID,profileID:UUID) async throws -> UUID {
         try await prepareExtensions(profileID:profileID)
         guard let host = extensionHosting, let url = host.optionsURL(id,profileID:profileID) else {throw ExtensionHostError.native("This extension has no available options page.")}
+        if isPrivate {throw ExtensionHostError.unsupportedPrivatePage}
         if extensionWindows[.primary]?.window == nil {extensionPrimaryWindowRequested?()}
         return try createExtensionTab(url:url,profileID:profileID,activate:true)
     }
@@ -47,7 +48,7 @@ extension BrowserStore {
         guard extensionWindows[.primary]?.window != nil else {throw ExtensionHostError.native("Open the main browser window before creating a tab.")}
         let configuration:WKWebViewConfiguration?
         if let url, url.scheme?.lowercased() == "webkit-extension" {
-            guard let value = extensionHosting?.configuration(for:url,profileID:profileID) else {throw ExtensionHostError.stale};configuration = value
+            guard let value = extensionHosting?.configuration(for:url,profileID:profileID) else {throw isPrivate ? ExtensionHostError.unsupportedPrivatePage : ExtensionHostError.stale};configuration = value
         } else {
             guard url == nil || ["http","https"].contains(url!.scheme?.lowercased() ?? "") || url?.absoluteString == "about:blank" else {throw QuickBrowseError.invalidAddress}
             configuration = nil
@@ -79,7 +80,7 @@ struct NativeExtensionTabState:Equatable {
     func live(_ context:WKWebExtensionContext) -> BrowserStore? {
         guard let store,host?.authorized(context,profileID:key.profileID,client:store) == true else {return nil}
         if key.isPeek {guard store.peekPages.values.contains(where:{$0.id == key.id && $0.web === web}) else {return nil}}
-        else {guard store.profileID(for:key.id) == key.profileID else {return nil}}
+        else {guard store.profileID(for:key.id) == (store.isPrivate ? BrowserProfile.defaultID : key.profileID) else {return nil}}
         return store
     }
     func actualView(_ context:WKWebExtensionContext) throws -> WKWebView {
@@ -88,7 +89,14 @@ struct NativeExtensionTabState:Equatable {
         let view = store.view(for:key.id);web = view;return view
     }
     func webView(for context:WKWebExtensionContext) -> WKWebView? {live(context) == nil ? nil : web}
-    func window(for context:WKWebExtensionContext) -> (any WKWebExtensionWindow)? {live(context) == nil ? nil : browserWindow}
+    func window(for context:WKWebExtensionContext) -> (any WKWebExtensionWindow)? {
+        // Supply structural ownership even before private approval so the engine can cache
+        // the true private flag. Data and actions still require live(context) authorization.
+        if let store,store.isPrivate,let host,let owner = host.owner,
+           host.authorized(context,profileID:key.profileID,client:owner),host.isAssociated(store,profileID:key.profileID),
+           let browserWindow,store.extensionWindows[browserWindow.reference.kind] === browserWindow.reference,browserWindow.reference.window != nil {return browserWindow}
+        return live(context) == nil ? nil : browserWindow
+    }
     func indexInWindow(for context:WKWebExtensionContext) -> Int {guard live(context) != nil else {return NSNotFound};return browserWindow?.tabKeys.firstIndex(of:key) ?? NSNotFound}
     func title(for context:WKWebExtensionContext) -> String? {live(context) == nil ? nil : state.title}
     func url(for context:WKWebExtensionContext) -> URL? {live(context) == nil ? nil : state.url}
@@ -97,7 +105,12 @@ struct NativeExtensionTabState:Equatable {
     func size(for context:WKWebExtensionContext) -> CGSize {live(context) == nil ? .zero : state.size}
     func zoomFactor(for context:WKWebExtensionContext) -> Double {live(context) == nil ? 1 : Double(web?.pageZoom ?? CGFloat(state.zoom))}
     func isSelected(for context:WKWebExtensionContext) -> Bool {live(context) != nil && browserWindow?.activeKey == key}
-    func shouldGrantPermissionsOnUserGesture(for context:WKWebExtensionContext) -> Bool {live(context) != nil}
+    func shouldGrantPermissionsOnUserGesture(for context:WKWebExtensionContext) -> Bool {
+        guard live(context) != nil,context.hasPermission(WKWebExtension.Permission(rawValue:"activeTab")),
+              let host,let owner = host.owner,let id = host.profiles[key.profileID]?.contexts.first(where:{$0.value === context})?.key,
+              let grant = owner.extensionRecords(profileID:key.profileID).first(where:{$0.id == id})?.grants else {return false}
+        return grant.permissions.contains("activeTab") && grant.deniedPermissions?.contains("activeTab") != true
+    }
     func shouldBypassPermissions(for context:WKWebExtensionContext) -> Bool {false}
     func setPinned(_ pinned:Bool,for context:WKWebExtensionContext,completionHandler:@escaping(Error?)->Void) {
         guard let store = live(context),!key.isPeek,store.quickPage(key.id) == nil else {completionHandler(ExtensionHostError.stale);return}
@@ -111,7 +124,7 @@ struct NativeExtensionTabState:Equatable {
     func loadURL(_ url:URL,for context:WKWebExtensionContext,completionHandler:@escaping(Error?)->Void) {
         guard let store = live(context),host?.permitsNavigation(url,context:context,profileID:key.profileID) == true else {completionHandler(ExtensionHostError.stale);return}
         do {
-            if !key.isPeek {try store.navigateExtensionTab(key.id,to:url,profileID:key.profileID)}
+            if !key.isPeek {try store.navigateExtensionTab(key.id,to:url,profileID:store.isPrivate ? BrowserProfile.defaultID : key.profileID)}
             else {try actualView(context).load(URLRequest(url:url))}
             completionHandler(nil)
         } catch {completionHandler(error)}
@@ -152,6 +165,9 @@ struct NativeExtensionTabState:Equatable {
     }
     func duplicate(using configuration:WKWebExtension.TabConfiguration,for context:WKWebExtensionContext,completionHandler:@escaping((any WKWebExtensionTab)?,Error?)->Void) {
         guard let store = live(context),let host,host.permitsNavigation(state.url,context:context,profileID:key.profileID) else {completionHandler(nil,ExtensionHostError.stale);return}
-        do {let id = try store.createExtensionTab(url:state.url,profileID:key.profileID,activate:configuration.shouldBeActive,pinned:configuration.shouldBePinned,index:configuration.index);host.synchronizeBrowserState();completionHandler(host.nativeTabs[NativeExtensionTabKey(storeID:store.extensionStoreID,profileID:key.profileID,id:id,isPeek:false)],nil)} catch {completionHandler(nil,error)}
+        if let requested = configuration.window {
+            guard let target = requested as? NativeExtensionWindow,target.store === store,target.key.profileID == key.profileID,target.live(context) != nil else {completionHandler(nil,ExtensionHostError.stale);return}
+        }
+        do {let id = try store.createExtensionTab(url:state.url,profileID:store.isPrivate ? BrowserProfile.defaultID : key.profileID,activate:configuration.shouldBeActive,pinned:configuration.shouldBePinned,index:configuration.index);host.synchronizeBrowserState();completionHandler(host.nativeTabs[NativeExtensionTabKey(storeID:store.extensionStoreID,profileID:key.profileID,id:id,isPeek:false)],nil)} catch {completionHandler(nil,error)}
     }
 }

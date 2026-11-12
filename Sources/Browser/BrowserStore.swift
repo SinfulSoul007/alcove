@@ -123,6 +123,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func invalidateDocumentIdentity(for web: WKWebView) {
         documentIDs.setObject(NSUUID(), forKey: web)
         cancelInvalidExtensionNavigations()
+        extensionHosting?.browserStateChanged()
         if boostPicker?.source.web === web { cancelBoostPicker() }
         BoostRuntime.invalidate(web)
     }

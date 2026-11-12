@@ -101,6 +101,7 @@ public struct ExtensionManifest:Equatable,Sendable {
         let versionName = try string(manifest["version_name"],"version_name").map(localized)
         let incognito = try string(manifest["incognito"],"incognito") ?? "spanning"
         guard ["spanning","split","not_allowed"].contains(incognito) else { throw invalid("unknown incognito mode") }
+        if incognito == "split" {warnings.insert("Private access is unavailable for extensions requiring separate private runtimes. Normal browsing can be approved separately.")}
         func resource(_ value:Any?,_ key:String,allowEmpty:Bool = false) throws -> String? {
             guard let raw = try string(value,key) else { return nil }
             if raw.isEmpty && allowEmpty { return nil }

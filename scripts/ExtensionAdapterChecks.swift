@@ -6,6 +6,8 @@ import BrowserCore
 /// These native windows stay hidden and suppress activation; only fixture web views are hosted.
 @MainActor final class OwnedExtensionWindow:NSWindow {
     var closeOperation:(()->Void)?
+    var fixtureKey = false
+    override var isKeyWindow:Bool {fixtureKey}
     override func makeKeyAndOrderFront(_ sender:Any?) {}
     override func performClose(_ sender:Any?) {closeOperation?()}
 }
@@ -55,6 +57,7 @@ enum OwnedExtensionAdapterError:Error {case missingFixture,timedOut,missingTab}
             let tabB = store.newTab(url:urlB),webB = store.view(for:tabB);try await ready(webB,urlB)
             store.selectSpace(spaceA)
             let window = OwnedExtensionWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable,.resizable],backing:.buffered,defer:false)
+            window.fixtureKey = true
             window.isReleasedWhenClosed = false;window.contentView = webA
             store.registerExtensionWindow(window,kind:.primary)
             defer {window.contentView = nil;store.unregisterExtensionWindow(kind:.primary)}
@@ -89,6 +92,9 @@ enum OwnedExtensionAdapterError:Error {case missingFixture,timedOut,missingTab}
             let retained = try await options.callAsyncJavaScript("return (await browser.storage.local.get('ownedAccount')).ownedAccount;",arguments:[:],in:nil,contentWorld:.page) as? String
             check(retained == "A","The original account retains its actual native extension storage while the other account remains empty")
             let contextB = webB.configuration.webExtensionController!.extensionContexts.first!
+            let nativeHost = store.extensionHosting as! NativeBrowserExtensionHost
+            nativeHost.synchronizeBrowserState()
+            check(nativeHost.webExtensionController(nativeA,focusedWindowFor:contextA) == nil && nativeHost.webExtensionController(webB.configuration.webExtensionController!,focusedWindowFor:contextB) != nil,"A shared physical main window is focused only for its selected account")
             guard let candidateAdapter = contextA.openWindows.first?.tabs?(for:contextA).first(where:{$0.webView?(for:contextA) === webA}),let adapterA = candidateAdapter as? NativeExtensionTab else {throw OwnedExtensionAdapterError.missingTab}
             var deniedReplies = 0,deniedError:Error?
             adapterA.loadURL(urlB,for:contextB) {deniedReplies += 1;deniedError = $0}
@@ -136,6 +142,16 @@ enum OwnedExtensionAdapterError:Error {case missingFixture,timedOut,missingTab}
             let quickWindow = OwnedExtensionWindow(contentRect:NSRect(x:0,y:0,width:500,height:400),styleMask:[.titled,.closable],backing:.buffered,defer:false)
             quickWindow.isReleasedWhenClosed = false;quickWindow.contentView = quickWeb
             store.registerExtensionWindow(quickWindow,kind:.quick(quickID))
+            window.fixtureKey = false;quickWindow.fixtureKey = true
+            NotificationCenter.default.post(name:NSWindow.didBecomeKeyNotification,object:quickWindow)
+            try await Task.sleep(for:.milliseconds(40))
+            let focusedQuickType = try await options.callAsyncJavaScript("return (await browser.windows.getLastFocused()).type;",arguments:[:],in:nil,contentWorld:.page) as? String
+            check(focusedQuickType == "popup","The extension engine observes the actual focused Quick window")
+            quickWindow.fixtureKey = false;window.fixtureKey = true
+            NotificationCenter.default.post(name:NSWindow.didBecomeKeyNotification,object:window)
+            try await Task.sleep(for:.milliseconds(40))
+            let focusedMainType = try await options.callAsyncJavaScript("return (await browser.windows.getLastFocused()).type;",arguments:[:],in:nil,contentWorld:.page) as? String
+            check(focusedMainType == "normal","Returning focus to the existing main window updates the real native window API")
             let beforeMove = try await query(options).first(where:{$0["url"] as? String == quickURL.absoluteString})?["id"] as? NSNumber
             _ = try await quickWeb.evaluateJavaScript("document.getElementById('owned-form').value='keep across handoff';true")
             _ = try store.promoteQuickPage(quickID,to:spaceA);store.unregisterExtensionWindow(kind:.quick(quickID));quickWindow.contentView = nil

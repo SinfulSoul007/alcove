@@ -17,15 +17,22 @@ extension BrowserStore {
         guard #available(macOS 15.4,*) else {throw ExtensionHostError.unavailable}
         guard let server = normal.ensureExtensionHost() as? NativeBrowserExtensionHost else {throw ExtensionHostError.unavailable}
         let lease = try owner.acquireAuxiliary()
-        extensionHosting = AssociatedPrivateExtensionHost(owner:owner,server:server,profileID:profileID,controllerID:controllerID,lease:lease)
+        let association = AssociatedPrivateExtensionHost(client:self,owner:owner,server:server,profileID:profileID,controllerID:controllerID,lease:lease)
+        extensionHosting = association
+        server.privateClients[extensionStoreID] = NativePrivateExtensionClient(store:self,association:association,profileID:profileID)
+        server.browserStateChanged()
     }
 }
 
 @available(macOS 15.4,*) @MainActor final class AssociatedPrivateExtensionHost:BrowserExtensionHosting {
+    private weak var client:BrowserStore?
     private var owner:BrowserWindowOwner?
     private let server:NativeBrowserExtensionHost,profileID:UUID,controllerID:UUID,lease:UUID
-    init(owner:BrowserWindowOwner,server:NativeBrowserExtensionHost,profileID:UUID,controllerID:UUID,lease:UUID) {
-        self.owner = owner;self.server = server;self.profileID = profileID;self.controllerID = controllerID;self.lease = lease
+    init(client:BrowserStore,owner:BrowserWindowOwner,server:NativeBrowserExtensionHost,profileID:UUID,controllerID:UUID,lease:UUID) {
+        self.client = client;self.owner = owner;self.server = server;self.profileID = profileID;self.controllerID = controllerID;self.lease = lease
+    }
+    func matches(client:BrowserStore,profileID:UUID) -> Bool {
+        self.client === client && client.isPrivate && !client.isShuttingDown && client.extensionHosting === self && self.profileID == profileID && (try? normal()) != nil
     }
     private func normal() throws -> BrowserStore {
         guard let owner,!owner.isClosed,!owner.store.isShuttingDown else {throw ExtensionHostError.closed}
@@ -62,7 +69,35 @@ extension BrowserStore {
         throw ExtensionHostError.native("Reopen this private session without extensions to change its controller. Unsaved forms would be lost.")
     }
     func refresh() {server.browserStateChanged()}
-    func shutdown() {
-        guard let owner else {return};self.owner = nil;owner.release(lease)
+    func browserStateChanged() {server.browserStateChanged()}
+    func allowsExtensionURL(_ url:URL,profileID localID:UUID) -> Bool {
+        guard localID == BrowserProfile.defaultID,(try? normal()) != nil,
+              let context = server.profiles[profileID]?.controller.extensionContext(for:url),let client,
+              server.authorized(context,profileID:profileID,client:client) else {return false}
+        return server.allowsExtensionURL(url,profileID:profileID)
     }
+    func configuration(for url:URL,profileID localID:UUID) -> WKWebViewConfiguration? {
+        // Context configurations are related to the normal extension process/data store.
+        // Replacing that store aborts WKWebView initialization; borrowing it would leak
+        // normal website state. A private extension-page runtime is required first.
+        return nil
+    }
+    func optionsURL(_ id:UUID,profileID localID:UUID) -> URL? {
+        guard localID == BrowserProfile.defaultID,(try? normal()) != nil,
+              let url = server.optionsURL(id,profileID:profileID),
+              allowsExtensionURL(url,profileID:localID) else {return nil}
+        return url
+    }
+    func shutdown() {
+        guard let owner else {return}
+        if let client {server.privateClients.removeValue(forKey:client.extensionStoreID);server.synchronizeBrowserState()}
+        self.owner = nil;owner.release(lease)
+    }
+}
+
+@available(macOS 15.4,*) @MainActor final class NativePrivateExtensionClient {
+    weak var store:BrowserStore?,association:AssociatedPrivateExtensionHost?
+    let profileID:UUID
+    init(store:BrowserStore,association:AssociatedPrivateExtensionHost,profileID:UUID) {self.store = store;self.association = association;self.profileID = profileID}
+    var current:BrowserStore? {guard let store,association?.matches(client:store,profileID:profileID) == true else {return nil};return store}
 }

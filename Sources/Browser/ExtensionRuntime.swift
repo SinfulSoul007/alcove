@@ -60,9 +60,15 @@ import BrowserCore
     private var reconciled = false
     private var bypasses:[UUID:([BrowserExtensionRecord],UUID)] = [:]
     var nativeWindows:[NativeExtensionWindowKey:NativeExtensionWindow] = [:]
+    var focusedWindows:[UUID:NativeExtensionWindowKey] = [:]
+    var privateClients:[UUID:NativePrivateExtensionClient] = [:]
     var nativeTabs:[NativeExtensionTabKey:NativeExtensionTab] = [:]
     var tabsByView:[ObjectIdentifier:NativeExtensionTab] = [:]
     var synchronization:Task<Void,Never>?
+    var permissionPrompt = NativeExtensionPermissionPrompt.live
+    var permissionRequestTimeout:Duration = .seconds(60)
+    var permissionTickets:[UUID:NativeExtensionPermissionTicket] = [:]
+    var permissionSessionGrants:[UUID:NativeExtensionSessionGrant] = [:]
     init(owner:BrowserStore) {self.owner = owner}
     private func currentOwner(_ id:UUID) throws -> (BrowserStore,BrowserProfile) {
         guard let owner, !owner.isShuttingDown else {throw ExtensionHostError.closed}
@@ -88,6 +94,7 @@ import BrowserCore
         bypasses.removeValue(forKey:profileID)
         do {try profiles[profileID]?.unload();owner?.extensionStates.removeValue(forKey:profileID)}
         catch {owner?.extensionStates[profileID] = .failed(error.localizedDescription)}
+        reconcilePermissionRequests()
     }
     func matches(_ configuration:WKWebViewConfiguration,profileID:UUID) -> Bool {
         guard (try? currentOwner(profileID)) != nil, let runtime = profiles[profileID] else {return false}
@@ -226,9 +233,10 @@ import BrowserCore
         context.hasAccessToPrivateData = grant.allowPrivate
     }
     func shutdown() {
+        cancelPermissionRequests()
         synchronization?.cancel();synchronization = nil
         reconciliation?.cancel();reconciliation = nil
         for runtime in profiles.values {try? runtime.unload();runtime.controller.delegate = nil}
-        profiles = [:];bypasses = [:];nativeTabs = [:];nativeWindows = [:];tabsByView = [:];owner = nil
+        profiles = [:];bypasses = [:];nativeTabs = [:];nativeWindows = [:];focusedWindows = [:];tabsByView = [:];privateClients = [:];owner = nil
     }
 }

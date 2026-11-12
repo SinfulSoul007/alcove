@@ -64,5 +64,8 @@ public struct BrowserExtensionRecord:Codable,Identifiable,Equatable,Sendable {
         case .webStore: return storeID.map(Self.validExternalID) == true && storeID == signerID && publisherVerified == true
         }
     }
+    /// The current private bridge shares one approved spanning context. A package
+    /// requesting a separate private context must not silently receive that model.
+    public var supportsPrivateAccess:Bool {incognito == nil || incognito == "spanning"}
     public mutating func revokeApproval() { grants = nil; enabled = false }
 }

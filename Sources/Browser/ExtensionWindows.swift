@@ -6,11 +6,18 @@ enum ExtensionWindowKind:Hashable {case primary,quick(UUID)}
 @MainActor final class ExtensionBrowserWindow {
     let id = UUID(),kind:ExtensionWindowKind
     weak var window:NSWindow?
-    init(_ window:NSWindow,kind:ExtensionWindowKind) {self.window = window;self.kind = kind}
+    private var focusObservers:[NSObjectProtocol] = []
+    init(_ window:NSWindow,kind:ExtensionWindowKind,changed:@escaping @MainActor ()->Void) {
+        self.window = window;self.kind = kind
+        for name in [NSWindow.didBecomeKeyNotification,NSWindow.didResignKeyNotification] {
+            focusObservers.append(NotificationCenter.default.addObserver(forName:name,object:window,queue:.main){_ in MainActor.assumeIsolated{changed()}})
+        }
+    }
+    deinit {for observer in focusObservers {NotificationCenter.default.removeObserver(observer)}}
 }
 extension BrowserStore {
     func registerExtensionWindow(_ window:NSWindow,kind:ExtensionWindowKind) {
-        if extensionWindows[kind]?.window !== window {extensionWindows[kind] = ExtensionBrowserWindow(window,kind:kind)}
+        if extensionWindows[kind]?.window !== window {extensionWindows[kind] = ExtensionBrowserWindow(window,kind:kind){ [weak self] in self?.extensionBrowserStateChanged() }}
         ensureExtensionHost()?.refresh()
     }
     func unregisterExtensionWindow(kind:ExtensionWindowKind) {extensionWindows.removeValue(forKey:kind);extensionHosting?.refresh()}
@@ -20,16 +27,23 @@ extension BrowserStore {
 struct NativeExtensionWindowKey:Hashable {let storeID:UUID,profileID:UUID,windowID:UUID}
 @available(macOS 15.4,*) @MainActor final class NativeExtensionWindow:NSObject,WKWebExtensionWindow {
     let key:NativeExtensionWindowKey,reference:ExtensionBrowserWindow
+    private let privateWindow:Bool
     weak var host:NativeBrowserExtensionHost?,store:BrowserStore?
     var tabKeys:[NativeExtensionTabKey] = [],activeKey:NativeExtensionTabKey?
     init(host:NativeBrowserExtensionHost,store:BrowserStore,profileID:UUID,reference:ExtensionBrowserWindow) {
         self.host = host;self.store = store;self.reference = reference
+        privateWindow = store.isPrivate
         key = NativeExtensionWindowKey(storeID:store.extensionStoreID,profileID:profileID,windowID:reference.id)
     }
     func live(_ context:WKWebExtensionContext) -> (BrowserStore,NSWindow)? {
         guard let store, let window = reference.window, store.extensionWindows[reference.kind] === reference,
               host?.authorized(context,profileID:key.profileID,client:store) == true else {return nil}
         return (store,window)
+    }
+    var isFocusedInClient:Bool {
+        guard let store,!store.isShuttingDown,store.extensionWindows[reference.kind] === reference,reference.window?.isKeyWindow == true else {return false}
+        if reference.kind == .primary,!store.isPrivate {return store.activeProfileID == key.profileID}
+        return true
     }
     func tabs(for context:WKWebExtensionContext) -> [any WKWebExtensionTab] {
         guard live(context) != nil, let host else {return []}
@@ -38,7 +52,8 @@ struct NativeExtensionWindowKey:Hashable {let storeID:UUID,profileID:UUID,window
     func activeTab(for context:WKWebExtensionContext) -> (any WKWebExtensionTab)? {
         guard live(context) != nil, let activeKey else {return nil};return host?.nativeTabs[activeKey]
     }
-    func isPrivate(for context:WKWebExtensionContext) -> Bool {live(context)?.0.isPrivate ?? false}
+    // WebKit caches this classification before permission filtering and for the window's lifetime.
+    func isPrivate(for context:WKWebExtensionContext) -> Bool {privateWindow}
     func windowType(for context:WKWebExtensionContext) -> WKWebExtension.WindowType {if case .quick = reference.kind {return .popup};return .normal}
     func windowState(for context:WKWebExtensionContext) -> WKWebExtension.WindowState {
         guard let (_,window) = live(context) else {return .normal}

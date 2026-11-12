@@ -46,7 +46,7 @@ public enum ExtensionCatalog {
                   record.manifestVersion == 2 || record.manifestVersion == 3,
                   let grant = record.grants, grant.profileID == profileID, grant.recordID == record.id,
                   grant.controllerID == controllerID, grant.packageDigest == record.packageDigest,
-                  !grant.allowPrivate || record.incognito != "not_allowed",
+                  !grant.allowPrivate || record.supportsPrivateAccess,
                   Set(grant.permissions).isDisjoint(with:unavailablePermissions),
                   Set(grant.permissions).isSubset(of:Set(record.requestedPermissions + record.optionalPermissions)),
                   grant.hostPatterns.allSatisfy({ granted in

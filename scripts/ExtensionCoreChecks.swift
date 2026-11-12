@@ -119,6 +119,18 @@ import BrowserCore
         var prohibitedDocument = object; prohibitedDocument["profileLibraries"] = [["profileID":profileID,"library":prohibitedLibrary]]
         let prohibitedResult = ownedRecords(try repairedObject(prohibitedDocument),profileID).first
         check(prohibitedResult?["enabled"] as? Bool == false && prohibitedResult?["grants"] == nil,"A manifest's private-access prohibition cannot retain a stored private approval")
+        for (mode,retains) in [("split",false),("spanning",true),("unrecognized",false)] {
+            var privateRecord = prohibitedPrivate;privateRecord["incognito"] = mode
+            var privateLibrary = library;privateLibrary["extensions"] = [privateRecord]
+            var privateDocument = object;privateDocument["profileLibraries"] = [["profileID":profileID,"library":privateLibrary]]
+            let result = ownedRecords(try repairedObject(privateDocument),profileID).first
+            check((result?["enabled"] as? Bool == true && result?["grants"] != nil) == retains,"Private approval respects the implemented incognito mode: " + mode)
+        }
+        var normalSplit = approved;normalSplit["incognito"] = "split"
+        var normalSplitLibrary = library;normalSplitLibrary["extensions"] = [normalSplit]
+        var normalSplitDocument = object;normalSplitDocument["profileLibraries"] = [["profileID":profileID,"library":normalSplitLibrary]]
+        let normalSplitResult = ownedRecords(try repairedObject(normalSplitDocument),profileID).first
+        check(normalSplitResult?["enabled"] as? Bool == true && normalSplitResult?["grants"] != nil,"An extension requesting split mode can retain its separately approved normal-only runtime")
         var unsupportedRecord = approved, unsupportedGrant = approved["grants"] as! [String:Any]
         unsupportedRecord["requestedPermissions"] = ["nativeMessaging"]; unsupportedGrant["permissions"] = ["nativeMessaging"]; unsupportedRecord["grants"] = unsupportedGrant
         var unsupportedLibrary = library; unsupportedLibrary["extensions"] = [unsupportedRecord]

@@ -103,6 +103,7 @@ run_extension_runtime_checks() {
     if [[ "$extension_check_name" == "navigation" ]]; then extension_check_source="scripts/ExtensionNavigationChecks.swift"; fi
     if [[ "$extension_check_name" == "adapter" ]]; then extension_check_source="scripts/ExtensionAdapterChecks.swift"; fi
     if [[ "$extension_check_name" == "private" ]]; then extension_check_source="scripts/ExtensionPrivateChecks.swift"; fi
+    if [[ "$extension_check_name" == "permission" ]]; then extension_check_source="scripts/ExtensionPermissionChecks.swift"; fi
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" "$extension_check_source" scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$MANUAL/extension-$extension_check_name-checks"
     local extension_port_file extension_fixture_pid
     extension_port_file="$(mktemp "$MANUAL/extension-port.XXXXXX")"
@@ -121,6 +122,7 @@ if [[ "${1:-}" == "extension-runtime-test" ]]; then run_extension_runtime_checks
 if [[ "${1:-}" == "extension-navigation-test" ]]; then run_extension_runtime_checks navigation; exit; fi
 if [[ "${1:-}" == "extension-adapter-test" ]]; then run_extension_runtime_checks adapter; exit; fi
 if [[ "${1:-}" == "extension-private-test" ]]; then run_extension_runtime_checks private; exit; fi
+if [[ "${1:-}" == "extension-permission-test" ]]; then run_extension_runtime_checks permission; exit; fi
 run_sidebar_organization_checks() {
     local sidebar_check_source="scripts/SidebarOrganizationChecks.swift" sidebar_check_binary="$MANUAL/sidebar-organization-checks"
     if [[ "${1:-}" == "layout" ]]; then sidebar_check_source="scripts/SidebarOrganizationLayoutChecks.swift"; sidebar_check_binary="$MANUAL/sidebar-organization-layout-checks"; fi
@@ -299,6 +301,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_extension_runtime_checks navigation
     run_extension_runtime_checks adapter
     run_extension_runtime_checks private
+    run_extension_runtime_checks permission
     run_sidebar_organization_checks
     run_sidebar_organization_layout_checks
     run_spaces_layout_checks
