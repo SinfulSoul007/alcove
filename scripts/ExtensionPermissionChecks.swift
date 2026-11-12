@@ -35,7 +35,7 @@ enum OwnedExtensionPermissionError:Error {case missingFixture,timedOut}
             try owned.register(profile);try controllers.register(store.profiles.first(where:{$0.id == profile})!.extensionControllerID!)
             let source = root.appendingPathComponent("source")
             try manager.createDirectory(at:source,withIntermediateDirectories:true)
-            try Data(#"{"manifest_version":3,"name":"Owned permissions","description":"Permission lifetime fixture","version":"1","options_page":"options.html","permissions":["storage"],"optional_permissions":["alarms","clipboardWrite"],"host_permissions":["http://127.0.0.1/*"],"optional_host_permissions":["https://allowed.invalid/*","https://pattern.invalid/*"]}"#.utf8).write(to:source.appendingPathComponent("manifest.json"))
+            try Data(#"{"manifest_version":3,"name":"Owned permissions","description":"Permission lifetime fixture","version":"1","options_page":"options.html","permissions":["storage"],"optional_permissions":["alarms","clipboardWrite","activeTab"],"host_permissions":["http://127.0.0.1/*"],"optional_host_permissions":["https://allowed.invalid/*","https://pattern.invalid/*"]}"#.utf8).write(to:source.appendingPathComponent("manifest.json"))
             try Data("<!doctype html><body data-owned-extension-page='ready'>Owned permission options".utf8).write(to:source.appendingPathComponent("options.html"))
             let package = try ExtensionPackage.prepare(at:source,stagingRoot:root.appendingPathComponent("staging"))
             let approval = try store.extensionInstallApproval(for:package,profileID:profile,permissions:["storage"],hostPatterns:["http://127.0.0.1/*"],enable:true)
@@ -67,7 +67,7 @@ enum OwnedExtensionPermissionError:Error {case missingFixture,timedOut}
             host.webExtensionController(controller,promptForPermissionMatchPatterns:[allURLs],in:tab,for:context){allowed,_ in invalidReplies += 1;check(allowed.isEmpty,"Native all-URL requests cannot silently include local files")}
             host.webExtensionController(controller,promptForPermissionMatchPatterns:[outsidePattern],in:tab,for:context){allowed,_ in invalidReplies += 1;check(allowed.isEmpty,"Undeclared native match patterns cannot earn approval")}
             check(invalidReplies == 5 && prompts.isEmpty,"Invalid requests complete once without presenting UI")
-            let precisionSource = NativeExtensionPermissionSource(host:host,controller:controller,context:context,tab:tab)!
+            let precisionSource = NativeExtensionSource(host:host,controller:controller,context:context,tab:tab)!
             let precisionDate = Date(timeIntervalSinceReferenceDate:floor(Date().timeIntervalSinceReferenceDate) + 299 + 0.00000011920928955078125)
             let precisionGrant = NativeExtensionSessionGrant(source:precisionSource,permissions:[alarms],patterns:[],expiration:precisionDate)
             precisionGrant.apply()
@@ -87,6 +87,8 @@ enum OwnedExtensionPermissionError:Error {case missingFixture,timedOut}
             let after = try canonical(store.makeDocument())
             check(approvedReplies == 1 && approvedExpiration.map{$0 > Date() && $0 <= Date().addingTimeInterval(301)} == true && context.hasPermission(alarms) && context.hasPermission(WKWebExtension.Permission(rawValue:"storage")),"Approval creates a bounded native grant while retaining the permanent storage permission")
             check(after == before,"A runtime permission approval does not mutate the encrypted catalog or normal tab document")
+            store.webView(web,didStartProvisionalNavigation:nil)
+            check(!context.hasPermission(alarms),"The actual navigation-start delegate revokes its source grant before returning")
             let next = fixture.appendingPathComponent("permission-new-document")
             web.load(URLRequest(url:next));try await ready(web,next);host.synchronizeBrowserState()
             check(!context.hasPermission(alarms) && context.hasPermission(WKWebExtension.Permission(rawValue:"storage")),"Navigating the source revokes its temporary API grant while permanent rights remain")
@@ -131,6 +133,20 @@ enum OwnedExtensionPermissionError:Error {case missingFixture,timedOut}
                 repeatedRevocation = repeatedRevocation && !context.hasPermission(alarms) && context.hasPermission(WKWebExtension.Permission(rawValue:"storage"))
             }
             check(repeatedRevocation,"Repeated native date round-trips cannot leave a temporary API grant after its source navigates")
+            var activeAddress = URLComponents(url:fixture.appendingPathComponent("temporary-active-tab"),resolvingAgainstBaseURL:false)!
+            activeAddress.host = "localhost"
+            let activeURL = activeAddress.url!,activeTabPermission = WKWebExtension.Permission(rawValue:"activeTab")
+            web.load(URLRequest(url:activeURL));try await ready(web,activeURL);host.synchronizeBrowserState()
+            check(!context.hasAccess(to:activeURL,in:tab) && !tab.shouldGrantPermissionsOnUserGesture(for:context),"The activeTab fixture starts without native access to its different owned loopback origin")
+            var activeTabReplies = 0
+            host.webExtensionController(controller,promptForPermissions:[activeTabPermission],in:tab,for:context){allowed,_ in activeTabReplies += 1;check(allowed == [activeTabPermission],"Temporary activeTab approval returns only its reviewed API")}
+            replies.last?(true)
+            check(activeTabReplies == 1 && context.hasPermission(activeTabPermission) && tab.shouldGrantPermissionsOnUserGesture(for:context),"An explicitly approved temporary activeTab permission enables the actual native gesture gate")
+            context.userGesturePerformed(in:tab)
+            check(context.hasAccess(to:activeURL,in:tab),"The approved native user gesture can access only its intended active tab")
+            let activeNext = activeURL.appendingPathComponent("next-document")
+            web.load(URLRequest(url:activeNext));try await ready(web,activeNext);host.synchronizeBrowserState()
+            check(!context.hasPermission(activeTabPermission) && !context.hasActiveUserGesture(in:tab) && !context.hasAccess(to:activeNext,in:tab),"Ending a temporary activeTab approval also clears its native gesture and tab access")
             var grant = store.extensionRecords(profileID:profile).first!.grants!;grant.allowPrivate = true
             try store.setExtensionGrants(id,profileID:profile,grants:grant);try await store.prepareExtensions(profileID:profile)
             let privateContext = host.profiles[profile]!.contexts[id]!

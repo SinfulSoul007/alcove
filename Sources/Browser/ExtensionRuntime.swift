@@ -69,6 +69,9 @@ import BrowserCore
     var permissionRequestTimeout:Duration = .seconds(60)
     var permissionTickets:[UUID:NativeExtensionPermissionTicket] = [:]
     var permissionSessionGrants:[UUID:NativeExtensionSessionGrant] = [:]
+    var actionPresenter = NativeExtensionActionPresenter.live
+    var actionPreparationTimeout:Duration = .seconds(15)
+    var actionJobs:[UUID:NativeExtensionActionJob] = [:]
     init(owner:BrowserStore) {self.owner = owner}
     private func currentOwner(_ id:UUID) throws -> (BrowserStore,BrowserProfile) {
         guard let owner, !owner.isShuttingDown else {throw ExtensionHostError.closed}
@@ -92,9 +95,10 @@ import BrowserCore
     }
     func invalidate(profileID:UUID) {
         bypasses.removeValue(forKey:profileID)
+        cancelActionJobs(profileID:profileID)
         do {try profiles[profileID]?.unload();owner?.extensionStates.removeValue(forKey:profileID)}
         catch {owner?.extensionStates[profileID] = .failed(error.localizedDescription)}
-        reconcilePermissionRequests()
+        reconcileExtensionSourceRequests()
     }
     func matches(_ configuration:WKWebViewConfiguration,profileID:UUID) -> Bool {
         guard (try? currentOwner(profileID)) != nil, let runtime = profiles[profileID] else {return false}
@@ -233,6 +237,7 @@ import BrowserCore
         context.hasAccessToPrivateData = grant.allowPrivate
     }
     func shutdown() {
+        cancelActionJobs()
         cancelPermissionRequests()
         synchronization?.cancel();synchronization = nil
         reconciliation?.cancel();reconciliation = nil

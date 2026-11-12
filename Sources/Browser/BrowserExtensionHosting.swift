@@ -12,7 +12,7 @@ enum ExtensionHostError:LocalizedError {
         case .timedOut:return "The extension did not finish preparing in time. Retry or continue without extensions."
         case .damaged:return "Installed extension resources changed or are missing. Review the original package again."
         case .unsupportedIsolation:return "This package requires sandboxed extension pages. Alcove cannot yet verify that isolation in WebKit."
-        case .unsupportedPrivatePage:return "Extension pages cannot yet open in private windows. Open this extension's options explicitly from a normal window."
+        case .unsupportedPrivatePage:return "Extension tabs and options cannot yet open in private windows. Open this extension's options explicitly from a normal window."
         case .native(let detail):return "WebKit could not load this extension: " + detail
         }
     }
@@ -30,18 +30,32 @@ enum ExtensionProfileState:Equatable {
     func matches(_ configuration:WKWebViewConfiguration,profileID:UUID) -> Bool
     func continueWithout(profileID:UUID) throws
     func browserStateChanged()
+    func sourceDocumentChanged(_ web:WKWebView)
     func allowsExtensionURL(_ url:URL,profileID:UUID) -> Bool
     func configuration(for url:URL,profileID:UUID) -> WKWebViewConfiguration?
     func optionsURL(_ id:UUID,profileID:UUID) -> URL?
+    func actionSummaries(for web:WKWebView,profileID:UUID) -> [BrowserExtensionActionSummary]
+    func performAction(_ id:UUID,from web:WKWebView,profileID:UUID,anchor:NSView) throws
+    func commandSummaries(for web:WKWebView,profileID:UUID) -> [BrowserExtensionCommandSummary]
+    func performCommand(_ id:UUID,command:String,from web:WKWebView,profileID:UUID,anchor:NSView) throws
+    func performCommand(for event:NSEvent,from web:WKWebView,profileID:UUID,anchor:NSView) throws -> Bool
+    func contextMenuGroups(for target:BrowserExtensionTabTarget,profileID:UUID) -> [BrowserExtensionMenuGroup]
     func invalidate(profileID:UUID)
     func refresh()
     func shutdown()
 }
 extension BrowserExtensionHosting {
     func browserStateChanged() {refresh()}
+    func sourceDocumentChanged(_ web:WKWebView) {browserStateChanged()}
     func allowsExtensionURL(_ url:URL,profileID:UUID) -> Bool {false}
     func configuration(for url:URL,profileID:UUID) -> WKWebViewConfiguration? {nil}
     func optionsURL(_ id:UUID,profileID:UUID) -> URL? {nil}
+    func actionSummaries(for web:WKWebView,profileID:UUID) -> [BrowserExtensionActionSummary] {[]}
+    func performAction(_ id:UUID,from web:WKWebView,profileID:UUID,anchor:NSView) throws {throw ExtensionHostError.unavailable}
+    func commandSummaries(for web:WKWebView,profileID:UUID) -> [BrowserExtensionCommandSummary] {[]}
+    func performCommand(_ id:UUID,command:String,from web:WKWebView,profileID:UUID,anchor:NSView) throws {throw ExtensionHostError.unavailable}
+    func performCommand(for event:NSEvent,from web:WKWebView,profileID:UUID,anchor:NSView) throws -> Bool {false}
+    func contextMenuGroups(for target:BrowserExtensionTabTarget,profileID:UUID) -> [BrowserExtensionMenuGroup] {[]}
 }
 
 extension BrowserStore {

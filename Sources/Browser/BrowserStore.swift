@@ -94,7 +94,9 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var extensionInstallationInProgress = false
     var extensionPublication:Task<InstalledExtensionPackage,Error>?
     var extensionMaintenance:Task<Int,Error>?
-    var extensionHosting:(any BrowserExtensionHosting)?
+    var extensionHosting:(any BrowserExtensionHosting)? {
+        didSet {if oldValue !== extensionHosting {oldValue?.shutdown()}}
+    }
     @Published var extensionStates:[UUID:ExtensionProfileState] = [:]
     @Published var extensionDiagnostics:[UUID:[UUID:[String]]] = [:]
     var extensionNavigationTickets:[UUID:ExtensionNavigationTicket] = [:]
@@ -123,7 +125,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func invalidateDocumentIdentity(for web: WKWebView) {
         documentIDs.setObject(NSUUID(), forKey: web)
         cancelInvalidExtensionNavigations()
-        extensionHosting?.browserStateChanged()
+        extensionHosting?.sourceDocumentChanged(web)
         if boostPicker?.source.web === web { cancelBoostPicker() }
         BoostRuntime.invalidate(web)
     }
@@ -204,7 +206,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
-        flush(); isShuttingDown = true; cancelAllExtensionNavigations(); extensionHosting?.shutdown(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
+        flush(); isShuttingDown = true; cancelAllExtensionNavigations(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
         metadataOwnership?.release(); metadataOwnership = nil

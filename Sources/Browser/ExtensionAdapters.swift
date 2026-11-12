@@ -4,7 +4,7 @@ import BrowserCore
 
 @available(macOS 15.4,*) @MainActor extension NativeBrowserExtensionHost {
     func authorized(_ context:WKWebExtensionContext,profileID:UUID,client:BrowserStore) -> Bool {
-        guard let owner,!owner.isShuttingDown,!client.isShuttingDown,!owner.profileUnavailable(profileID),
+        guard let owner,owner.extensionHosting === self,!owner.isShuttingDown,!client.isShuttingDown,!owner.profileUnavailable(profileID),
               let lease = owner.metadataOwnership,(try? lease.validate()) != nil,let runtime = profiles[profileID],
               runtime.controllerID == owner.profiles.first(where:{$0.id == profileID})?.extensionControllerID,
               runtime.epoch == owner.extensionReviewEpoch(for:profileID),let entry = runtime.contexts.first(where:{$0.value === context}),
@@ -45,7 +45,7 @@ import BrowserCore
         }
     }
     func synchronizeBrowserState() {
-        reconcilePermissionRequests()
+        reconcileExtensionSourceRequests()
         guard let owner,!owner.isShuttingDown else {return}
         privateClients = privateClients.filter {$0.value.current != nil}
         let locations = Dictionary(uniqueKeysWithValues:nativeTabs.values.map{(ObjectIdentifier($0),($0.browserWindow,$0.browserWindow?.tabKeys.firstIndex(of:$0.key) ?? 0))})

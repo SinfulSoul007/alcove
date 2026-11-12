@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import WebKit
 import BrowserCore
 
@@ -70,6 +70,7 @@ extension BrowserStore {
     }
     func refresh() {server.browserStateChanged()}
     func browserStateChanged() {server.browserStateChanged()}
+    func sourceDocumentChanged(_ web:WKWebView) {server.sourceDocumentChanged(web)}
     func allowsExtensionURL(_ url:URL,profileID localID:UUID) -> Bool {
         guard localID == BrowserProfile.defaultID,(try? normal()) != nil,
               let context = server.profiles[profileID]?.controller.extensionContext(for:url),let client,
@@ -88,10 +89,34 @@ extension BrowserStore {
               allowsExtensionURL(url,profileID:localID) else {return nil}
         return url
     }
+    func actionSummaries(for web:WKWebView,profileID localID:UUID) -> [BrowserExtensionActionSummary] {
+        guard localID == BrowserProfile.defaultID,(try? normal()) != nil,let client else {return []}
+        return server.actionSummaries(for:web,profileID:profileID,client:client)
+    }
+    func performAction(_ id:UUID,from web:WKWebView,profileID localID:UUID,anchor:NSView) throws {
+        guard localID == BrowserProfile.defaultID,let client else {throw ExtensionHostError.stale}
+        _ = try normal();try server.performAction(id,from:web,profileID:profileID,client:client,anchor:anchor)
+    }
     func shutdown() {
         guard let owner else {return}
         if let client {server.privateClients.removeValue(forKey:client.extensionStoreID);server.synchronizeBrowserState()}
         self.owner = nil;owner.release(lease)
+    }
+    func commandSummaries(for web:WKWebView,profileID localID:UUID) -> [BrowserExtensionCommandSummary] {
+        guard localID == BrowserProfile.defaultID,(try? normal()) != nil,let client else {return []}
+        return server.commandSummaries(for:web,profileID:profileID,client:client)
+    }
+    func performCommand(_ id:UUID,command:String,from web:WKWebView,profileID localID:UUID,anchor:NSView) throws {
+        guard localID == BrowserProfile.defaultID,let client else {throw ExtensionHostError.stale}
+        _ = try normal();try server.performCommand(id,command:command,from:web,profileID:profileID,client:client,anchor:anchor)
+    }
+    func performCommand(for event:NSEvent,from web:WKWebView,profileID localID:UUID,anchor:NSView) throws -> Bool {
+        guard localID == BrowserProfile.defaultID,let client else {return false}
+        _ = try normal();return try server.performCommand(for:event,from:web,profileID:profileID,client:client,anchor:anchor)
+    }
+    func contextMenuGroups(for target:BrowserExtensionTabTarget,profileID localID:UUID) -> [BrowserExtensionMenuGroup] {
+        guard localID == BrowserProfile.defaultID,(try? normal()) != nil,let client else {return []}
+        return server.contextMenuGroups(for:target,profileID:profileID,client:client)
     }
 }
 

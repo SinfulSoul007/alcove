@@ -131,7 +131,7 @@ The developing sidebar checkpoint has [verification notes](docs/releases/0.9.0-s
 
 The developing 0.9 source upgrades metadata to format 5 for extension identities and permissions. Public 0.8 downloads use format 4 and cannot read format 5. Keep a backup and quit Alcove before replacing its bundle; extension installation and hosting are still in development.
 
-See the [native extension development checkpoint](docs/releases/0.9.0-extension-development.md) for tested private-window and permission boundaries and the remaining integration work.
+See the [native extension development checkpoint](docs/releases/0.9.0-extension-development.md) for tested private-window, permission, action and command/menu boundaries and the remaining integration work.
 
 Install Apple Command Line Tools or Xcode with a modern macOS SDK that includes WebExtension APIs (macOS 15.4 or newer), then:
 

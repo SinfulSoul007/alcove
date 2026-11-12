@@ -30,41 +30,6 @@ struct NativeExtensionPermissionReview {
     }
 }
 
-/// Both the native context and actual document/window must still be the reviewed source.
-@available(macOS 15.4,*) @MainActor final class NativeExtensionPermissionSource {
-    weak var host:NativeBrowserExtensionHost?,context:WKWebExtensionContext?,controller:WKWebExtensionController?
-    weak var tab:NativeExtensionTab?,client:BrowserStore?,web:WKWebView?,window:NSWindow?
-    let key:NativeExtensionTabKey,windowID:UUID,document:NSUUID,record:BrowserExtensionRecord,epoch:UUID
-    private var closed = false,closing:NSObjectProtocol?
-    init?(host:NativeBrowserExtensionHost,controller:WKWebExtensionController,context:WKWebExtensionContext,tab:NativeExtensionTab) {
-        guard let client = tab.live(context),let owner = host.owner,let web = tab.web,
-              let browserWindow = tab.browserWindow,let (_,window) = browserWindow.live(context),web.window === window,
-              host.nativeTabs[tab.key] === tab,host.profiles[tab.key.profileID]?.controller === controller,
-              web.configuration.webExtensionController === controller,
-              client.matchesBoostWebsiteDataStore(web,profileID:client.isPrivate ? BrowserProfile.defaultID : tab.key.profileID),
-              let id = host.profiles[tab.key.profileID]?.contexts.first(where:{$0.value === context})?.key,
-              let record = owner.extensionRecords(profileID:tab.key.profileID).first(where:{$0.id == id}) else {return nil}
-        self.host = host;self.context = context;self.controller = controller;self.tab = tab
-        self.client = client;self.web = web;self.window = window;self.record = record
-        key = tab.key;windowID = browserWindow.key.windowID;document = client.documentIdentity(for:web)
-        epoch = owner.extensionReviewEpoch(for:key.profileID)
-        closing = NotificationCenter.default.addObserver(forName:NSWindow.willCloseNotification,object:window,queue:.main){ [weak self] _ in
-            MainActor.assumeIsolated {self?.closed = true;self?.host?.reconcilePermissionRequests()}
-        }
-    }
-    deinit {if let closing {NotificationCenter.default.removeObserver(closing)}}
-    var current:Bool {
-        guard !closed,let host,let owner = host.owner,let client,let context,let controller,let tab,let web,let window,
-              tab.key == key,host.nativeTabs[key] === tab,tab.web === web,tab.live(context) === client,
-              tab.browserWindow?.key.windowID == windowID,tab.browserWindow?.live(context)?.1 === window,
-              web.window === window,client.documentIdentity(for:web) === document,
-              host.profiles[key.profileID]?.controller === controller,
-              owner.extensionReviewEpoch(for:key.profileID) == epoch,
-              owner.extensionRecords(profileID:key.profileID).first(where:{$0.id == record.id}) == record else {return false}
-        return true
-    }
-}
-
 @available(macOS 15.4,*) enum NativeExtensionPermissionKind {
     case permissions(Set<WKWebExtension.Permission>),urls(Set<URL>),patterns(Set<WKWebExtension.MatchPattern>)
     var values:[String] {
@@ -79,7 +44,7 @@ struct NativeExtensionPermissionReview {
         let authority = host.contains(":") && !host.hasPrefix("[") ? "[" + host + "]" : host
         return scheme + "://" + authority + "/*"
     }
-    @MainActor func scope(for source:NativeExtensionPermissionSource) -> (Set<WKWebExtension.Permission>,Set<WKWebExtension.MatchPattern>)? {
+    @MainActor func scope(for source:NativeExtensionSource) -> (Set<WKWebExtension.Permission>,Set<WKWebExtension.MatchPattern>)? {
         guard source.current,let context = source.context,let grant = source.record.grants else {return nil}
         switch self {
         case .permissions(let permissions):
@@ -99,7 +64,7 @@ struct NativeExtensionPermissionReview {
             return siteScope(patterns.map(\.string),source:source,context:context,grant:grant)
         }
     }
-    @MainActor private func siteScope(_ raw:[String],source:NativeExtensionPermissionSource,context:WKWebExtensionContext,grant:ExtensionGrantSet) -> (Set<WKWebExtension.Permission>,Set<WKWebExtension.MatchPattern>)? {
+    @MainActor private func siteScope(_ raw:[String],source:NativeExtensionSource,context:WKWebExtensionContext,grant:ExtensionGrantSet) -> (Set<WKWebExtension.Permission>,Set<WKWebExtension.MatchPattern>)? {
         let declared = (source.record.hostPermissions + source.record.optionalHostPermissions).compactMap(ExtensionMatchPattern.init)
         let denied = (grant.deniedHostPatterns ?? []).compactMap(ExtensionMatchPattern.init)
         let existing = context.grantedPermissionMatchPatterns.keys.compactMap{ExtensionMatchPattern($0.string)}
@@ -116,11 +81,11 @@ struct NativeExtensionPermissionReview {
 }
 
 @available(macOS 15.4,*) @MainActor final class NativeExtensionSessionGrant {
-    let id = UUID(),source:NativeExtensionPermissionSource,expiration:Date
+    let id = UUID(),source:NativeExtensionSource,expiration:Date
     let permissions:Set<WKWebExtension.Permission>,patterns:Set<WKWebExtension.MatchPattern>
     private var appliedPermissions:[WKWebExtension.Permission:Date] = [:],appliedPatterns:[WKWebExtension.MatchPattern:Date] = [:]
     private var expiry:Task<Void,Never>?
-    init(source:NativeExtensionPermissionSource,permissions:Set<WKWebExtension.Permission>,patterns:Set<WKWebExtension.MatchPattern>,expiration:Date) {
+    init(source:NativeExtensionSource,permissions:Set<WKWebExtension.Permission>,patterns:Set<WKWebExtension.MatchPattern>,expiration:Date) {
         self.source = source;self.permissions = permissions;self.patterns = patterns;self.expiration = expiration
     }
     func apply() {
@@ -144,14 +109,22 @@ struct NativeExtensionPermissionReview {
         for (permission,date) in appliedPermissions where allowed[permission] == date {allowed.removeValue(forKey:permission)}
         for (pattern,date) in appliedPatterns where sites[pattern] == date {sites.removeValue(forKey:pattern)}
         context.grantedPermissions = allowed;context.grantedPermissionMatchPatterns = sites
+        let activeTab = WKWebExtension.Permission(rawValue:"activeTab")
+        if permissions.contains(activeTab),context.isLoaded,!context.hasPermission(activeTab) {
+            // A same-origin navigation need not expire WebKit's per-tab gesture. The
+            // temporary approval has ended, so its derived tab access must end too.
+            for value in context.openTabs as NSSet {
+                if let tab = value as? any WKWebExtensionTab {context.clearUserGesture(in:tab)}
+            }
+        }
     }
 }
 
 @available(macOS 15.4,*) @MainActor final class NativeExtensionPermissionTicket {
-    let id = UUID(),source:NativeExtensionPermissionSource,kind:NativeExtensionPermissionKind
+    let id = UUID(),source:NativeExtensionSource,kind:NativeExtensionPermissionKind
     var dismiss:(()->Void)?
     private var reply:((Bool,Date?)->Void)?,timeout:Task<Void,Never>?
-    init(source:NativeExtensionPermissionSource,kind:NativeExtensionPermissionKind,reply:@escaping(Bool,Date?)->Void) {self.source = source;self.kind = kind;self.reply = reply}
+    init(source:NativeExtensionSource,kind:NativeExtensionPermissionKind,reply:@escaping(Bool,Date?)->Void) {self.source = source;self.kind = kind;self.reply = reply}
     var pending:Bool {reply != nil}
     func start(duration:Duration) {
         timeout = Task { @MainActor [weak self] in
@@ -171,6 +144,16 @@ struct NativeExtensionPermissionReview {
 }
 
 @available(macOS 15.4,*) @MainActor extension NativeBrowserExtensionHost {
+    func hasApprovedPermission(_ permission:WKWebExtension.Permission,context:WKWebExtensionContext,profileID:UUID) -> Bool {
+        guard let owner,authorized(context,profileID:profileID,client:owner),context.hasPermission(permission),
+              let id = profiles[profileID]?.contexts.first(where:{$0.value === context})?.key,
+              let grant = owner.extensionRecords(profileID:profileID).first(where:{$0.id == id})?.grants,
+              grant.deniedPermissions?.contains(permission.rawValue) != true else {return false}
+        if grant.permissions.contains(permission.rawValue) {return true}
+        return permissionSessionGrants.values.contains {
+            $0.source.context === context && $0.source.key.profileID == profileID && $0.source.current && $0.expiration > Date() && $0.permissions.contains(permission)
+        }
+    }
     func reconcilePermissionRequests() {
         for ticket in Array(permissionTickets.values) where !ticket.source.current {ticket.finish(false)}
         for grant in Array(permissionSessionGrants.values) where !grant.source.current || grant.expiration <= Date() {grant.revoke();permissionSessionGrants.removeValue(forKey:grant.id)}
@@ -182,7 +165,7 @@ struct NativeExtensionPermissionReview {
     private func reviewPermission(_ kind:NativeExtensionPermissionKind,controller:WKWebExtensionController,tab:(any WKWebExtensionTab)?,context:WKWebExtensionContext,reply:@escaping(Bool,Date?)->Void) {
         reconcilePermissionRequests()
         guard permissionTickets.count < 64,let tab = tab as? NativeExtensionTab,
-              let source = NativeExtensionPermissionSource(host:self,controller:controller,context:context,tab:tab),kind.scope(for:source) != nil,
+              let source = NativeExtensionSource(host:self,controller:controller,context:context,tab:tab),kind.scope(for:source) != nil,
               let window = source.window,window.attachedSheet == nil,
               !permissionTickets.values.contains(where:{$0.source.window === window}) else {reply(false,nil);return}
         let ticket = NativeExtensionPermissionTicket(source:source,kind:kind,reply:reply)

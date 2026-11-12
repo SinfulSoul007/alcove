@@ -106,10 +106,8 @@ struct NativeExtensionTabState:Equatable {
     func zoomFactor(for context:WKWebExtensionContext) -> Double {live(context) == nil ? 1 : Double(web?.pageZoom ?? CGFloat(state.zoom))}
     func isSelected(for context:WKWebExtensionContext) -> Bool {live(context) != nil && browserWindow?.activeKey == key}
     func shouldGrantPermissionsOnUserGesture(for context:WKWebExtensionContext) -> Bool {
-        guard live(context) != nil,context.hasPermission(WKWebExtension.Permission(rawValue:"activeTab")),
-              let host,let owner = host.owner,let id = host.profiles[key.profileID]?.contexts.first(where:{$0.value === context})?.key,
-              let grant = owner.extensionRecords(profileID:key.profileID).first(where:{$0.id == id})?.grants else {return false}
-        return grant.permissions.contains("activeTab") && grant.deniedPermissions?.contains("activeTab") != true
+        guard live(context) != nil,let host else {return false}
+        return host.hasApprovedPermission(WKWebExtension.Permission(rawValue:"activeTab"),context:context,profileID:key.profileID)
     }
     func shouldBypassPermissions(for context:WKWebExtensionContext) -> Bool {false}
     func setPinned(_ pinned:Bool,for context:WKWebExtensionContext,completionHandler:@escaping(Error?)->Void) {
