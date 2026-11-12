@@ -62,10 +62,8 @@ extension BrowserStore {
     func bookmarkWebsite(_ web: WKWebView) throws {
         guard !isPrivate else { throw ProfileError.privateMode }
         guard let profile = profileID(for: web), let url = web.url, QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.missing }
-        try requireQuickProfile(profile)
-        var candidate = makeDocument(); var records = candidate.library(for: profile)
-        records.bookmark(title: web.title ?? url.absoluteString, url: url.absoluteString); candidate.setLibrary(records, for: profile)
-        try commitQuickDocument(candidate); message = "Bookmark saved."
+        let id = views.first(where:{$0.value === web})?.key
+        try saveSidebarBookmark(title:web.title ?? url.absoluteString,url:url.absoluteString,profileID:profile,spaceID:spaceID(for:web),existingTabID:id)
     }
     func quickActionSnapshot(_ id: UUID) -> QuickActionSnapshot? {
         guard let profile = quickProfileID(id), let page = quickPage(id) else { return nil }
@@ -80,11 +78,9 @@ extension BrowserStore {
     }
     func bookmarkQuickPage(_ id: UUID) throws {
         guard !isPrivate else { throw ProfileError.privateMode }
+        if let web = foregroundQuickView(id),web.url != nil {try bookmarkWebsite(web);return}
         guard let profile = quickProfileID(id), let page = quickPage(id), let url = URL(string: page.tab.url), QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.missing }
-        try requireQuickProfile(profile)
-        var candidate = makeDocument(); var records = candidate.library(for: profile)
-        records.bookmark(title: page.tab.title, url: page.tab.url); candidate.setLibrary(records, for: profile)
-        try commitQuickDocument(candidate); message = "Bookmark saved."
+        try saveSidebarBookmark(title:page.tab.title,url:page.tab.url,profileID:profile,spaceID:page.intendedSpaceID,existingTabID:nil)
     }
     @discardableResult func restoreQuickArchiveInSpace(_ id: UUID, profileID: UUID) throws -> UUID {
         try restoreArchivedRouted(id, profileID: profileID)

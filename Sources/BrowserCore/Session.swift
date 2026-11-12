@@ -43,11 +43,18 @@ public struct Space: Codable, Identifiable, Equatable {
     public var customTheme: CustomTheme?
     public var icon: String?
     public var collapsedFolders: [String]?
+    public var folders: [String]?
     public var profileID: UUID?
     public var tabs: [Tab]
     public var selected: UUID?
     public init(name: String, tabs: [Tab] = [Tab()]) {
         self.name = name; self.tabs = tabs; self.selected = tabs.first?.id
+    }
+    /// Ordered definitions retain empty folders; old saved tabs supply missing definitions.
+    public var folderNames: [String] {
+        var seen = Set<String>()
+        return ((folders ?? []) + tabs.filter { $0.pinned && $0.favorite != true }.compactMap(\.folder))
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 }
 public struct Session: Codable {

@@ -22,7 +22,9 @@ Download the universal DMG or ZIP from [GitHub Releases](https://github.com/Sinf
 - Responsive startup while Keychain approval waits, with private browsing available immediately.
 - Animated, skippable first-launch setup, plus a replayable welcome tour. Existing sessions and private windows skip setup.
 - Manual GitHub update checks, stable/preview channels and optional daily checks. Downloads and installation remain explicit actions.
-- Drag tabs between sections and into folders. Pinned tabs keep their title and saved home URL when closed.
+- Favorites, Pinned and Today scroll separately, keeping saved pages visible while you browse daily tabs. Bookmarking also pins the original page without reloading it.
+- Create empty folders from the Pinned header, File menu or command bar. Move tabs into folders using their context menu or drag-and-drop; rename folders or remove them while keeping their tabs pinned. Folder definitions survive relaunch.
+- Drag tabs between sections and into folders. Pinned tabs keep their title and saved home URL when closed. ⌘W closes the focused page (or Peek/panel first), then closes an empty window while leaving Alcove running.
 - Folders for pinned tabs; right-click a tab to organize it.
 - Split view with actions targeted to the clicked pane.
 - Keyboard-driven command bar with tab switching, Pin/Favorite commands and no empty tab created on cancellation.
@@ -123,11 +125,13 @@ The first profile-enabled launch migrates encrypted `session.sealed` into `sessi
 
 If a legacy `session.json` already exists inside Alcove’s own storage directory, startup migrates it to encrypted metadata before removing that in-container legacy file. Existing unrelated browser profiles are never imported automatically.
 
+The developing sidebar checkpoint has [verification notes](docs/releases/0.9.0-sidebar-preview-verification.md).
+
 ## Build from source
 
 The developing 0.9 source upgrades metadata to format 5 for extension identities and permissions. Public 0.8 downloads use format 4 and cannot read format 5. Keep a backup and quit Alcove before replacing its bundle; extension installation and hosting are still in development.
 
-Install Apple Command Line Tools, then:
+Install Apple Command Line Tools or Xcode with a modern macOS SDK that includes WebExtension APIs (macOS 15.4 or newer), then:
 
 ```sh
 ./scripts/build.sh test

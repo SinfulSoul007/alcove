@@ -45,6 +45,7 @@ import BrowserCore
             onOpenBoosts: { [weak self] in self?.requestBoosts() })
         let hosting = NSHostingView(rootView: content); hosting.safeAreaRegions = []; hosting.sizingOptions = []
         window.contentView = hosting; refreshTitle()
+        store.registerExtensionWindow(window,kind:.quick(pageID))
         changeSubscription = store.objectWillChange.sink { [weak self] _ in
             Task { @MainActor in self?.refreshTitle() }
         }
@@ -78,6 +79,7 @@ import BrowserCore
     func windowWillClose(_ notification: Notification) {
         guard !released else { return }
         released = true
+        store.unregisterExtensionWindow(kind:.quick(pageID))
         if let activityMonitor { NSEvent.removeMonitor(activityMonitor); self.activityMonitor = nil }
         changeSubscription?.cancel(); changeSubscription = nil
         if store.focusedQuickPageID == pageID { store.focusedQuickPageID = nil }

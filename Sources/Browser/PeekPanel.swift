@@ -34,6 +34,7 @@ extension BrowserStore {
         }
         closePeek(in: context)
         let config = WKWebViewConfiguration(); config.websiteDataStore = websiteDataStore(forProfile: profile)
+        configureExtensions(config,profileID:profile)
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self; web.uiDelegate = self; web.allowsBackForwardNavigationGestures = true
         let page = PeekState(web: web, profileID: profile, spaceID: targetSpace, requestedURL: url)

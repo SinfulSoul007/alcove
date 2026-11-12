@@ -86,6 +86,7 @@ extension BrowserStore {
         try commitQuickDocument(candidate, beforePublish: {
             if let configuration {
                 configuration.websiteDataStore = self.websiteDataStore(forProfile: owner)
+                self.configureExtensions(configuration,profileID:owner)
                 configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
                 self.registerView(WKWebView(frame: .zero, configuration: configuration), for: page.id, profile: owner)
             }

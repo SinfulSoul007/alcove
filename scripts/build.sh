@@ -98,13 +98,58 @@ run_extension_store_checks() {
     "$MANUAL/extension-store-checks"
 }
 if [[ "${1:-}" == "extension-store-test" ]]; then run_extension_store_checks; exit; fi
+run_extension_runtime_checks() {
+    local extension_check_name="${1:-runtime}" extension_check_source="scripts/ExtensionRuntimeChecks.swift"
+    if [[ "$extension_check_name" == "navigation" ]]; then extension_check_source="scripts/ExtensionNavigationChecks.swift"; fi
+    if [[ "$extension_check_name" == "adapter" ]]; then extension_check_source="scripts/ExtensionAdapterChecks.swift"; fi
+    if [[ "$extension_check_name" == "private" ]]; then extension_check_source="scripts/ExtensionPrivateChecks.swift"; fi
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" "$extension_check_source" scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$MANUAL/extension-$extension_check_name-checks"
+    local extension_port_file extension_fixture_pid
+    extension_port_file="$(mktemp "$MANUAL/extension-port.XXXXXX")"
+    python3 scripts/ExtensionFixture.py "$extension_port_file" > "$MANUAL/extension-fixture.log" 2>&1 &
+    extension_fixture_pid=$!
+    trap 'kill "$extension_fixture_pid" 2>/dev/null || true; wait "$extension_fixture_pid" 2>/dev/null || true; python3 -c "import pathlib,sys; pathlib.Path(sys.argv[1]).unlink(missing_ok=True)" "$extension_port_file"' EXIT
+    for attempt in {1..500}; do [[ -s "$extension_port_file" ]] && break; kill -0 "$extension_fixture_pid" 2>/dev/null || break; sleep 0.02; done
+    [[ -s "$extension_port_file" ]]
+    ALCOVE_EXTENSION_FIXTURE_URL="http://127.0.0.1:$(cat "$extension_port_file")/" "$MANUAL/extension-$extension_check_name-checks"
+    kill "$extension_fixture_pid" 2>/dev/null || true
+    wait "$extension_fixture_pid" 2>/dev/null || true
+    python3 -c 'import pathlib,sys; pathlib.Path(sys.argv[1]).unlink(missing_ok=True)' "$extension_port_file"
+    trap - EXIT
+}
+if [[ "${1:-}" == "extension-runtime-test" ]]; then run_extension_runtime_checks; exit; fi
+if [[ "${1:-}" == "extension-navigation-test" ]]; then run_extension_runtime_checks navigation; exit; fi
+if [[ "${1:-}" == "extension-adapter-test" ]]; then run_extension_runtime_checks adapter; exit; fi
+if [[ "${1:-}" == "extension-private-test" ]]; then run_extension_runtime_checks private; exit; fi
+run_sidebar_organization_checks() {
+    local sidebar_check_source="scripts/SidebarOrganizationChecks.swift" sidebar_check_binary="$MANUAL/sidebar-organization-checks"
+    if [[ "${1:-}" == "layout" ]]; then sidebar_check_source="scripts/SidebarOrganizationLayoutChecks.swift"; sidebar_check_binary="$MANUAL/sidebar-organization-layout-checks"; fi
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" "$sidebar_check_source" -o "$sidebar_check_binary"
+    local sidebar_port_file sidebar_fixture_pid
+    sidebar_port_file="$(mktemp "$MANUAL/sidebar-port.XXXXXX")"
+    python3 scripts/ExtensionFixture.py "$sidebar_port_file" > "$MANUAL/sidebar-fixture.log" 2>&1 &
+    sidebar_fixture_pid=$!
+    trap 'kill "$sidebar_fixture_pid" 2>/dev/null || true; wait "$sidebar_fixture_pid" 2>/dev/null || true; python3 -c "import pathlib,sys; pathlib.Path(sys.argv[1]).unlink(missing_ok=True)" "$sidebar_port_file"' EXIT
+    for attempt in {1..500}; do [[ -s "$sidebar_port_file" ]] && break; kill -0 "$sidebar_fixture_pid" 2>/dev/null || break; sleep 0.02; done
+    [[ -s "$sidebar_port_file" ]]
+    ALCOVE_EXTENSION_FIXTURE_URL="http://127.0.0.1:$(cat "$sidebar_port_file")/" "$sidebar_check_binary"
+    kill "$sidebar_fixture_pid" 2>/dev/null || true
+    wait "$sidebar_fixture_pid" 2>/dev/null || true
+    python3 -c 'import pathlib,sys; pathlib.Path(sys.argv[1]).unlink(missing_ok=True)' "$sidebar_port_file"
+    trap - EXIT
+}
+if [[ "${1:-}" == "sidebar-organization-test" ]]; then run_sidebar_organization_checks; exit; fi
+run_sidebar_organization_layout_checks() {
+    run_sidebar_organization_checks layout
+}
+if [[ "${1:-}" == "sidebar-organization-layout-test" ]]; then run_sidebar_organization_layout_checks; exit; fi
 run_spaces_layout_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SpacesLayoutChecks.swift -o "$MANUAL/spaces-layout-checks"
     "$MANUAL/spaces-layout-checks"
 }
 if [[ "${1:-}" == "spaces-layout-test" ]]; then run_spaces_layout_checks; exit; fi
 run_space_checks() {
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SpaceManagementChecks.swift -o "$MANUAL/space-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SpaceManagementChecks.swift scripts/OwnedExtensionControllers.swift -o "$MANUAL/space-checks"
     "$MANUAL/space-checks"
 }
 if [[ "${1:-}" == "space-test" ]]; then run_space_checks; exit; fi
@@ -250,6 +295,12 @@ fi
 if [[ "${1:-}" == "test" ]]; then
     run_extension_core_checks
     run_extension_store_checks
+    run_extension_runtime_checks
+    run_extension_runtime_checks navigation
+    run_extension_runtime_checks adapter
+    run_extension_runtime_checks private
+    run_sidebar_organization_checks
+    run_sidebar_organization_layout_checks
     run_spaces_layout_checks
     run_space_checks
     run_writer_checks

@@ -3,20 +3,21 @@ import WebKit
 import BrowserCore
 
 final class EdgeToEdgeWebHost: NSView {
-    private var contentConstraints: [NSLayoutConstraint] = []
     func setContent(_ view: NSView) {
-        guard subviews.first !== view else { return }
-        NSLayoutConstraint.deactivate(contentConstraints)
+        guard subviews.first !== view else { fitContent();return }
         for old in subviews { old.removeFromSuperview() }
-        view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view)
-        contentConstraints = [view.topAnchor.constraint(equalTo: topAnchor), view.bottomAnchor.constraint(equalTo: bottomAnchor), view.leadingAnchor.constraint(equalTo: leadingAnchor), view.trailingAnchor.constraint(equalTo: trailingAnchor)]
-        NSLayoutConstraint.activate(contentConstraints)
+        // SwiftUI can replace a split pane between AppKit layout passes. Give WebKit
+        // its actual viewport immediately so its remote drawing surface cannot stay zero-sized.
+        view.translatesAutoresizingMaskIntoConstraints = true
+        view.autoresizingMask = [.width,.height];addSubview(view);fitContent()
         func removeTitlebarInset(_ view: NSView) {
             if let scroll = view as? NSScrollView { scroll.automaticallyAdjustsContentInsets = false; scroll.contentInsets = .init(top: 0, left: 0, bottom: 0, right: 0) }
             for child in view.subviews { removeTitlebarInset(child) }
         }
         removeTitlebarInset(view)
     }
+    private func fitContent() {if let view = subviews.first,view.frame != bounds {view.frame = bounds}}
+    override func layout() {super.layout();fitContent()}
     override var safeAreaInsets: NSEdgeInsets { .init(top: 0, left: 0, bottom: 0, right: 0) }
 }
 struct WebPane: NSViewRepresentable {
@@ -186,7 +187,11 @@ struct BrowserUI: View {
     private func sidebar(width: Double, windowHeight: Double) -> some View {
         let columns = appearance.columns(for: width)
         let favoriteRows = Double((store.favorites.count + columns - 1) / columns)
-        let favoritesHeight: Double = min(max(0, favoriteRows * 55.0 - 7.0), min(224.0, max(96.0, windowHeight * 0.28)))
+        // Reserve chrome, both section headers and the footer before dividing the scrollable space.
+        let pool = max(0, windowHeight - chrome.height - 197 - (store.favorites.isEmpty ? 0 : 8))
+        let favoritesHeight = min(max(0, favoriteRows * 55 - 7), min(224, pool * 0.30))
+        let savedRows = Double(pins.count) * (appearance.rowHeight + 3) + Double(store.space.folderNames.count) * 36 + 8
+        let pinnedHeight = min(max(32, savedRows), min(260, (pool - favoritesHeight) * 0.5))
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
                 Color.clear.frame(width: max(0, chrome.leadingEdge - 17)).allowsHitTesting(false)
@@ -209,10 +214,10 @@ struct BrowserUI: View {
                     ForEach(store.favorites) { tab in
                         Button { store.selectAny(tab.id) } label: {
                             SiteBadge(url: tab.homeURL ?? tab.url, large: true, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil).frame(maxWidth: .infinity).frame(height: 48).background(store.focusedID == tab.id ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: 10))
-                        }.buttonStyle(.plain).help(tab.pinnedTitle ?? tab.title).onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }.contextMenu { Button("Remove from Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata); Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) }.disabled(!store.canModifyLocalMetadata) }
+                        }.buttonStyle(.plain).help(tab.pinnedTitle ?? tab.title).onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }.contextMenu { TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id); Button("Remove from Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata); Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) }.disabled(!store.canModifyLocalMetadata) }
                     }
                 }
-                }.frame(height: favoritesHeight).padding(.horizontal, 8).padding(.bottom, 12).onDrop(of: [.text], delegate: TabDrop(store: store, section: .favorites))
+                }.frame(height: favoritesHeight).accessibilityLabel("Favorites").padding(.horizontal, 8).padding(.bottom, 8).onDrop(of: [.text], delegate: TabDrop(store: store, section: .favorites))
             }
             HStack {
                 Text(store.space.name.isEmpty ? "Space" : store.space.name).font(.system(size: 12, weight: .semibold)).opacity(0.5)
@@ -228,27 +233,18 @@ struct BrowserUI: View {
                     Button("Bookmark Page") { store.addBookmark() }.disabled(store.isPrivate || !store.savingEnabled || store.profileUnavailable(store.activeProfileID))
                     spaceProfileMenu
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("Space settings")
-            }.padding(.horizontal, 16).padding(.vertical, 12)
+            }.padding(.horizontal, 16).frame(height: 36)
+            SidebarSavedTabs(store: store, theme: theme, appearance: appearance, motion: motion, height: pinnedHeight)
+            Rectangle().fill(theme.ink.opacity(0.12)).frame(height: 1).padding(.horizontal, 18).padding(.vertical, 6)
+            HStack {
+                Text("Today").font(.system(size: 11, weight: .semibold)).opacity(0.5)
+                Spacer(minLength: 4)
+                if !today.isEmpty { Button("Clear") { for tab in today { store.close(tab.id) } }.font(.system(size: 10)).buttonStyle(.plain).opacity(0.4).help("Close Today tabs") }
+                Button { store.showCommand(new: true) } label: { Label("New Tab", systemImage: "plus").font(.system(size: 12)).opacity(0.5) }.buttonStyle(.plain)
+            }.padding(.horizontal, 18).frame(height: 32).onDrop(of: [.text], delegate: TabDrop(store: store, section: .today))
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 3) {
-                    ForEach(pins.filter { $0.folder == nil }) { row($0) }
-                    ForEach(Array(Set(pins.compactMap(\.folder))).sorted(), id: \.self) { folder in
-                        DisclosureGroup(isExpanded: Binding(get: { !(store.space.collapsedFolders ?? []).contains(folder) }, set: { expanded in
-                            var collapsed = store.space.collapsedFolders ?? []; collapsed.removeAll { $0 == folder }; if !expanded { collapsed.append(folder) }; store.session.spaces[store.spaceIndex].collapsedFolders = collapsed; store.save()
-                        })) { ForEach(pins.filter { $0.folder == folder }) { row($0) } } label: {
-                            Label(folder, systemImage: "folder.fill").font(.system(size: 12 * appearance.textScale, weight: .medium)).lineLimit(1).padding(.vertical, 7).foregroundStyle(theme.accent)
-                        }.tint(theme.ink.opacity(0.4)).disabled(!store.canModifyLocalMetadata).padding(.horizontal, 9).onDrop(of: [.text], delegate: TabDrop(store: store, section: .pinned, folder: folder))
-                    }
-                    Color.clear.frame(height: pins.isEmpty ? 10 : 3).contentShape(Rectangle()).onDrop(of: [.text], delegate: TabDrop(store: store, section: .pinned))
-                    Rectangle().fill(theme.ink.opacity(0.12)).frame(height: 0.5).padding(.horizontal, 10).padding(.vertical, 12)
-                    HStack {
-                        Button { store.showCommand(new: true) } label: { Label("New Tab", systemImage: "plus").font(.system(size: 13)).opacity(0.5) }.buttonStyle(.plain)
-                        Spacer()
-                        if today.contains(where: { !$0.url.isEmpty }) { Button("Clear") { for tab in today where !tab.url.isEmpty { store.close(tab.id) } }.font(.system(size: 10)).buttonStyle(.plain).opacity(0.4).help("Close Today tabs") }
-                    }.padding(.horizontal, 12).frame(height: 32).onDrop(of: [.text], delegate: TabDrop(store: store, section: .today))
-                    ForEach(today) { row($0) }
-                }.padding(.horizontal, 8)
-            }
+                LazyVStack(alignment: .leading, spacing: 3) { ForEach(today) { row($0) } }.padding(.horizontal, 8)
+            }.accessibilityLabel("Today tabs").onDrop(of: [.text], delegate: TabDrop(store: store, section: .today))
             HStack(spacing: 10) {
                 mini("archivebox", "Library") { store.libraryVisible = true }
                 if updates.offer != nil { mini("arrow.down.circle.fill", "An Alcove update is available") { store.updatesVisible = true }.foregroundStyle(theme.accent) }
@@ -327,7 +323,7 @@ struct SidebarTabRow: View {
         .contextMenu {
             Button(tab.pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id) }.disabled(!store.canModifyLocalMetadata)
             Button("Add to Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata)
-            Button("Move to Folder…") { store.setFolder(tab.id) }.disabled(!store.canModifyLocalMetadata)
+            TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id)
             if tab.id != store.selectedID && !tab.url.isEmpty { Button("Open in Split View") { store.splitID = tab.id } }
             Menu("Move to Space") {
                 ForEach(store.session.spaces.filter { $0.id != store.space.id }) { s in

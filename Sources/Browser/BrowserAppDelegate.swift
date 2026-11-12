@@ -115,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         owners[owner.id] = owner
         store.privateWindowRequested = { [weak self] in self?.openWindow(isPrivate: true) }
+        store.extensionPrimaryWindowRequested = { [weak self,weak owner] in if let owner {self?.openPrimary(owner)} }
         store.metadataDidLoad = { [weak self, weak owner] in if let owner { self?.metadataDidLoad(owner) } }
         store.onboardingDidFinish = { [weak self, weak store] in if let store { self?.checkAutomaticallyIfNeeded(store) } }
         store.automaticUpdatesDidChange = { [weak self, weak store] in if let store { self?.checkAutomaticallyIfNeeded(store) } }
@@ -200,6 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let hosting = NSHostingView(rootView: BrowserUI(store: store).environmentObject(updates))
         hosting.safeAreaRegions = []; hosting.sizingOptions = [.minSize]; window.contentView = hosting
         windows[window] = store; primaryOwners[window] = owner; primaryLeases[window] = lease
+        store.registerExtensionWindow(window,kind:.primary)
         if !store.isPrivate { normalWindow = window }
         window.center(); if activate { window.makeKeyAndOrderFront(nil) }; checkAutomaticallyIfNeeded(store)
     }
@@ -219,6 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         pageOutput.cancel(in: window)
         let owner = primaryOwners.removeValue(forKey: window); let lease = primaryLeases.removeValue(forKey: window)
         let store = windows.removeValue(forKey: window); window.contentView = nil
+        store?.unregisterExtensionWindow(kind:.primary)
         store?.closePrimaryWindowPages()
         if normalWindow === window { normalWindow = nil }
         if let lease { owner?.release(lease) }
@@ -272,6 +275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(file, "Open Main Window", #selector(openMain), "n"); add(file, "New Quick Browse", #selector(newQuick), "n", [.command, .option])
         add(file, "New Tab", #selector(newTab), "t"); add(file, "New Private Window", #selector(privateWindow), "n", [.command, .shift])
         add(file, "New Space…", #selector(newSpace), "n", [.command, .control]); add(file, "Open Location…", #selector(location), "l")
+        add(file, "New Folder…", #selector(newFolder), "")
         add(file, "Import Preview Session…", #selector(importSession), "")
         file.addItem(.separator())
         add(file, "Save Page As…", #selector(savePage), "s", [.command, .shift])
@@ -307,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return pageOutput.canBegin(web: target.web, store: target.store, window: target.window)
         }
         if activeStore?.awaitingInitialMetadata == true {
-            return [#selector(openMain), #selector(privateWindow), #selector(quit), #selector(about)].contains(menuItem.action)
+            return [#selector(openMain), #selector(privateWindow), #selector(closeTab), #selector(quit), #selector(about)].contains(menuItem.action)
         }
         let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings), #selector(customize), #selector(checkUpdates), #selector(siteSearchSettings), #selector(linkRoutingSettings), #selector(websiteBoosts), #selector(manageSpaces), #selector(recentlyDeletedSpaces)]
         if let action = menuItem.action, general.contains(action) { return true }
@@ -327,12 +331,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let available = !store.profileUnavailable(profile)
         if quick != nil {
             switch menuItem.action {
-            case #selector(sidebar), #selector(split), #selector(pin), #selector(reopen), #selector(nextTab), #selector(previousTab), #selector(nextSpace), #selector(previousSpace), #selector(newSpace), #selector(importSession): return false
+            case #selector(sidebar), #selector(split), #selector(pin), #selector(reopen), #selector(nextTab), #selector(previousTab), #selector(nextSpace), #selector(previousSpace), #selector(newSpace), #selector(newFolder), #selector(importSession): return false
             default: break
             }
         }
         switch menuItem.action {
-        case #selector(newQuick), #selector(newSpace): return store.canModifyLocalMetadata && !store.profileDataOperationInProgress && available
+        case #selector(newQuick), #selector(newSpace), #selector(newFolder): return store.canModifyLocalMetadata && !store.profileDataOperationInProgress && available
         case #selector(pin), #selector(reopen): return store.canModifyLocalMetadata && available
         case #selector(bookmark): return !store.isPrivate && store.savingEnabled && available && activeWebView?.url != nil
         case #selector(importSession): return !store.isPrivate && store.savingEnabled && available
@@ -383,6 +387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func previousSpace() { stepSpace(-1) }
     @objc func importSession() { guard activeQuick == nil, let store = activeStore, !store.isPrivate, store.savingEnabled, !store.profileUnavailable(store.activeProfileID) else { return }; store.importLegacySession() }
     @objc func newSpace() { if activeQuick == nil { activeStore?.requestNewSpace() } }
+    @objc func newFolder() {if activeQuick == nil {activeStore?.requestNewTabFolder()}}
     @objc func location() {
         if let quick = activeQuick { quick.requestLocation(); return }
         if activeStore == nil { openMain() }
@@ -391,8 +396,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func closeTab() {
         if let quick = activeQuick { quick.window?.performClose(nil); return }
-        guard let store = activeStore else { return }
-        if store.presentedPanel != nil { store.presentedPanel = nil; return }; if let id = store.focusedID { store.close(id) }
+        guard let window = activeBrowserWindow,let store = browserStore(in:window) else {return}
+        if store.awaitingInitialMetadata {window.performClose(nil);return}
+        if store.presentedPanel != nil {store.presentedPanel = nil;return}
+        if store.primaryPeekView != nil {store.closePrimaryPeek();return}
+        if let id = store.focusedID {store.close(id)}
+        if !store.space.tabs.contains(where:{!$0.pinned && !$0.url.isEmpty}) {window.performClose(nil)}
     }
     @objc func reopen() { guard activeQuick == nil, let store = activeStore, store.canModifyLocalMetadata, !store.profileUnavailable(store.activeProfileID) else { return }; store.reopenClosed() }
     @objc func reload() { activeWebView?.reload() }

@@ -19,28 +19,40 @@ enum BrowserWindowOwnerError: LocalizedError {
     let store: BrowserStore
     private var primaryLeases: Set<UUID> = []
     private var quickLeases: [UUID: UUID] = [:]
+    private var auxiliaryLeases:Set<UUID> = []
     private(set) var isClosed = false
     private(set) var pendingExternalURLs: [URL] = []
     private let onLastWindow: () -> Void
-    var leaseCount: Int { primaryLeases.count + quickLeases.count }
+    var leaseCount: Int { primaryLeases.count + quickLeases.count + auxiliaryLeases.count }
     init(store: BrowserStore, onLastWindow: @escaping () -> Void = {}) {
         self.store = store; self.onLastWindow = onLastWindow
     }
     func acquirePrimary() throws -> UUID {
         guard !isClosed else { throw BrowserWindowOwnerError.closed }
-        let token = UUID(); primaryLeases.insert(token); return token
+        let token = UUID(); primaryLeases.insert(token);resumeArchiveIfReady(); return token
     }
     func acquireQuick(_ id: UUID) throws -> UUID {
         guard !isClosed else { throw BrowserWindowOwnerError.closed }
         guard store.quickPage(id) != nil else { throw QuickBrowseError.missing }
         if let token = quickLeases[id] { return token }
-        let token = UUID(); quickLeases[id] = token; return token
+        let token = UUID(); quickLeases[id] = token;resumeArchiveIfReady(); return token
+    }
+    private func resumeArchiveIfReady() {
+        guard !store.isPrivate,!store.awaitingInitialMetadata,store.savingEnabled,store.vault != nil else {return}
+        store.startArchiveTimer()
+    }
+    func acquireAuxiliary() throws -> UUID {
+        guard !isClosed,!store.isPrivate,!store.isShuttingDown else {throw BrowserWindowOwnerError.closed}
+        let token = UUID();auxiliaryLeases.insert(token);return token
     }
     func release(_ token: UUID) {
         guard !isClosed else { return }
         var removed = primaryLeases.remove(token) != nil
         if let id = quickLeases.first(where: { $0.value == token })?.key { quickLeases.removeValue(forKey: id); removed = true }
-        guard removed, leaseCount == 0 else { return }
+        if auxiliaryLeases.remove(token) != nil {removed = true}
+        guard removed else {return}
+        if primaryLeases.isEmpty && quickLeases.isEmpty && !auxiliaryLeases.isEmpty {store.archiveTimer?.invalidate();store.archiveTimer = nil}
+        guard leaseCount == 0 else { return }
         isClosed = true; pendingExternalURLs = []; store.shutdown(); onLastWindow()
     }
     func drainExternalLinks() -> [ExternalLinkDestination] {

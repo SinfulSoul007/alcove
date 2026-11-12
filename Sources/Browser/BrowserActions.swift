@@ -112,10 +112,8 @@ extension BrowserStore {
     }
     func zoom(_ amount: Double) { if let web = currentView { web.pageZoom = min(3, max(0.5, web.pageZoom + amount)) } }
     func addBookmark() {
-        guard !isPrivate, let web = currentView, let url = web.url?.absoluteString else {
-            if isPrivate { message = "Bookmarks are not saved from private windows." }; return
-        }
-        library.bookmark(title: web.title ?? url, url: url); save(); message = "Bookmark saved."
+        guard let web = primaryPeekView ?? currentView else {return}
+        do {try bookmarkWebsite(web)} catch {message = error.localizedDescription}
     }
     func reopenClosed() {
         guard var tab = library.closedTabs.first else { return }
@@ -126,13 +124,7 @@ extension BrowserStore {
         do { _ = try restoreArchivedRouted(id, profileID: activeProfileID) } catch { message = error.localizedDescription }
     }
     func setFolder(_ id: UUID) {
-        let alert = NSAlert(); alert.messageText = "Pinned tab folder"; alert.informativeText = "Choose a folder name. Leave it empty to remove the tab from its folder."
-        let field = NSTextField(string: tab(id)?.folder ?? ""); field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
-        alert.accessoryView = field; alert.addButton(withTitle: "Save"); alert.addButton(withTitle: "Cancel"); alert.window.initialFirstResponder = field
-        if alert.runModal() == .alertFirstButtonReturn {
-            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            update(id) { $0.folder = name.isEmpty ? nil : name; if !name.isEmpty { $0.pinned = true; $0.homeURL = $0.homeURL ?? $0.url; $0.pinnedTitle = $0.pinnedTitle ?? $0.title } }
-        }
+        requestNewTabFolder(adding:id)
     }
     func archiveOldTabs() {
         guard !isPrivate, preferences.archiveAfterDays > 0 else { return }
@@ -175,6 +167,7 @@ extension BrowserStore {
             var tabs = source.tabs
             for i in tabs.indices { tabs[i].id = UUID() }
             var space = Space(name: "Imported \(source.name)", tabs: tabs.isEmpty ? [BrowserCore.Tab()] : tabs)
+            space.folders = source.folderNames; space.collapsedFolders = source.collapsedFolders
             space.profileID = profileID; candidate.session.spaces.append(space)
         }
         try commitProfileDocument(candidate)

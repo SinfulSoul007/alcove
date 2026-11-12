@@ -41,6 +41,22 @@ public struct InstalledExtensionPackage:Sendable {
 }
 
 public enum ExtensionPackage {
+    /// Revalidate installed code through owned directory descriptors; saved metadata supplies no path.
+    public static func inspectInstalled(record:BrowserExtensionRecord,profileID:UUID,packagesRoot:URL) throws -> (url:URL,manifest:ExtensionManifest) {
+        guard profileID != BrowserProfile.zeroID, record.hasValidIdentity else {throw ExtensionValidationError.invalidResourcePath}
+        let root = try ExtensionDirectory(url:packagesRoot,create:false,owned:true)
+        let owner = try root.child(profileID.uuidString,create:false), package = try owner.child((record.packageID ?? record.id).uuidString,create:false)
+        let revision = try package.child(record.packageDigest,create:false)
+        let contents = try snapshot(revision,limits:.default,totalLimit:ExtensionPackageLimits.default.expandedBytes,excludeMetadata:false)
+        guard fingerprint(contents) == record.packageDigest else {throw ExtensionValidationError.invalidArchive("installed resources changed; review the original package again")}
+        let manifest = try inspectedManifest(contents)
+        guard manifest.name == record.name, manifest.version == record.version, manifest.manifestVersion == record.manifestVersion,
+              Set(manifest.requestedPermissions) == Set(record.requestedPermissions), Set(manifest.optionalPermissions) == Set(record.optionalPermissions),
+              Set(manifest.hostPermissions) == Set(record.hostPermissions), Set(manifest.optionalHostPermissions) == Set(record.optionalHostPermissions),
+              manifest.incognito == (record.incognito ?? "spanning") else {throw ExtensionValidationError.invalidArchive("installed manifest does not match its reviewed catalog entry")}
+        try root.verifyPath();try owner.verifyPath();try package.verifyPath();try revision.verifyPath()
+        return (revision.url,manifest)
+    }
     public static func prepare(at sourceURL:URL,stagingRoot:URL,expectedStoreID:String? = nil,requireStoreProof:Bool = false,limits:ExtensionPackageLimits = .default,progress:(Int)->Void = {_ in}) throws -> PreparedExtensionPackage {
         try Task.checkCancellation()
         if let expectedStoreID, !BrowserExtensionRecord.validExternalID(expectedStoreID) { throw ExtensionValidationError.invalidArchive("invalid expected extension identity") }

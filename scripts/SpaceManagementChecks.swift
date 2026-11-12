@@ -39,10 +39,18 @@ import BrowserCore
             do { try action(); check(false,name) } catch { check(true,name) }
         }
         let live = BrowserStore(dataRoot:root.appendingPathComponent("live"),keyProvider:{_ in key}); live.finishOnboarding()
+        let initialSpace = live.space.id,fixtureProfile = try live.createProfile(name:"Owned lifecycle")
+        live.session.spaces.removeAll {$0.id == initialSpace}
+        live.namedDataStores[fixtureProfile] = .nonPersistent()
+        var cleanExtensionController:(@MainActor () async -> Bool)?
+        if #available(macOS 15.4,*) {
+            let owned = try OwnedExtensionControllers();guard await owned.cleanup() else {exit(1)}
+            try owned.register(live.profiles.first(where:{$0.id == fixtureProfile})!.extensionControllerID!)
+            cleanExtensionController = {await owned.cleanup()}
+        }
         let personal = live.space.id, originalTab = live.selectedID!
-        let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
-        let web = WKWebView(frame:NSRect(x:0,y:0,width:600,height:400),configuration:config)
-        live.registerView(web,for:originalTab,profile:BrowserProfile.defaultID)
+        // Use the real construction path, including its immutable profile controller.
+        let web = live.view(for:originalTab)
         let host = NSWindow(contentRect:NSRect(x:0,y:0,width:600,height:400),styleMask:[],backing:.buffered,defer:false)
         host.isReleasedWhenClosed = false; host.contentView = web
         web.loadHTMLString("<input id='owned' value='survive'>",baseURL:nil)
@@ -82,15 +90,16 @@ import BrowserCore
         let recordID = relaunched.library.deletedSpaces!.first!.id
         var collision = Space(name:"Existing collision"); collision.id = research; collision.tabs = [pin]
         relaunched.session.spaces.append(collision); relaunched.flush()
-        let recovered = try relaunched.restoreDeletedSpace(recordID,profileID:BrowserProfile.defaultID)
+        let recovered = try relaunched.restoreDeletedSpace(recordID,profileID:fixtureProfile)
         check(recovered != research && relaunched.session.spaces.first(where:{$0.id == research})?.name == "Existing collision", "Recovery repairs a colliding Space ID without replacing an existing Space")
         let restoredSpace = relaunched.session.spaces.first(where:{$0.id == recovered})!
         check(restoredSpace.tabs.first?.id != pin.id && relaunched.session.spaces.first(where:{$0.id == research})?.tabs.first?.id == pin.id && relaunched.library.favoriteTabs?.count == 1, "Recovery repairs tab collisions and leaves existing pages and profile Favorites unchanged")
         let again = try relaunched.deleteSpace(recovered)
-        try relaunched.permanentlyDeleteSpace(again,profileID:BrowserProfile.defaultID)
+        try relaunched.permanentlyDeleteSpace(again,profileID:fixtureProfile)
         check(relaunched.library.deletedSpaces?.isEmpty == true, "Explicit permanent removal deletes only the chosen recovery record")
-        rejects("A stale recovery action cannot revive a removed snapshot") { _ = try relaunched.restoreDeletedSpace(again,profileID:BrowserProfile.defaultID) }
+        rejects("A stale recovery action cannot revive a removed snapshot") { _ = try relaunched.restoreDeletedSpace(again,profileID:fixtureProfile) }
         relaunched.shutdown()
+        if let cleanExtensionController {check(await cleanExtensionController(),"Lifecycle fixtures remove only their owned extension-controller data")}
         let last = BrowserStore(dataRoot:root.appendingPathComponent("last"),keyProvider:{_ in key})
         let lastID = last.space.id; _ = try last.deleteSpace(lastID)
         check(last.session.spaces.count == 1 && last.space.id != lastID && last.activeProfileID == BrowserProfile.defaultID && last.selectedTab?.url == "", "Deleting the last Space creates a blank Space in the same profile")

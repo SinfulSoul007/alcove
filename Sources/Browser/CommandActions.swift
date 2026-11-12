@@ -15,7 +15,7 @@ extension BrowserStore {
             case .copyURL: return currentView?.url != nil
             case .profiles: return !isPrivate
             case .spaces,.deletedSpaces: return !isShuttingDown && !awaitingInitialMetadata
-            case .newSpace,.renameSpace,.deleteSpace: return canManageSpace(space.id)
+            case .newSpace,.renameSpace,.deleteSpace,.newFolder: return canManageSpace(space.id)
             case .restoreSpace: return canUndoSpaceDeletion
             default: return true
             }
@@ -37,6 +37,7 @@ extension BrowserStore {
         case .spaces: showSpacesManager()
         case .deletedSpaces: showSpacesManager(deleted:true)
         case .newSpace: requestNewSpace()
+        case .newFolder: requestNewTabFolder()
         case .renameSpace: requestRenameSpace(space.id)
         case .deleteSpace: requestDeleteSpace(space.id)
         case .restoreSpace: undoSpaceDeletion()

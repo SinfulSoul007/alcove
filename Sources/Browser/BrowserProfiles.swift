@@ -168,7 +168,7 @@ extension BrowserStore {
         invalidateExtensionReviewEpochs(from:profiles,to:prepared.profiles ?? [])
         session = Self.repairedSession(prepared.session); profiles = prepared.profiles ?? [.defaultProfile]
         profileLibraries = prepared.profileLibraries ?? [ProfileLibrary(profileID: BrowserProfile.defaultID, library: prepared.library)]
-        preferences = prepared.preferences; reconcileSearchInputContext(); pruneQuickActivity(); quickPagesDidChange?(); refreshBoosts()
+        preferences = prepared.preferences; reconcileSearchInputContext(); pruneQuickActivity(); quickPagesDidChange?(); refreshBoosts(); extensionHosting?.refresh(); cancelInvalidExtensionNavigations()
     }
     func commitProfileDocument(_ candidate: BrowserDocument, discarding ids: [UUID] = [], resetting spaceID: UUID? = nil, beforePublish: (() -> Void)? = nil) throws {
         guard !isPrivate else { throw ProfileError.privateMode }
@@ -206,6 +206,7 @@ extension BrowserStore {
         try commitProfileDocument(candidate, discarding: session.spaces[index].tabs.map(\.id), resetting: spaceID)
     }
     @discardableResult func placeTab(_ id: UUID, in destination: UUID, section: SidebarSection, before target: UUID? = nil, folder: String? = nil, allowProfileChange: Bool = false) -> Bool {
+        guard canModifyLocalMetadata,!isShuttingDown,!profileDataOperationInProgress else {return false}
         guard let sourceProfile = profileID(for: id), let original = tab(id), let dest = session.spaces.first(where: { $0.id == destination }), id != target else { return false }
         let source = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) })
         let changingProfile = !isPrivate && sourceProfile != dest.effectiveProfileID
@@ -215,7 +216,10 @@ extension BrowserStore {
         if source == nil, let index = candidate.session.spaces.firstIndex(where: { $0.id == destination }) { candidate.session.spaces[index].tabs.append(original) }
         candidate.session.placeTab(id, in: destination, section: section, before: target)
         guard let s = candidate.session.spaces.firstIndex(where: { $0.id == destination }), let t = candidate.session.spaces[s].tabs.firstIndex(where: { $0.id == id }) else { return false }
-        if let folder { candidate.session.spaces[s].tabs[t].folder = folder }
+        if let folder {
+            candidate.session.spaces[s].tabs[t].folder = folder
+            candidate.session.spaces[s].folders = candidate.session.spaces[s].folderNames
+        }
         let placed = candidate.session.spaces[s].tabs[t]
         var oldLibrary = candidate.library(for: sourceProfile); oldLibrary.favoriteTabs = favorites(for: sourceProfile).filter { $0.id != id }
         candidate.setLibrary(oldLibrary, for: sourceProfile)
@@ -225,10 +229,10 @@ extension BrowserStore {
             if let target, let index = shelf.firstIndex(where: { $0.id == target }) { shelf.insert(placed, at: index) } else { shelf.append(placed) }
         }
         newLibrary.favoriteTabs = shelf; candidate.setLibrary(newLibrary, for: dest.effectiveProfileID)
-        if changingProfile {
-            do { try commitProfileDocument(candidate, discarding: [id], resetting: source?.id) }
-            catch { return false }
-        } else { session = candidate.session; profileLibraries = candidate.profileLibraries ?? []; save() }
+        do {
+            if changingProfile {try commitProfileDocument(candidate,discarding:[id],resetting:source?.id)}
+            else {try commitQuickDocument(candidate)}
+        } catch {message = error.localizedDescription;return false}
         if source?.id != dest.id { splitID = nil; activePaneID = nil }
         return true
     }

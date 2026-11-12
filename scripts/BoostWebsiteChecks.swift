@@ -31,6 +31,7 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
             let f = try SiteSearchStoreFixture(isPrivate: privateMode); fixtures.append(f)
             let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = f.store.websiteDataStore(forProfile: f.profile)
             if let controller { configuration.userContentController = controller }
+            if !privateMode {f.store.configureExtensions(configuration,profileID:f.profile)}
             let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
             f.store.registerView(web, for: f.store.selectedID!, profile: f.profile)
             let window = NSWindow(contentRect: web.frame, styleMask: .borderless, backing: .buffered, defer: false)

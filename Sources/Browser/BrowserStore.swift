@@ -9,7 +9,7 @@ enum BrowserPanel: String, Identifiable { case library, settings, appearance, up
 
 @MainActor
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
-    @Published var session = Session() { didSet { if boostPicker != nil { reconcileBoostPicker() } } }
+    @Published var session = Session() { didSet { if boostPicker != nil { reconcileBoostPicker() };extensionBrowserStateChanged() } }
     @Published var commandVisible = false {
         didSet {
             if !commandVisible {
@@ -62,10 +62,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func setCustomTheme(_ theme: CustomTheme) { session.spaces[spaceIndex].customTheme = theme; save() }
     func finishOnboarding() { preferences.onboardingCompleted = true; onboardingVisible = false; flush(); onboardingDidFinish?() }
 
-    @Published var splitID: UUID? { didSet { if boostPicker != nil { reconcileBoostPicker() } } }
-    @Published var activePaneID: UUID? { didSet { if boostPicker != nil { reconcileBoostPicker() } } }
+    @Published var splitID: UUID? { didSet { if boostPicker != nil { reconcileBoostPicker() };extensionBrowserStateChanged() } }
+    @Published var activePaneID: UUID? { didSet { if boostPicker != nil { reconcileBoostPicker() };extensionBrowserStateChanged() } }
     @Published var message: String?
-    @Published var revision = 0
+    @Published var revision = 0 {didSet {extensionBrowserStateChanged()}}
     @Published var profiles: [BrowserProfile] = [.defaultProfile]
     @Published var profileLibraries: [ProfileLibrary] = [ProfileLibrary(profileID: BrowserProfile.defaultID)]
     var library: BrowserLibrary {
@@ -85,14 +85,23 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var clearingProfileID: UUID?
     @Published var deletingProfileID: UUID?
     var isShuttingDown = false
-    @Published var peekPages: [PeekContext: PeekState] = [:] { didSet { reconcileSearchInputContext(); if boostPicker != nil { reconcileBoostPicker() } } }
+    @Published var peekPages: [PeekContext: PeekState] = [:] { didSet { reconcileSearchInputContext(); if boostPicker != nil { reconcileBoostPicker() };extensionBrowserStateChanged() } }
     @Published var siteIcons: [UUID: NSImage] = [:]
     let isPrivate: Bool
     let privateDataStore: WKWebsiteDataStore?
+    let privateUserContentController:WKUserContentController?
     var extensionReviewEpochs:[UUID:UUID] = [:]
     @Published var extensionInstallationInProgress = false
     var extensionPublication:Task<InstalledExtensionPackage,Error>?
     var extensionMaintenance:Task<Int,Error>?
+    var extensionHosting:(any BrowserExtensionHosting)?
+    @Published var extensionStates:[UUID:ExtensionProfileState] = [:]
+    @Published var extensionDiagnostics:[UUID:[UUID:[String]]] = [:]
+    var extensionNavigationTickets:[UUID:ExtensionNavigationTicket] = [:]
+    @Published var extensionNavigationProblem:ExtensionNavigationProblem?
+    let extensionStoreID = UUID()
+    var extensionWindows:[ExtensionWindowKind:ExtensionBrowserWindow] = [:]
+    var extensionPrimaryWindowRequested:(()->Void)?
     var vault: MetadataStore?
     @Published var savingEnabled = true
     @Published var unlocking = false
@@ -113,6 +122,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func invalidateDocumentIdentity(for web: WKWebView) {
         documentIDs.setObject(NSUUID(), forKey: web)
+        cancelInvalidExtensionNavigations()
         if boostPicker?.source.web === web { cancelBoostPicker() }
         BoostRuntime.invalidate(web)
     }
@@ -138,6 +148,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         self.isPrivate = isPrivate
         self.metadataKeyAccess = metadataKeyAccess ?? .shared
         privateDataStore = isPrivate ? .nonPersistent() : nil
+        privateUserContentController = isPrivate ? WKUserContentController() : nil
         let requestedRoot = dataRoot ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("OpenBrowser", isDirectory: true)
         let root = isPrivate ? requestedRoot : requestedRoot.standardizedFileURL.resolvingSymlinksInPath()
         sessionURL = root.appendingPathComponent("session-v2.sealed")
@@ -169,6 +180,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         if value.spaces.isEmpty { value = Session() }
         if !value.spaces.contains(where: { $0.id == value.selectedSpace }) { value.selectedSpace = value.spaces[0].id }
         for i in value.spaces.indices {
+            let folders = value.spaces[i].folderNames
+            if !folders.isEmpty { value.spaces[i].folders = folders }
             if value.spaces[i].tabs.isEmpty { value.spaces[i].tabs = [BrowserCore.Tab()] }
             if !value.spaces[i].tabs.contains(where: { $0.id == value.spaces[i].selected }) { value.spaces[i].selected = value.spaces[i].tabs.first?.id }
         }
@@ -190,7 +203,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
-        flush(); isShuttingDown = true; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
+        flush(); isShuttingDown = true; cancelAllExtensionNavigations(); extensionHosting?.shutdown(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
         metadataOwnership?.release(); metadataOwnership = nil
@@ -368,14 +381,19 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         let config = configuration ?? WKWebViewConfiguration()
         guard let profile = profileID(for: id) else {
             config.websiteDataStore = .nonPersistent()
+            configureExtensions(config,profileID:nil)
             let unknown = WKWebView(frame: .zero, configuration: config); unknown.navigationDelegate = self
             return unknown
         }
         config.websiteDataStore = websiteDataStore(forProfile: profile)
+        configureExtensions(config,profileID:profile)
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         let web = WKWebView(frame: .zero, configuration: config)
         registerView(web, for: id, profile: profile)
-        if !profileUnavailable(profile), let value = tab(id)?.url, !value.isEmpty, let url = URL(string: value) { web.load(URLRequest(url: url)) }
+        if !profileUnavailable(profile), let value = tab(id)?.url, !value.isEmpty, let url = URL(string: value) {
+            if configuration == nil,url.scheme?.lowercased() == "webkit-extension" {restoreSavedExtensionTab(id,url:url,placeholder:web,profileID:profile)}
+            else {web.load(URLRequest(url:url))}
+        }
         // Keep active and split panes alive; suspended tabs retain their last URL, but lose in-memory page state.
         while preferences.suspendTabs && views.count > 6, let victim = accessOrder.first(where: { $0 != id && $0 != selectedID && $0 != splitID && quickPage($0) == nil && views[$0]?.isLoading == false }) {
             discardView(victim)
@@ -410,6 +428,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             web.observe(\.estimatedProgress, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.revision += 1 } },
             web.observe(\.isLoading, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.revision += 1 } }
         ]
+        extensionBrowserStateChanged()
     }
     func toggleSplit() {
         if splitID != nil { splitID = nil; return }
@@ -417,14 +436,27 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         if splitID == nil { message = "Open a second website, then choose Split View." }
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if action.targetFrame?.isMainFrame != false {beginExtensionMainNavigation(webView)}
         guard let owner = profileID(for: webView), !profileUnavailable(owner), let url = action.request.url else { decisionHandler(.cancel); return }
-        guard ["https", "http", "about", "blob", "data"].contains(url.scheme?.lowercased() ?? "") else {
+        guard ["https", "http", "about", "blob", "data"].contains(url.scheme?.lowercased() ?? "") || extensionHosting?.allowsExtensionURL(url,profileID:owner) == true else {
             decisionHandler(.cancel); message = "This prototype only opens web links (http and https)."; return
         }
         if action.navigationType == .linkActivated && action.modifierFlags.contains(.shift) && ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             decisionHandler(.cancel); openPeek(url, from: webView); return
         }
-        decisionHandler(action.shouldPerformDownload ? .download : .allow)
+        if action.targetFrame?.isMainFrame == true,!action.shouldPerformDownload,
+           webView.url?.scheme?.lowercased() == "webkit-extension",url.scheme?.lowercased() != "webkit-extension",
+           let id = views.first(where:{$0.value === webView})?.key {
+            // Keep the extension document mounted until the same preparation/lifetime gate
+            // authorizes its destination. The scoped source view itself cannot leave its origin.
+            decideExtensionNavigation(webView,url:url,isMainFrame:true,allow:.allow) { [weak self,weak webView] policy in
+                decisionHandler(.cancel)
+                guard policy == .allow,let self,let webView,self.views[id] === webView,self.profileID(for:webView) == owner else {return}
+                do {try self.navigateExtensionTab(id,to:url,profileID:owner)} catch {self.message = error.localizedDescription}
+            }
+            return
+        }
+        decideExtensionNavigation(webView,url:url,isMainFrame:action.targetFrame?.isMainFrame != false,allow:action.shouldPerformDownload ? .download : .allow,decision:decisionHandler)
     }
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         guard let owner = profileID(for: webView), !profileUnavailable(owner) else { decisionHandler(.cancel); return }
@@ -444,6 +476,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) { updateDownload(download, status: "Failed: \(error.localizedDescription)"); message = "Download failed: \(error.localizedDescription)" }
     func downloadDidFinish(_ download: WKDownload) { updateDownload(download, status: "Finished"); message = "Download finished." }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if extensionNavigationProblem?.source.web === webView {return}
         if (error as NSError).code != NSURLErrorCancelled { message = error.localizedDescription }
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { invalidateDocumentIdentity(for: webView); message = "This page stopped responding. Use Reload to try again." }
