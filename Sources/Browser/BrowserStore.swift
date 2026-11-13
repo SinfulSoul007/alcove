@@ -93,6 +93,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var privateExtensionReopenJob:PrivateExtensionReopenJob?
     var privateExtensionReopenTimeout:Duration = .seconds(60)
     let extensionOriginPopups = NSHashTable<WKWebView>.weakObjects()
+    let extensionPopupOwners = NSMapTable<WKWebView,NSString>(keyOptions:.weakMemory,valueOptions:.strongMemory)
     var extensionReviewEpochs:[UUID:UUID] = [:]
     @Published var extensionInstallationInProgress = false
     var extensionPublication:Task<InstalledExtensionPackage,Error>?
@@ -105,6 +106,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var extensionNavigationTickets:[UUID:ExtensionNavigationTicket] = [:]
     @Published var extensionNavigationProblem:ExtensionNavigationProblem?
     let extensionStoreID = UUID()
+    var extensionPrivateAttachments:[UUID:PrivateExtensionAttachment] = [:]
     var extensionWindows:[ExtensionWindowKind:ExtensionBrowserWindow] = [:]
     var extensionPrimaryWindowRequested:(()->Void)?
     var vault: MetadataStore?

@@ -60,8 +60,9 @@ extension BrowserStore {
     }
     func closePeek(in context: PeekContext) {
         guard let page = peekPages.removeValue(forKey: context) else { return }
+        let closing = ClosingProfilePage(page.web,profileID:page.profileID,extensionIdentifier:extensionPopupOwners.object(forKey:page.web).map{String($0)})
         invalidateDocumentIdentity(for: page.web); BoostRuntime.forget(page.web)
-        closingPages.append(ClosingProfilePage(page.web, profileID: page.profileID))
+        closingPages.append(closing)
         page.observations = []
         page.web.navigationDelegate = nil; page.web.uiDelegate = nil; page.web.stopLoading()
         page.web.loadHTMLString("", baseURL: nil); page.web.removeFromSuperview()

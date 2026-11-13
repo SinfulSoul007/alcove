@@ -27,7 +27,7 @@ enum ExtensionActionError:LocalizedError {
     }
 }
 
-@MainActor private enum ExtensionPublicationOwners {
+@MainActor enum ExtensionPublicationOwners {
     static var roots = Set<URL>()
     static func begin(_ root:URL) throws { guard roots.insert(root).inserted else { throw ExtensionActionError.busy } }
     static func end(_ root:URL) { roots.remove(root) }
@@ -174,12 +174,37 @@ extension BrowserStore {
         extensionMaintenance = work; defer {extensionMaintenance = nil}
         return try await withTaskCancellationHandler(operation:{try await work.value},onCancel:{work.cancel()})
     }
-    func finishRemoveExtension(_ id:UUID,profileID:UUID) throws {
-        _ = try requireExtensionEdits(profileID)
+    @discardableResult func finishRemoveExtension(_ id:UUID,profileID:UUID) async throws -> ExtensionErasureReceipt {
+        let profile = try requireExtensionEdits(profileID)
         guard let record = extensionRecords(profileID:profileID).first(where:{$0.id == id}), record.pendingRemoval == true else { throw ExtensionActionError.stale }
-        try ExtensionPackage.removeRevision(profileID:profileID,extensionID:record.packageID ?? record.id,digest:record.packageDigest,packagesRoot:extensionPackagesRoot)
+        guard #available(macOS 15.4,*),let controllerID = profile.extensionControllerID else {throw ExtensionHostError.unavailable}
+        let namespaces = try retainedExtensionNamespaces(profileID:profileID)
+        try ExtensionPublicationOwners.begin(sessionURL);defer {ExtensionPublicationOwners.end(sessionURL)}
+        let operationLease = try MetadataOwnership.acquire(for:sessionURL);defer {operationLease.release()}
+        let root = extensionPackagesRoot
+        try await Task.detached(priority:.utility) {try ExtensionPackage.validateRemovalPath(profileID:profileID,extensionID:record.packageID ?? record.id,digest:record.packageDigest,packagesRoot:root)}.value
+        try Task.checkCancellation();try operationLease.validate()
+        guard try requireExtensionEdits(profileID).extensionControllerID == controllerID,extensionRecords(profileID:profileID).first(where:{$0.id == id}) == record else {throw ExtensionActionError.stale}
+        try await closeRemovedExtensionPages(record.runtimeIdentifier,profileID:profileID)
+        var lastNativeVersion:String?
+        for namespace in namespaces.sorted(by:{$0.uuidString < $1.uuidString}) {
+            try Task.checkCancellation();try operationLease.validate()
+            guard try requireExtensionEdits(profileID).extensionControllerID == controllerID,extensionRecords(profileID:profileID).first(where:{$0.id == id}) == record else {throw ExtensionActionError.stale}
+            let erasure = try NativeExtensionErasure(controllerID:namespace,record:record,stagingRoot:extensionStagingRoot,dataStore:websiteDataStore(forProfile:profileID))
+            let workerLease = try MetadataOwnership.acquire(for:sessionURL)
+            try await ExtensionErasureJobs.perform(erasure,lease:workerLease)
+            if namespace == controllerID {lastNativeVersion = erasure.lastNativeVersion}
+        }
+        guard let lastNativeVersion else {throw ExtensionErasureError.failed}
+        try Task.checkCancellation();try operationLease.validate()
+        guard try requireExtensionEdits(profileID).extensionControllerID == controllerID,extensionRecords(profileID:profileID).first(where:{$0.id == id}) == record else {throw ExtensionActionError.stale}
+        try ExtensionPackage.validateRemovalPath(profileID:profileID,extensionID:record.packageID ?? record.id,digest:record.packageDigest,packagesRoot:root)
         var candidate = makeDocument(), library = candidate.library(for:profileID)
         library.extensions?.removeAll{$0.id == id}; candidate.setLibrary(library,for:profileID)
         try commitProfileDocument(candidate)
+        // A failed metadata save leaves resources available for a complete retry.
+        // Unreferenced package cleanup is also covered by startup reconciliation.
+        try await Task.detached(priority:.utility) {try ExtensionPackage.removeRevision(profileID:profileID,extensionID:record.packageID ?? record.id,digest:record.packageDigest,packagesRoot:root)}.value
+        return ExtensionErasureReceipt(controllerID:controllerID,identifier:record.runtimeIdentifier,lastNativeVersion:lastNativeVersion)
     }
 }

@@ -201,7 +201,47 @@ enum OwnedExtensionReopenError:Error {case missingFixture,timedOut}
             let after = try canonical(normal.makeDocument())
             check(cookies.isEmpty && client.extensionHosting == nil && client.privateExtensionReopenJob == nil && before == after && keyRequests == 0,"Completing the real private website clear does not resurrect a candidate host or change the normal session")
         }
-        do {try await exercise();try await clearInterleavingExercise()} catch {check(false,"Owned reopen fixture failed: " + error.localizedDescription)}
+        func normalPauseAttachmentExercise() async throws {
+            let normal = BrowserStore(dataRoot:root.appendingPathComponent("pause-normal"),keyProvider:{_ in key}),owner = BrowserWindowOwner(store:normal),primary = try owner.acquirePrimary(),profile = try normal.createProfile(name:"Owned paused account")
+            defer {owner.release(primary);normal.shutdown()}
+            try owned.register(profile);try controllers.register(normal.profiles.first(where:{$0.id == profile})!.extensionControllerID!)
+            let package = try ExtensionPackage.prepare(at:root.appendingPathComponent("source"),stagingRoot:root.appendingPathComponent("pause-staging")),approval = try normal.extensionInstallApproval(for:package,profileID:profile,hostPatterns:["http://127.0.0.1/*"],allowPrivate:true,enable:true)
+            let extensionID = try await normal.installExtension(package,approval:approval);try await normal.prepareExtensions(profileID:profile)
+            let server = normal.extensionHosting as! NativeBrowserExtensionHost,context = server.profiles[profile]!.contexts[extensionID]!
+            var keyRequests = 0
+            let client = BrowserStore(isPrivate:true,dataRoot:root.appendingPathComponent("pause-private"),keyProvider:{_ in keyRequests += 1;throw CocoaError(.fileReadNoPermission)})
+            defer {client.shutdown()}
+            try client.associateExtensions(with:owner,profileID:profile)
+            let association = client.extensionHosting,id = client.selectedID!,url = fixture.appendingPathComponent("paused-private-form"),web = client.view(for:id)
+            client.update(id){$0.url = url.absoluteString};web.load(URLRequest(url:url));try await ready(web,url)
+            _ = try await web.evaluateJavaScript("document.getElementById('owned-form').value='retain through normal clear';document.cookie='owned_paused_private=keep; path=/';true")
+            let window = OwnedExtensionReopenWindow(contentRect:NSRect(x:0,y:0,width:600,height:400),styleMask:[.titled,.closable],backing:.buffered,defer:false)
+            window.isReleasedWhenClosed = false;window.contentView = web;client.registerExtensionWindow(window,kind:.primary)
+            defer {client.unregisterExtensionWindow(kind:.primary);window.contentView = nil;window.close()}
+            server.synchronizeBrowserState()
+            check(server.privateClients[client.extensionStoreID]?.current === client && web.configuration.webExtensionController?.extensionContexts.contains(context) == true,"The paused-account fixture starts with a live approved private association and actual owning controller")
+            var removal:CheckedContinuation<Void,Never>?
+            defer {removal?.resume()}
+            let clear = Task { @MainActor in
+                do {
+                    try await normal.clearProfileData(profile,removeData:{_ in
+                        await withCheckedContinuation{removal = $0}
+                        throw CocoaError(.fileWriteNoPermission)
+                    })
+                    return false
+                } catch {return true}
+            }
+            try await waitFor{removal != nil};server.synchronizeBrowserState()
+            check(server.privateClients[client.extensionStoreID] != nil,"Pausing a normal profile retains its structurally attached private client for old-controller cleanup")
+            check(server.privateClients[client.extensionStoreID]?.current == nil && !server.authorized(context,profileID:profile,client:client) && !server.nativeWindows.keys.contains(where:{$0.storeID == client.extensionStoreID}),"Retained cleanup ownership exposes no private window or authority through the paused native runtime")
+            let retained = try await web.evaluateJavaScript("document.getElementById('owned-form').value === 'retain through normal clear' && document.cookie.includes('owned_paused_private=keep')") as? Bool
+            check(client.views[id] === web && client.extensionHosting === association && retained == true && owner.leaseCount == 2,"A normal profile pause preserves the private view, unsaved form, temporary cookie and association lease")
+            let release = removal;removal = nil;release?.resume();let failed = await clear.value
+            check(failed && normal.profiles.first(where:{$0.id == profile})?.isPendingClear == true && client.views[id] === web && keyRequests == 0,"A failed normal clear stays retryable without reopening the private page or requesting a private key")
+            client.shutdown();server.synchronizeBrowserState()
+            check(server.privateClients[client.extensionStoreID] == nil && owner.leaseCount == 1,"Closing a private client while its account is paused releases its structural association and auxiliary lease")
+        }
+        do {try await exercise();try await clearInterleavingExercise();try await normalPauseAttachmentExercise()} catch {check(false,"Owned reopen fixture failed: " + error.localizedDescription)}
         check(await controllers.cleanup(),"Reopen fixtures erase only their owned native extension storage")
         check(await owned.cleanup(),"Reopen fixtures release only their owned named website stores")
         print("Extension reopen checks: \(failures) failures");exit(failures == 0 ? 0 : 1)

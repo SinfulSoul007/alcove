@@ -47,7 +47,7 @@ import BrowserCore
     func synchronizeBrowserState() {
         reconcileExtensionSourceRequests()
         guard let owner,!owner.isShuttingDown else {return}
-        privateClients = privateClients.filter {$0.value.current != nil}
+        privateClients = privateClients.filter {$0.value.attached != nil}
         let locations = Dictionary(uniqueKeysWithValues:nativeTabs.values.map{(ObjectIdentifier($0),($0.browserWindow,$0.browserWindow?.tabKeys.firstIndex(of:$0.key) ?? 0))})
         var wantedWindows = Set<NativeExtensionWindowKey>(),wantedTabs = Set<NativeExtensionTabKey>()
         for (profileID,runtime) in profiles where !owner.profileUnavailable(profileID) {

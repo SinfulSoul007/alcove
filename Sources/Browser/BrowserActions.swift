@@ -184,9 +184,10 @@ extension BrowserStore {
     }
     func discardView(_ id: UUID) {
         guard let web = views.removeValue(forKey: id) else { return }
+        let closing = viewProfileIDs[id].map{ClosingProfilePage(web,profileID:$0,extensionIdentifier:extensionPopupOwners.object(forKey:web).map{String($0)})}
         invalidateDocumentIdentity(for: web); BoostRuntime.forget(web)
         closingPages.removeAll { $0.webView == nil }
-        if let profile = viewProfileIDs[id] { closingPages.append(ClosingProfilePage(web, profileID: profile)) }
+        if let closing {closingPages.append(closing)}
         web.navigationDelegate = nil; web.uiDelegate = nil; web.stopLoading()
         web.loadHTMLString("", baseURL: nil); web.removeFromSuperview()
         observations.removeValue(forKey: id); accessOrder.removeAll { $0 == id }

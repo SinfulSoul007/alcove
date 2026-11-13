@@ -94,7 +94,7 @@ run_extension_core_checks() {
 }
 if [[ "${1:-}" == "extension-core-test" ]]; then run_extension_core_checks; exit; fi
 run_extension_store_checks() {
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ExtensionStoreChecks.swift -o "$MANUAL/extension-store-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ExtensionStoreChecks.swift scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$MANUAL/extension-store-checks"
     "$MANUAL/extension-store-checks"
 }
 if [[ "${1:-}" == "extension-store-test" ]]; then run_extension_store_checks; exit; fi
@@ -108,6 +108,7 @@ run_extension_runtime_checks() {
     if [[ "$extension_check_name" == "command" ]]; then extension_check_source="scripts/ExtensionCommandChecks.swift"; fi
     if [[ "$extension_check_name" == "reopen" ]]; then extension_check_source="scripts/ExtensionReopenChecks.swift"; fi
     if [[ "$extension_check_name" == "surface" ]]; then extension_check_source="scripts/ExtensionSurfaceChecks.swift"; fi
+    if [[ "$extension_check_name" == "erasure" ]]; then extension_check_source="scripts/ExtensionErasureChecks.swift"; fi
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" "$extension_check_source" scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$MANUAL/extension-$extension_check_name-checks"
     local extension_port_file extension_fixture_pid
     extension_port_file="$(mktemp "$MANUAL/extension-port.XXXXXX")"
@@ -131,6 +132,7 @@ if [[ "${1:-}" == "extension-action-test" ]]; then run_extension_runtime_checks 
 if [[ "${1:-}" == "extension-command-test" ]]; then run_extension_runtime_checks command; exit; fi
 if [[ "${1:-}" == "extension-reopen-test" ]]; then run_extension_runtime_checks reopen; exit; fi
 if [[ "${1:-}" == "extension-surface-test" ]]; then run_extension_runtime_checks surface; exit; fi
+if [[ "${1:-}" == "extension-erasure-test" ]]; then run_extension_runtime_checks erasure; exit; fi
 run_sidebar_organization_checks() {
     local sidebar_check_source="scripts/SidebarOrganizationChecks.swift" sidebar_check_binary="$MANUAL/sidebar-organization-checks"
     if [[ "${1:-}" == "layout" ]]; then sidebar_check_source="scripts/SidebarOrganizationLayoutChecks.swift"; sidebar_check_binary="$MANUAL/sidebar-organization-layout-checks"; fi
@@ -314,6 +316,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_extension_runtime_checks command
     run_extension_runtime_checks reopen
     run_extension_runtime_checks surface
+    run_extension_runtime_checks erasure
     run_sidebar_organization_checks
     run_sidebar_organization_layout_checks
     run_spaces_layout_checks

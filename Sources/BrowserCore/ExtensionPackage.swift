@@ -57,6 +57,32 @@ public enum ExtensionPackage {
         try root.verifyPath();try owner.verifyPath();try package.verifyPath();try revision.verifyPath()
         return (revision.url,manifest)
     }
+    /// Stages app-generated maintenance resources using
+    /// the same descriptor-bound writer as imported packages. No source code is read.
+    public static func prepareGeneratedResources(_ files:[String:Data],stagingRoot:URL) throws -> PreparedExtensionPackage {
+        try Task.checkCancellation()
+        guard files.count <= ExtensionPackageLimits.default.entries else {throw ExtensionValidationError.packageTooLarge}
+        var entries:[ExtensionZIPEntry] = [],keys = Set<String>(),total = 0
+        for (raw,data) in files {
+            let path = try ExtensionResourcePath.normalized(raw),key = ExtensionZIP.collisionKey(path)
+            guard keys.insert(key).inserted else {throw ExtensionValidationError.invalidResourcePath}
+            guard data.count <= ExtensionPackageLimits.default.fileBytes,total <= ExtensionPackageLimits.default.expandedBytes - data.count else {throw ExtensionValidationError.packageTooLarge}
+            total += data.count;entries.append(ExtensionZIPEntry(path:path,isDirectory:false,data:data))
+        }
+        for entry in entries {
+            let parts = entry.path.split(separator:"/")
+            for depth in 1..<parts.count where keys.contains(ExtensionZIP.collisionKey(parts.prefix(depth).joined(separator:"/"))) {throw ExtensionValidationError.invalidResourcePath}
+        }
+        let manifest = try inspectedManifest(entries),digest = fingerprint(entries)
+        let parent = try ExtensionDirectory(url:stagingRoot,create:true,owned:true),name = UUID().uuidString,stage = try parent.child(name,create:true,exclusive:true)
+        let registration = parent.registryID + "/" + name;ExtensionStageActivity.shared.add(registration)
+        do {
+            try write(entries,to:stage);try parent.verifyPath();try stage.verifyPath()
+            return PreparedExtensionPackage(manifest:manifest,digest:digest,source:.folder,parent:parent,name:name,directory:stage)
+        } catch {
+            try? parent.remove(name,matching:stage);ExtensionStageActivity.shared.remove(registration);throw error
+        }
+    }
     public static func prepare(at sourceURL:URL,stagingRoot:URL,expectedStoreID:String? = nil,requireStoreProof:Bool = false,limits:ExtensionPackageLimits = .default,progress:(Int)->Void = {_ in}) throws -> PreparedExtensionPackage {
         try Task.checkCancellation()
         if let expectedStoreID, !BrowserExtensionRecord.validExternalID(expectedStoreID) { throw ExtensionValidationError.invalidArchive("invalid expected extension identity") }
@@ -125,6 +151,16 @@ public enum ExtensionPackage {
             try? record.remove(package.digest,matching:stage); throw error
         }
         return InstalledExtensionPackage(url:record.url.appendingPathComponent(package.digest,isDirectory:true),created:true,digest:package.digest,parent:record,directory:stage)
+    }
+    /// Removal does not execute or trust resource contents. Missing resources are
+    /// removable, while a replaced/symlinked ownership path still fails closed.
+    public static func validateRemovalPath(profileID:UUID,extensionID:UUID,digest:String,packagesRoot:URL) throws {
+        guard profileID != BrowserProfile.zeroID,extensionID != BrowserProfile.zeroID,BrowserExtensionRecord.validDigest(digest) else {throw ExtensionValidationError.invalidResourcePath}
+        var info = stat()
+        if lstat(try ExtensionDirectory.path(packagesRoot),&info) != 0 {if errno == ENOENT {return};throw ExtensionDirectory.error()}
+        let root = try ExtensionDirectory(url:packagesRoot,create:false,owned:true)
+        guard let owner = try root.existingChild(profileID.uuidString),let record = try owner.existingChild(extensionID.uuidString),let revision = try record.existingChild(digest) else {return}
+        try root.verifyPath();try owner.verifyPath();try record.verifyPath();try revision.verifyPath()
     }
     public static func removeRevision(profileID:UUID,extensionID:UUID,digest:String,packagesRoot:URL) throws {
         guard profileID != BrowserProfile.zeroID, extensionID != BrowserProfile.zeroID, BrowserExtensionRecord.validDigest(digest) else { throw ExtensionValidationError.invalidResourcePath }

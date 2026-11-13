@@ -36,6 +36,13 @@ import BrowserCore
     let cancelledPath = cancelled.stagingURL; try cancelled.discard(); try cancelled.discard(); try cancelledURL.discard()
     check(!manager.fileExists(atPath:cancelledPath.path),"Cancelling a preview removes only its owned staging directory and is repeatable")
     func rejected(_ body:()throws -> Void) -> Bool { do { try body(); return false } catch { return true } }
+    let generated = try ExtensionPackage.prepareGeneratedResources(["manifest.json":manifest,"content.js":Data("generated inert code".utf8)],stagingRoot:stage)
+    let generatedBytes = try Data(contentsOf:generated.stagingURL.appendingPathComponent("content.js"))
+    check(generatedBytes == Data("generated inert code".utf8) && generated.digest != prepared.digest,"Generated maintenance resources use a separate owned stage without copying installed code")
+    check(rejected {_ = try ExtensionPackage.prepareGeneratedResources(["manifest.json":manifest,"../escape":Data()],stagingRoot:stage)},"Generated maintenance resources reject traversal before writing")
+    check(rejected {_ = try ExtensionPackage.prepareGeneratedResources(["manifest.json":manifest,"content.js":Data(),"CONTENT.JS":Data()],stagingRoot:stage)},"Generated maintenance resources reject filesystem-colliding names")
+    check(rejected {_ = try ExtensionPackage.prepareGeneratedResources(["manifest.json":manifest,"content.js":Data(),"content.js/child":Data()],stagingRoot:stage)},"Generated maintenance resources reject file/directory prefix collisions")
+    try generated.discard()
     let replacedRoot = try ExtensionPackage.prepare(at:source,stagingRoot:stage)
     let retired = root.appendingPathComponent("retired-stage")
     try manager.moveItem(at:stage,to:retired); try manager.createDirectory(at:stage,withIntermediateDirectories:true)

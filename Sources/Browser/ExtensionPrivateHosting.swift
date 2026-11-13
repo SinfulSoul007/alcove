@@ -2,6 +2,20 @@ import AppKit
 import WebKit
 import BrowserCore
 
+/// Structural cleanup ownership survives retirement of the currently active host.
+/// This weak registry never grants browser API access or retains a private session.
+@MainActor final class PrivateExtensionAttachment {
+    weak var client:BrowserStore?,association:(any BrowserExtensionHosting)?
+    let profileID:UUID,controllerID:UUID
+    init(client:BrowserStore,association:any BrowserExtensionHosting,profileID:UUID,controllerID:UUID) {
+        self.client = client;self.association = association;self.profileID = profileID;self.controllerID = controllerID
+    }
+    var attached:BrowserStore? {
+        guard let client,let association,client.isPrivate,!client.isShuttingDown,client.extensionHosting === association else {return nil}
+        return client
+    }
+}
+
 extension BrowserStore {
     /// Only a new temporary session may attach a controller. Existing documents require
     /// an explicit reopen flow, since WKWebView configurations cannot change in place.
@@ -19,6 +33,7 @@ extension BrowserStore {
         let lease = try owner.acquireAuxiliary()
         let association = AssociatedPrivateExtensionHost(client:self,owner:owner,server:server,profileID:profileID,controllerID:controllerID,lease:lease)
         extensionHosting = association
+        association.publishAttachment()
         server.privateClients[extensionStoreID] = NativePrivateExtensionClient(store:self,association:association,profileID:profileID)
         server.browserStateChanged()
     }
@@ -31,8 +46,18 @@ extension BrowserStore {
     init(client:BrowserStore,owner:BrowserWindowOwner,server:NativeBrowserExtensionHost,profileID:UUID,controllerID:UUID,lease:UUID) {
         self.client = client;self.owner = owner;self.server = server;self.profileID = profileID;self.controllerID = controllerID;self.lease = lease
     }
+    func publishAttachment() {
+        guard let owner,let client,client.extensionHosting === self else {return}
+        owner.store.extensionPrivateAttachments[client.extensionStoreID] = PrivateExtensionAttachment(client:client,association:self,profileID:profileID,controllerID:controllerID)
+    }
+    /// Cleanup must retain a live attachment while its normal profile is paused or
+    /// its controller identity changes. This does not authorize extension API access.
+    func isAttached(client:BrowserStore,profileID:UUID) -> Bool {
+        guard let owner,!owner.isClosed,!owner.store.isShuttingDown else {return false}
+        return self.client === client && client.isPrivate && !client.isShuttingDown && client.extensionHosting === self && self.profileID == profileID
+    }
     func matches(client:BrowserStore,profileID:UUID) -> Bool {
-        self.client === client && client.isPrivate && !client.isShuttingDown && client.extensionHosting === self && self.profileID == profileID && (try? normal()) != nil
+        isAttached(client:client,profileID:profileID) && (try? normal()) != nil
     }
     private func normal() throws -> BrowserStore {
         guard let owner,!owner.isClosed,!owner.store.isShuttingDown else {throw ExtensionHostError.closed}
@@ -99,6 +124,7 @@ extension BrowserStore {
     }
     func shutdown() {
         guard let owner else {return}
+        if let client,owner.store.extensionPrivateAttachments[client.extensionStoreID]?.association === self {owner.store.extensionPrivateAttachments.removeValue(forKey:client.extensionStoreID)}
         if let client {server.privateClients.removeValue(forKey:client.extensionStoreID);server.synchronizeBrowserState()}
         self.owner = nil;owner.release(lease)
     }
@@ -124,5 +150,6 @@ extension BrowserStore {
     weak var store:BrowserStore?,association:AssociatedPrivateExtensionHost?
     let profileID:UUID
     init(store:BrowserStore,association:AssociatedPrivateExtensionHost,profileID:UUID) {self.store = store;self.association = association;self.profileID = profileID}
+    var attached:BrowserStore? {guard let store,association?.isAttached(client:store,profileID:profileID) == true else {return nil};return store}
     var current:BrowserStore? {guard let store,association?.matches(client:store,profileID:profileID) == true else {return nil};return store}
 }

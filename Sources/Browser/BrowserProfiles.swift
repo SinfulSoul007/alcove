@@ -11,10 +11,14 @@ final class ProfileDataOperations: ObservableObject {
     func finish(_ id: UUID) { activeIDs.remove(id) }
 }
 
-final class ClosingProfilePage {
+@MainActor final class ClosingProfilePage {
     weak var webView: WKWebView?
     let profileID: UUID
-    init(_ webView: WKWebView, profileID: UUID) { self.webView = webView; self.profileID = profileID }
+    let extensionIdentifier:String?
+    init(_ webView: WKWebView, profileID: UUID,extensionIdentifier:String? = nil) {
+        self.webView = webView; self.profileID = profileID
+        self.extensionIdentifier = extensionIdentifier ?? (webView.url?.scheme?.lowercased() == "webkit-extension" ? webView.url?.host : nil)
+    }
 }
 
 enum ProfileError: LocalizedError {
@@ -35,16 +39,26 @@ enum ProfileError: LocalizedError {
 
 extension BrowserStore {
     func deleteProfile(_ id: UUID, removeStore: @escaping @MainActor (UUID) async throws -> Void = { id in
-        if await WKWebsiteDataStore.allDataStoreIdentifiers.contains(id) { try await WKWebsiteDataStore.remove(forIdentifier: id) }
+        for attempt in 0..<50 {
+            try Task.checkCancellation()
+            guard await WKWebsiteDataStore.allDataStoreIdentifiers.contains(id) else {return}
+            do {try await WKWebsiteDataStore.remove(forIdentifier:id);return}
+            catch {if attempt == 49 {throw error};try await Task.sleep(for:.milliseconds(100))}
+        }
     }) async throws {
         guard !isPrivate else { throw ProfileError.privateMode }
         guard deletingProfileID == nil, !clearingData else { throw ProfileError.busy }
         guard id != BrowserProfile.defaultID else { throw ProfileError.defaultProfile }
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw ProfileError.missing }
+        if #available(macOS 15.4,*),try retainedExtensionNamespaces(profileID:id).contains(where:{ExtensionErasureJobs.holds($0)}) {throw ExtensionErasureError.busy}
         guard !profiles[index].isPendingClear else { throw ProfileError.busy }
         guard !session.spaces.contains(where: { $0.effectiveProfileID == id }) else { throw ProfileError.inUse }
         guard ProfileDataOperations.shared.begin(id) else { throw ProfileError.busy }
         defer { ProfileDataOperations.shared.finish(id) }
+        try ExtensionPublicationOwners.begin(sessionURL);defer {ExtensionPublicationOwners.end(sessionURL)}
+        let operationLease = try MetadataOwnership.acquire(for:sessionURL);defer {operationLease.release()}
+        let extensionControllerID = profiles[index].extensionControllerID,installedExtensions = extensionRecords(profileID:id)
+        let extensionNamespaces = try retainedExtensionNamespaces(profileID:id)
         deletingProfileID = id; defer { deletingProfileID = nil }
         var candidate = makeDocument(); candidate.profiles?[index].pendingDeletion = true
         var records = candidate.library(for: id)
@@ -53,6 +67,7 @@ extension BrowserStore {
         try commitProfileDocument(candidate)
         closePeeks(forProfile: id)
         for tabID in Array(views.keys) where viewProfileIDs[tabID] == id { discardView(tabID) }
+        var erasureDataStore:WKWebsiteDataStore? = extensionNamespaces.isEmpty ? nil : (namedDataStores[id] ?? WKWebsiteDataStore(forIdentifier:id))
         namedDataStores.removeValue(forKey: id)
         do {
             let clock = ContinuousClock(); let deadline = clock.now.advanced(by: .seconds(5))
@@ -63,6 +78,10 @@ extension BrowserStore {
             }
             closingPages.removeAll { $0.webView == nil }
             guard !isShuttingDown else { throw CancellationError() }
+            if let dataStore = erasureDataStore {try await eraseProfileExtensionData(installedExtensions,profileID:id,controllerIDs:extensionNamespaces,expectedControllerID:extensionControllerID,dataStore:dataStore)}
+            erasureDataStore = nil
+            try Task.checkCancellation();guard !isShuttingDown else {throw CancellationError()}
+            try operationLease.validate()
             try await removeStore(id)
             guard !isShuttingDown else { throw CancellationError() }
         }
@@ -71,6 +90,8 @@ extension BrowserStore {
         finished.profiles?.removeAll { $0.id == id }; finished.profileLibraries?.removeAll { $0.profileID == id }
         do { try commitProfileDocument(finished) }
         catch { message = "Website data was removed, but deletion could not be finalized. Unlock local data and retry; the profile entry was kept."; throw error }
+        let packages = extensionPackagesRoot,staging = extensionStagingRoot,libraries = profileLibraries
+        try await Task.detached(priority:.utility) {_ = try ExtensionPackage.reconcile(packagesRoot:packages,stagingRoot:staging,libraries:libraries)}.value
         message = "Profile deleted. Other profiles were kept."
     }
     func renameProfile(_ id: UUID, name: String) throws {
@@ -85,9 +106,20 @@ extension BrowserStore {
         guard !clearingData, deletingProfileID == nil else { throw ProfileError.busy }
         guard !isShuttingDown else { throw CancellationError() }
         guard isPrivate ? id == BrowserProfile.defaultID : profiles.contains(where: { $0.id == id && !$0.isPendingDeletion }) else { throw ProfileError.missing }
+        if #available(macOS 15.4,*),!isPrivate,try retainedExtensionNamespaces(profileID:id).contains(where:{ExtensionErasureJobs.holds($0)}) {throw ExtensionErasureError.busy}
         if !isPrivate { guard ProfileDataOperations.shared.begin(id) else { throw ProfileError.busy } }
         defer { if !isPrivate { ProfileDataOperations.shared.finish(id) } }
         if !isPrivate { guard savingEnabled, vault != nil, persistedProfileIDs.contains(id) else { throw ProfileError.locked } }
+        let extensionControllerID = profiles.first(where:{$0.id == id})?.extensionControllerID
+        let installedExtensions = isPrivate ? [] : extensionRecords(profileID:id)
+        let extensionNamespaces = isPrivate ? Set<UUID>() : try retainedExtensionNamespaces(profileID:id)
+        let operationLease:MetadataOwnershipLease?
+        if !isPrivate {
+            try ExtensionPublicationOwners.begin(sessionURL)
+            do {operationLease = try MetadataOwnership.acquire(for:sessionURL)}
+            catch {ExtensionPublicationOwners.end(sessionURL);throw error}
+        } else {operationLease = nil}
+        defer {if !isPrivate {ExtensionPublicationOwners.end(sessionURL)};operationLease?.release()}
         var candidate = makeDocument(); var affected: [UUID] = []
         let resuming = !isPrivate && profiles.first(where: { $0.id == id })?.isPendingClear == true
         if let index = candidate.profiles?.firstIndex(where: { $0.id == id }) { candidate.profiles?[index].pendingDataClear = true }
@@ -112,13 +144,21 @@ extension BrowserStore {
         else if id == BrowserProfile.defaultID { dataStore = .default() }
         else if let cached = namedDataStores[id] { dataStore = cached }
         else { let created = WKWebsiteDataStore(forIdentifier: id); namedDataStores[id] = created; dataStore = created }
-        do { try await removeData(dataStore) }
+        do {
+            if !isPrivate {try await eraseProfileExtensionData(installedExtensions,profileID:id,controllerIDs:extensionNamespaces,expectedControllerID:extensionControllerID,dataStore:dataStore)}
+            try Task.checkCancellation();guard !isShuttingDown else {throw CancellationError()}
+            try operationLease?.validate()
+            try await removeData(dataStore)
+        }
         catch { message = "Website clearing did not finish. This profile remains paused so you can retry safely. \(error.localizedDescription)"; throw error }
         guard !isShuttingDown else { throw CancellationError() }
         for tabID in Array(views.keys) where viewProfileIDs[tabID] == id { discardView(tabID) }
         if !isPrivate {
             var finished = makeDocument()
-            if let index = finished.profiles?.firstIndex(where: { $0.id == id }) { finished.profiles?[index].pendingDataClear = false }
+            if let index = finished.profiles?.firstIndex(where: { $0.id == id }) {
+                finished.profiles?[index].pendingDataClear = false
+                finished.profiles?[index].extensionControllerID = UUID()
+            }
             finished.preferences.quickDomainChoices?.removeAll { $0.profileID == id }
             do { try commitProfileDocument(finished) }
             catch { message = "Website data was cleared, but its completion could not be saved. Unlock local data and retry this profile’s clear operation."; throw error }
@@ -250,10 +290,17 @@ extension BrowserStore {
     func createPopup(from opener: WKWebView, configuration: WKWebViewConfiguration,requestedURL:URL? = nil) -> WKWebView? {
         guard let profile = profileID(for:opener),!isShuttingDown,!profileUnavailable(profile) else {return nil}
         let extensionOrigin = opener.url?.scheme?.lowercased() == "webkit-extension" || extensionOriginPopups.contains(opener)
+        let extensionOwner = extensionPopupOwners.object(forKey:opener).map{String($0)} ?? (opener.url?.scheme?.lowercased() == "webkit-extension" ? opener.url?.host : nil)
         if extensionOrigin,["http","https"].contains(requestedURL?.scheme?.lowercased() ?? "") {
             message = ExtensionHostError.unsupportedWebsitePopup.localizedDescription;return nil
         }
-        func finish(_ web:WKWebView?) -> WKWebView? {if extensionOrigin,let web {extensionOriginPopups.add(web)};return web}
+        func finish(_ web:WKWebView?) -> WKWebView? {
+            if extensionOrigin,let web {
+                extensionOriginPopups.add(web)
+                if let extensionOwner {extensionPopupOwners.setObject(extensionOwner as NSString,forKey:web)}
+            }
+            return web
+        }
         if let context = quickContext(for: opener) {
             do {
                 let id = try openQuickPage(profileID: context.profileID, intendedSpaceID: context.intendedSpaceID, configuration: configuration)

@@ -176,6 +176,7 @@ extension BrowserStore {
         },publish:{client in
             guard let prepared = self.prepared else {preconditionFailure("Private association must be prepared before publication")}
             self.adopted = true;client.extensionHosting = prepared
+            prepared.publishAttachment()
             self.server.privateClients[client.extensionStoreID] = NativePrivateExtensionClient(store:client,association:prepared,profileID:self.profileID)
         },close:{
             guard !self.closed else {return};self.closed = true

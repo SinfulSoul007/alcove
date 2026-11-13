@@ -11,7 +11,7 @@ import BrowserCore
             catch MetadataOwnershipError.inUse {exit(23)}
             catch {exit(24)}
         }
-        _ = NSApplication.shared
+        NSApplication.shared.setActivationPolicy(.prohibited);setbuf(stdout,nil)
         var failures = 0
         func check(_ value:Bool,_ name:String) { print("\(value ? "PASS" : "FAIL"): \(name)"); if !value { failures += 1 } }
         func rejects(_ name:String,_ body:()async throws -> Void) async { do { try await body(); check(false,name) } catch { check(true,name) } }
@@ -163,27 +163,38 @@ import BrowserCore
         try store.beginRemoveExtension(id,profileID:profile)
         check(store.extensionRecords(profileID:profile)[0].pendingRemoval == true && !store.extensionRecords(profileID:profile)[0].enabled && store.extensionRecords(profileID:profile)[0].grants == nil,"Removal durably revokes rights before resource teardown")
         await rejects("Pending removal cannot be re-enabled") {try store.setExtensionEnabled(id,profileID:profile,enabled:true)}
-        let heldRevision = root.appendingPathComponent("held-revision"), removalOutside = root.appendingPathComponent("removal-outside")
-        try manager.createDirectory(at:removalOutside,withIntermediateDirectories:true)
-        try Data("keep".utf8).write(to:removalOutside.appendingPathComponent("sentinel"))
-        try manager.moveItem(at:installedURL,to:heldRevision)
-        try manager.createSymbolicLink(at:installedURL,withDestinationURL:removalOutside)
-        await rejects("Removal cannot follow a replaced revision directory") {try store.finishRemoveExtension(id,profileID:profile)}
-        let keptOutside = try Data(contentsOf:removalOutside.appendingPathComponent("sentinel"))
-        check(keptOutside == Data("keep".utf8) && store.extensionRecords(profileID:profile)[0].pendingRemoval == true,"Failed resource removal retains its retry state and outside data")
-        try manager.removeItem(at:installedURL); try manager.moveItem(at:heldRevision,to:installedURL)
-        store.vault = MetadataStore(url:blocked,key:key)
-        await rejects("Failed finalization preserves a durable removal tombstone") {try store.finishRemoveExtension(id,profileID:profile)}
-        check(store.extensionRecords(profileID:profile)[0].pendingRemoval == true && !store.extensionRecords(profileID:profile)[0].enabled,"Interrupted finalization cannot revive old permissions")
-        store.vault = validVault; store.savingEnabled = true
-        try store.finishRemoveExtension(id,profileID:profile)
-        check(store.extensionRecords(profileID:profile).isEmpty && !manager.fileExists(atPath:installedURL.path),"Final removal clears its catalog record and controlled resources")
-        let removedOrphans = try await store.reconcileExtensionPackages()
-        check(removedOrphans > 0 && !manager.fileExists(atPath:store.extensionPackagesRoot.appendingPathComponent(profile.uuidString).path),"Serialized maintenance removes unused earlier revisions after final removal")
+        var finishOwnedErasure:(@MainActor ()async->Bool)?
+        if #available(macOS 15.4,*) {
+            let native = try OwnedExtensionControllers(),websites = try OwnedWebsiteStores()
+            guard !manager.fileExists(atPath:native.manifest.path),await websites.cleanup() else {throw CocoaError(.fileReadCorruptFile)}
+            try native.register(store.profiles.first(where:{$0.id == profile})!.extensionControllerID!)
+            try websites.register(profile)
+            finishOwnedErasure = {let nativeClean = await native.cleanup(),websiteClean = await websites.cleanup();return nativeClean && websiteClean}
+            let heldRevision = root.appendingPathComponent("held-revision"), removalOutside = root.appendingPathComponent("removal-outside")
+            try manager.createDirectory(at:removalOutside,withIntermediateDirectories:true)
+            try Data("keep".utf8).write(to:removalOutside.appendingPathComponent("sentinel"))
+            try manager.moveItem(at:installedURL,to:heldRevision)
+            try manager.createSymbolicLink(at:installedURL,withDestinationURL:removalOutside)
+            await rejects("Removal cannot follow a replaced revision directory") {try await store.finishRemoveExtension(id,profileID:profile)}
+            let keptOutside = try Data(contentsOf:removalOutside.appendingPathComponent("sentinel"))
+            check(keptOutside == Data("keep".utf8) && store.extensionRecords(profileID:profile)[0].pendingRemoval == true,"Failed resource removal retains its retry state and outside data")
+            try manager.removeItem(at:installedURL); try manager.moveItem(at:heldRevision,to:installedURL)
+            store.vault = MetadataStore(url:blocked,key:key)
+            await rejects("Failed finalization preserves a durable removal tombstone") {try await store.finishRemoveExtension(id,profileID:profile)}
+            check(store.extensionRecords(profileID:profile)[0].pendingRemoval == true && !store.extensionRecords(profileID:profile)[0].enabled,"Interrupted finalization cannot revive old permissions")
+            store.vault = validVault; store.savingEnabled = true
+            try await store.finishRemoveExtension(id,profileID:profile)
+            check(store.extensionRecords(profileID:profile).isEmpty && !manager.fileExists(atPath:installedURL.path),"Final removal clears its catalog record and controlled resources")
+            let removedOrphans = try await store.reconcileExtensionPackages()
+            check(removedOrphans > 0 && !manager.fileExists(atPath:store.extensionPackagesRoot.appendingPathComponent(profile.uuidString).path),"Serialized maintenance removes unused earlier revisions after final removal")
+        } else {
+            print("UNAVAILABLE: Native removal finalization requires macOS15.4; the removal tombstone stays pending.")
+        }
         let closedPreview = try prepare(), closedApproval = try store.extensionInstallApproval(for:closedPreview,profileID:profile)
         store.shutdown()
         await rejects("A closed owner rejects late installation replies") {_ = try await store.installExtension(closedPreview,approval:closedApproval)}
         try closedPreview.discard()
+        if let finishOwnedErasure {check(await finishOwnedErasure(),"Catalog removal fixtures release their owned native and website stores")}
         exit(failures == 0 ? 0 : 1)
     }
 }
