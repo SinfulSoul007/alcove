@@ -19,6 +19,10 @@ extension BrowserStore {
         try requireQuickProfile(profileID)
         guard self.profileID(for:id) == profileID else {throw ExtensionHostError.stale}
         let existing = views[id],previous = existing?.url ?? tab(id).flatMap{URL(string:$0.url)}
+        if let existing,extensionOriginPopups.contains(existing),["http","https"].contains(url.scheme?.lowercased() ?? "") {throw ExtensionHostError.unsupportedWebsitePopup}
+        if let existing,extensionOriginPopups.contains(existing),url.absoluteString == "about:blank" {
+            update(id){$0.url = url.absoluteString};existing.load(URLRequest(url:url));return
+        }
         let wasExtension = previous?.scheme?.lowercased() == "webkit-extension",isExtension = url.scheme?.lowercased() == "webkit-extension"
         let replace = wasExtension != isExtension || (isExtension && (previous?.host != url.host || existing?.url?.scheme?.lowercased() != "webkit-extension"))
         let configuration:WKWebViewConfiguration?
@@ -123,7 +127,7 @@ struct NativeExtensionTabState:Equatable {
         guard let store = live(context),host?.permitsNavigation(url,context:context,profileID:key.profileID) == true else {completionHandler(ExtensionHostError.stale);return}
         do {
             if !key.isPeek {try store.navigateExtensionTab(key.id,to:url,profileID:store.isPrivate ? BrowserProfile.defaultID : key.profileID)}
-            else {try actualView(context).load(URLRequest(url:url))}
+            else {try store.navigateExtensionSurface(actualView(context),to:url,profileID:store.isPrivate ? BrowserProfile.defaultID : key.profileID)}
             completionHandler(nil)
         } catch {completionHandler(error)}
     }

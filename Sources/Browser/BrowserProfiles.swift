@@ -247,16 +247,22 @@ extension BrowserStore {
         if let existing = namedDataStores[id] { return existing }
         let store = WKWebsiteDataStore(forIdentifier: id); namedDataStores[id] = store; return store
     }
-    func createPopup(from opener: WKWebView, configuration: WKWebViewConfiguration) -> WKWebView? {
+    func createPopup(from opener: WKWebView, configuration: WKWebViewConfiguration,requestedURL:URL? = nil) -> WKWebView? {
+        guard let profile = profileID(for:opener),!isShuttingDown,!profileUnavailable(profile) else {return nil}
+        let extensionOrigin = opener.url?.scheme?.lowercased() == "webkit-extension" || extensionOriginPopups.contains(opener)
+        if extensionOrigin,["http","https"].contains(requestedURL?.scheme?.lowercased() ?? "") {
+            message = ExtensionHostError.unsupportedWebsitePopup.localizedDescription;return nil
+        }
+        func finish(_ web:WKWebView?) -> WKWebView? {if extensionOrigin,let web {extensionOriginPopups.add(web)};return web}
         if let context = quickContext(for: opener) {
             do {
                 let id = try openQuickPage(profileID: context.profileID, intendedSpaceID: context.intendedSpaceID, configuration: configuration)
-                return views[id]
+                return finish(views[id])
             } catch { message = error.localizedDescription; return nil }
         }
         let owner = spaceID(for: opener)
         guard let owner, session.spaces.contains(where: { $0.id == owner }) else { return nil }
         let id = newTab(in: owner, activate: owner == space.id)
-        return view(for: id, configuration: configuration)
+        return finish(view(for: id, configuration: configuration))
     }
 }

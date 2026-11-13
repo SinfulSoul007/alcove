@@ -103,6 +103,7 @@ extension BrowserStore {
         try requireQuickProfile(owner)
         guard let url = Address.resolve(input), QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.invalidAddress }
         let existing = views[id]
+        if let existing,extensionOriginPopups.contains(existing) {throw ExtensionHostError.unsupportedWebsitePopup}
         mutateLibrary(for: owner) { records in
             guard let index = records.quickPages?.firstIndex(where: { $0.id == id }) else { return }
             records.quickPages?[index].tab.url = url.absoluteString; records.quickPages?[index].tab.title = url.host ?? "Page"

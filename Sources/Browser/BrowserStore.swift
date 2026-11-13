@@ -89,7 +89,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var siteIcons: [UUID: NSImage] = [:]
     let isPrivate: Bool
     let privateDataStore: WKWebsiteDataStore?
-    let privateUserContentController:WKUserContentController?
+    var privateUserContentController:WKUserContentController?
+    var privateExtensionReopenJob:PrivateExtensionReopenJob?
+    var privateExtensionReopenTimeout:Duration = .seconds(60)
+    let extensionOriginPopups = NSHashTable<WKWebView>.weakObjects()
     var extensionReviewEpochs:[UUID:UUID] = [:]
     @Published var extensionInstallationInProgress = false
     var extensionPublication:Task<InstalledExtensionPackage,Error>?
@@ -124,6 +127,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func invalidateDocumentIdentity(for web: WKWebView) {
         documentIDs.setObject(NSUUID(), forKey: web)
+        reconcilePrivateExtensionReopen()
         cancelInvalidExtensionNavigations()
         extensionHosting?.sourceDocumentChanged(web)
         if boostPicker?.source.web === web { cancelBoostPicker() }
@@ -206,7 +210,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
-        flush(); isShuttingDown = true; cancelAllExtensionNavigations(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
+        flush(); isShuttingDown = true; privateExtensionReopenJob?.finish(.failure(ExtensionHostError.closed)); cancelAllExtensionNavigations(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
         metadataOwnership?.release(); metadataOwnership = nil
@@ -345,10 +349,12 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             guard !profileUnavailable(activeProfileID), !isShuttingDown else { throw ProfileError.pending }
             let url = try resolveSearchInput(input, selection: editing ? commandSiteSearch : nil)
             let peek = editing && !new ? primaryPeekView : nil
+            if !new,let target = peek ?? currentView,extensionOriginPopups.contains(target) {throw ExtensionHostError.unsupportedWebsitePopup}
             commandVisible = false
             if let peek { peek.load(URLRequest(url: url)); return }
             if editing && new { closePrimaryPeek() }
-            let id = new && selectedTab?.url.isEmpty != true ? newTab() : (focusedID ?? newTab())
+            let reusableBlank = selectedTab?.url.isEmpty == true && (currentView.map{!extensionOriginPopups.contains($0)} ?? true)
+            let id = new && !reusableBlank ? newTab() : (focusedID ?? newTab())
             update(id) { $0.url = url.absoluteString; $0.title = url.host ?? "Page" }
             view(for: id).load(URLRequest(url: url))
         } catch {
@@ -447,15 +453,19 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         if action.navigationType == .linkActivated && action.modifierFlags.contains(.shift) && ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             decisionHandler(.cancel); openPeek(url, from: webView); return
         }
-        if action.targetFrame?.isMainFrame == true,!action.shouldPerformDownload,
+        if action.targetFrame?.isMainFrame != false,extensionOriginPopups.contains(webView),["http","https"].contains(url.scheme?.lowercased() ?? "") {
+            decisionHandler(.cancel);message = ExtensionHostError.unsupportedWebsitePopup.localizedDescription;return
+        }
+        if action.targetFrame?.isMainFrame == true,!action.shouldPerformDownload,!extensionOriginPopups.contains(webView),
            webView.url?.scheme?.lowercased() == "webkit-extension",url.scheme?.lowercased() != "webkit-extension",
-           let id = views.first(where:{$0.value === webView})?.key {
+           views.values.contains(where:{$0 === webView}) || peekContext(for:webView) != nil {
             // Keep the extension document mounted until the same preparation/lifetime gate
             // authorizes its destination. The scoped source view itself cannot leave its origin.
+            let document = documentIdentity(for:webView)
             decideExtensionNavigation(webView,url:url,isMainFrame:true,allow:.allow) { [weak self,weak webView] policy in
                 decisionHandler(.cancel)
-                guard policy == .allow,let self,let webView,self.views[id] === webView,self.profileID(for:webView) == owner else {return}
-                do {try self.navigateExtensionTab(id,to:url,profileID:owner)} catch {self.message = error.localizedDescription}
+                guard policy == .allow,let self,let webView,self.profileID(for:webView) == owner,self.documentIdentity(for:webView) === document else {return}
+                do {try self.navigateExtensionSurface(webView,to:url,profileID:owner)} catch {self.message = error.localizedDescription}
             }
             return
         }
@@ -484,7 +494,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { invalidateDocumentIdentity(for: webView); message = "This page stopped responding. Use Reload to try again." }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        createPopup(from: webView, configuration: configuration)
+        createPopup(from: webView, configuration: configuration,requestedURL:action.request.url)
     }
     func webViewDidClose(_ webView: WKWebView) { if let context = peekContext(for: webView) { closePeek(in: context); return }; if let id = views.first(where: { $0.value === webView })?.key { close(id) } }
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {

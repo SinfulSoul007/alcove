@@ -5,14 +5,14 @@ import BrowserCore
 enum PeekContext: Hashable { case primary, quick(UUID) }
 
 @MainActor final class PeekState {
-    let id = UUID()
+    let id:UUID
     let web: WKWebView
     let profileID: UUID
     var spaceID: UUID?
     let requestedURL: URL?
     var observations: [NSKeyValueObservation] = []
-    init(web: WKWebView, profileID: UUID, spaceID: UUID?, requestedURL: URL? = nil) {
-        self.web = web; self.profileID = profileID; self.spaceID = spaceID; self.requestedURL = requestedURL
+    init(id:UUID = UUID(),web: WKWebView, profileID: UUID, spaceID: UUID?, requestedURL: URL? = nil) {
+        self.id = id;self.web = web; self.profileID = profileID; self.spaceID = spaceID; self.requestedURL = requestedURL
     }
 }
 
@@ -36,8 +36,13 @@ extension BrowserStore {
         let config = WKWebViewConfiguration(); config.websiteDataStore = websiteDataStore(forProfile: profile)
         configureExtensions(config,profileID:profile)
         let web = WKWebView(frame: .zero, configuration: config)
-        web.navigationDelegate = self; web.uiDelegate = self; web.allowsBackForwardNavigationGestures = true
         let page = PeekState(web: web, profileID: profile, spaceID: targetSpace, requestedURL: url)
+        peekPages[context] = page;installPeek(page)
+        web.load(URLRequest(url: url))
+    }
+    func installPeek(_ page:PeekState) {
+        let web = page.web
+        web.navigationDelegate = self; web.uiDelegate = self; web.allowsBackForwardNavigationGestures = true
         let changed: () -> Void = { [weak self, weak web] in
             Task { @MainActor in guard let self, let web, self.peekContext(for: web) != nil else { return }; self.revision += 1 }
         }
@@ -45,9 +50,7 @@ extension BrowserStore {
                              web.observe(\.estimatedProgress) { _, _ in changed() },
                              web.observe(\.canGoBack) { _, _ in changed() }, web.observe(\.canGoForward) { _, _ in changed() },
                              web.observe(\.cameraCaptureState) { _, _ in changed() }, web.observe(\.microphoneCaptureState) { _, _ in changed() }]
-        peekPages[context] = page
         BoostRuntime.install(on: web)
-        web.load(URLRequest(url: url))
     }
     func closePrimaryPeek() { closePeek(in: .primary) }
     func closeQuickPeek(_ id: UUID) { closePeek(in: .quick(id)) }

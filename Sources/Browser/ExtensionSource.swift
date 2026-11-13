@@ -43,4 +43,3 @@ import BrowserCore
         return requiresMountedView || client.tab(key.id)?.url == destination
     }
 }
-

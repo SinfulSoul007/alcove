@@ -3,7 +3,7 @@ import WebKit
 import BrowserCore
 
 enum ExtensionHostError:LocalizedError {
-    case unavailable, closed, stale, timedOut, damaged, unsupportedIsolation, unsupportedPrivatePage, native(String)
+    case unavailable, closed, stale, timedOut, damaged, unsupportedIsolation, unsupportedPrivatePage, unsupportedWebsitePopup, native(String)
     var errorDescription:String? {
         switch self {
         case .unavailable:return "Native extensions require macOS 15.4 or later."
@@ -13,6 +13,7 @@ enum ExtensionHostError:LocalizedError {
         case .damaged:return "Installed extension resources changed or are missing. Review the original package again."
         case .unsupportedIsolation:return "This package requires sandboxed extension pages. Alcove cannot yet verify that isolation in WebKit."
         case .unsupportedPrivatePage:return "Extension tabs and options cannot yet open in private windows. Open this extension's options explicitly from a normal window."
+        case .unsupportedWebsitePopup:return "Website popups from extension pages are not available yet. Open the website in a regular tab."
         case .native(let detail):return "WebKit could not load this extension: " + detail
         }
     }
