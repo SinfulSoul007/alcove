@@ -89,10 +89,15 @@ run_boosts_website_checks() {
     trap - EXIT
 }
 run_extension_core_checks() {
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/ExtensionCoreChecks.swift scripts/ExtensionManifestChecks.swift scripts/ExtensionZIPChecks.swift scripts/ExtensionPackageChecks.swift scripts/ExtensionCRXChecks.swift -o "$MANUAL/extension-core-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/ExtensionCoreChecks.swift scripts/ExtensionManifestChecks.swift scripts/ExtensionZIPChecks.swift scripts/ExtensionPackageChecks.swift scripts/ExtensionCRXChecks.swift scripts/ExtensionStoreLocationChecks.swift -o "$MANUAL/extension-core-checks"
     "$MANUAL/extension-core-checks"
 }
 if [[ "${1:-}" == "extension-core-test" ]]; then run_extension_core_checks; exit; fi
+run_extension_download_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/ExtensionStoreDownload.swift scripts/ExtensionDownloadChecks.swift -o "$MANUAL/extension-download-checks"
+    "$MANUAL/extension-download-checks"
+}
+if [[ "${1:-}" == "extension-download-test" ]]; then run_extension_download_checks; exit; fi
 run_extension_store_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ExtensionStoreChecks.swift scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$MANUAL/extension-store-checks"
     "$MANUAL/extension-store-checks"
@@ -306,6 +311,7 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
 fi
 if [[ "${1:-}" == "test" ]]; then
     run_extension_core_checks
+    run_extension_download_checks
     run_extension_store_checks
     run_extension_runtime_checks
     run_extension_runtime_checks navigation

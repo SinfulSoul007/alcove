@@ -2,6 +2,7 @@ import AppKit
 import WebKit
 import CryptoKit
 import BrowserCore
+import Darwin
 
 enum OwnedExtensionPermissionError:Error {case missingFixture,timedOut}
 @MainActor final class OwnedExtensionPermissionWindow:NSWindow {
@@ -121,7 +122,21 @@ enum OwnedExtensionPermissionError:Error {case missingFixture,timedOut}
             let timeoutReply = replies.last!
             try await Task.sleep(for:.milliseconds(120));timeoutReply(true)
             check(timeoutReplies == 1 && !context.hasPermission(alarms),"Timeout and late approval complete the native request only once")
+            var delayedReplies = 0
+            host.webExtensionController(controller,promptForPermissions:[clipboard],in:tab,for:context){allowed,_ in delayedReplies += 1;check(allowed.isEmpty,"A permission reply after its deadline cannot grant access while the timer callback is delayed")}
+            let delayedReply = replies.last!
+            // Hold only this generated fixture's MainActor so its timeout Task
+            // cannot run before the real monotonic deadline has already passed.
+            usleep(120_000);delayedReply(true)
+            check(delayedReplies == 1 && !context.hasPermission(clipboard),"A delayed timer cannot extend the actual permission approval deadline")
+            host.cancelPermissionRequests()
             host.permissionRequestTimeout = .seconds(60)
+            let elapsedSource = NativeExtensionSource(host:host,controller:controller,context:context,tab:tab)!
+            let futureNativeDate = Date().addingTimeInterval(300),elapsedGrant = NativeExtensionSessionGrant(source:elapsedSource,permissions:[alarms],patterns:[],expiration:futureNativeDate)
+            host.permissionSessionGrants[elapsedGrant.id] = elapsedGrant;elapsedGrant.apply()
+            check(context.hasPermission(alarms) && futureNativeDate > Date(),"The elapsed-time fixture starts with a live native grant and a future wall-clock expiration")
+            host.reconcilePermissionRequests(at:ContinuousClock.now.advanced(by:.seconds(301)))
+            check(!context.hasPermission(alarms) && context.hasPermission(WKWebExtension.Permission(rawValue:"storage")) && host.permissionSessionGrants[elapsedGrant.id] == nil,"Elapsed monotonic time revokes the actual native grant even while its wall-clock expiration is still in the future")
             var repeatedRevocation = true
             for index in 0..<12 {
                 var granted = false

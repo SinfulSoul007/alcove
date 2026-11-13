@@ -189,6 +189,7 @@ import BrowserCore
         try runExtensionZIPChecks(check)
         try await runExtensionPackageChecks(check)
         try runExtensionCRXChecks(check)
+        try runExtensionStoreLocationChecks(check)
         exit(failures == 0 ? 0 : 1)
     }
 }

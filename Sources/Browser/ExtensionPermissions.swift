@@ -82,12 +82,15 @@ struct NativeExtensionPermissionReview {
 
 @available(macOS 15.4,*) @MainActor final class NativeExtensionSessionGrant {
     let id = UUID(),source:NativeExtensionSource,expiration:Date
+    private let deadline:ContinuousClock.Instant
     let permissions:Set<WKWebExtension.Permission>,patterns:Set<WKWebExtension.MatchPattern>
     private var appliedPermissions:[WKWebExtension.Permission:Date] = [:],appliedPatterns:[WKWebExtension.MatchPattern:Date] = [:]
     private var expiry:Task<Void,Never>?
     init(source:NativeExtensionSource,permissions:Set<WKWebExtension.Permission>,patterns:Set<WKWebExtension.MatchPattern>,expiration:Date) {
         self.source = source;self.permissions = permissions;self.patterns = patterns;self.expiration = expiration
+        deadline = ContinuousClock.now.advanced(by:.seconds(min(300,max(0,expiration.timeIntervalSinceNow))))
     }
+    func expired(at instant:ContinuousClock.Instant = .now) -> Bool {instant >= deadline || expiration <= Date()}
     func apply() {
         guard let context = source.context else {return}
         for permission in permissions {context.setPermissionStatus(.grantedExplicitly,for:permission,expirationDate:expiration)}
@@ -97,9 +100,9 @@ struct NativeExtensionPermissionReview {
         let nativePermissions = context.grantedPermissions,nativePatterns = context.grantedPermissionMatchPatterns
         for permission in permissions {appliedPermissions[permission] = nativePermissions[permission]}
         for pattern in patterns {appliedPatterns[pattern] = nativePatterns[pattern]}
-        let delay = max(0,expiration.timeIntervalSinceNow)
+        let deadline = self.deadline
         expiry = Task { @MainActor [weak self] in
-            do {try await Task.sleep(for:.seconds(delay));self?.source.host?.reconcilePermissionRequests()} catch {}
+            do {try await ContinuousClock().sleep(until:deadline);self?.source.host?.reconcilePermissionRequests()} catch {}
         }
     }
     func revoke() {
@@ -124,11 +127,14 @@ struct NativeExtensionPermissionReview {
     let id = UUID(),source:NativeExtensionSource,kind:NativeExtensionPermissionKind
     var dismiss:(()->Void)?
     private var reply:((Bool,Date?)->Void)?,timeout:Task<Void,Never>?
+    private var deadline:ContinuousClock.Instant?
     init(source:NativeExtensionSource,kind:NativeExtensionPermissionKind,reply:@escaping(Bool,Date?)->Void) {self.source = source;self.kind = kind;self.reply = reply}
     var pending:Bool {reply != nil}
     func start(duration:Duration) {
+        let deadline = ContinuousClock.now.advanced(by:min(.seconds(90),max(.milliseconds(1),duration)))
+        self.deadline = deadline
         timeout = Task { @MainActor [weak self] in
-            do {try await Task.sleep(for:min(.seconds(90),max(.milliseconds(1),duration)));self?.finish(false)} catch {}
+            do {try await ContinuousClock().sleep(until:deadline);self?.finish(false)} catch {}
         }
     }
     func finish(_ allowed:Bool) {
@@ -136,7 +142,7 @@ struct NativeExtensionPermissionReview {
         self.reply = nil;timeout?.cancel();timeout = nil
         source.host?.permissionTickets.removeValue(forKey:id)
         let dismiss = self.dismiss;self.dismiss = nil;dismiss?()
-        guard allowed,let host = source.host,let scope = kind.scope(for:source) else {reply(false,nil);return}
+        guard allowed,deadline.map({ContinuousClock.now < $0}) == true,let host = source.host,let scope = kind.scope(for:source) else {reply(false,nil);return}
         let expiration = Date().addingTimeInterval(300)
         let grant = NativeExtensionSessionGrant(source:source,permissions:scope.0,patterns:scope.1,expiration:expiration)
         host.permissionSessionGrants[grant.id] = grant;grant.apply();reply(true,expiration)
@@ -151,12 +157,12 @@ struct NativeExtensionPermissionReview {
               grant.deniedPermissions?.contains(permission.rawValue) != true else {return false}
         if grant.permissions.contains(permission.rawValue) {return true}
         return permissionSessionGrants.values.contains {
-            $0.source.context === context && $0.source.key.profileID == profileID && $0.source.current && $0.expiration > Date() && $0.permissions.contains(permission)
+            $0.source.context === context && $0.source.key.profileID == profileID && $0.source.current && !$0.expired() && $0.permissions.contains(permission)
         }
     }
-    func reconcilePermissionRequests() {
+    func reconcilePermissionRequests(at instant:ContinuousClock.Instant = .now) {
         for ticket in Array(permissionTickets.values) where !ticket.source.current {ticket.finish(false)}
-        for grant in Array(permissionSessionGrants.values) where !grant.source.current || grant.expiration <= Date() {grant.revoke();permissionSessionGrants.removeValue(forKey:grant.id)}
+        for grant in Array(permissionSessionGrants.values) where !grant.source.current || grant.expired(at:instant) {grant.revoke();permissionSessionGrants.removeValue(forKey:grant.id)}
     }
     func cancelPermissionRequests() {
         for ticket in Array(permissionTickets.values) {ticket.finish(false)}
