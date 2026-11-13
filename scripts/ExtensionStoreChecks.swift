@@ -195,6 +195,26 @@ import BrowserCore
         await rejects("A closed owner rejects late installation replies") {_ = try await store.installExtension(closedPreview,approval:closedApproval)}
         try closedPreview.discard()
         if let finishOwnedErasure {check(await finishOwnedErasure(),"Catalog removal fixtures release their owned native and website stores")}
+        func identityExercise() async throws {
+            let identityStore = BrowserStore(dataRoot:root.appendingPathComponent("identity-update"),keyProvider:{_ in key});defer {identityStore.shutdown()}
+            let identityProfile = try identityStore.createProfile(name:"Owned stable identity"),identitySource = root.appendingPathComponent("identity-source")
+            try manager.createDirectory(at:identitySource,withIntermediateDirectories:true);try manifest.write(to:identitySource.appendingPathComponent("manifest.json"))
+            let unsigned = try ExtensionPackage.prepare(at:identitySource,stagingRoot:stage),unsignedApproval = try identityStore.extensionInstallApproval(for:unsigned,profileID:identityProfile),unsignedID = try await identityStore.installExtension(unsigned,approval:unsignedApproval)
+            let signed = try ownedDownloadPackageFixture(),signedFile = root.appendingPathComponent("owned-signed-identity.crx")
+            try signed.bytes.write(to:signedFile)
+            let signedPackage = try ExtensionPackage.prepare(at:signedFile,stagingRoot:stage),beforeIdentity = identityStore.extensionRecords(profileID:identityProfile),identityBytes = try Data(contentsOf:identityStore.sessionURL)
+            await rejects("An update cannot switch an unsigned record into a different signed runtime identity") {_ = try identityStore.extensionInstallApproval(for:signedPackage,profileID:identityProfile,replacing:unsignedID)}
+            let afterIdentityBytes = try Data(contentsOf:identityStore.sessionURL)
+            check(identityStore.extensionRecords(profileID:identityProfile) == beforeIdentity && afterIdentityBytes == identityBytes,"A rejected identity change preserves the original record and encrypted metadata")
+            let signedApproval = try identityStore.extensionInstallApproval(for:signedPackage,profileID:identityProfile),signedID = try await identityStore.installExtension(signedPackage,approval:signedApproval)
+            let originalSigned = identityStore.extensionRecords(profileID:identityProfile).first(where:{$0.id == signedID})!
+            try signed.updatedBytes.write(to:signedFile)
+            let revision = try ExtensionPackage.prepare(at:signedFile,stagingRoot:stage),revisionApproval = try identityStore.extensionInstallApproval(for:revision,profileID:identityProfile,replacing:signedID)
+            try await identityStore.installExtension(revision,replacing:signedID,approval:revisionApproval)
+            let updatedSigned = identityStore.extensionRecords(profileID:identityProfile).first(where:{$0.id == signedID})!
+            check(updatedSigned.version == "2" && updatedSigned.runtimeIdentifier == signed.id && updatedSigned.packageDigest != originalSigned.packageDigest,"A genuine signed update changes its reviewed code while keeping the same runtime identity")
+        }
+        try await identityExercise()
         exit(failures == 0 ? 0 : 1)
     }
 }

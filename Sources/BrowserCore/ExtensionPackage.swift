@@ -111,6 +111,17 @@ public enum ExtensionPackage {
                 entries = try ExtensionZIP.read(bytes,limits:limits); source = .zip; signerID = nil; storeID = nil; publisherVerified = false
             }
         } else { throw ExtensionValidationError.invalidResourcePath }
+        return try stagedPackage(entries,stagingRoot:stagingRoot,source:source,signerID:signerID,storeID:storeID,publisherVerified:publisherVerified)
+    }
+    /// Network bytes always require both the requested developer identity and the
+    /// pinned production store proof before any resources are written or inspected.
+    public static func prepareWebStoreArchive(_ data:Data,expectedID:String,stagingRoot:URL,limits:ExtensionPackageLimits = .default) throws -> PreparedExtensionPackage {
+        let verified = try ExtensionCRX.verify(data,expectedID:expectedID,requireStoreProof:true,limits:limits)
+        let entries = try ExtensionZIP.read(verified.archive,limits:limits)
+        return try stagedPackage(entries,stagingRoot:stagingRoot,source:.webStore,signerID:verified.extensionID,storeID:verified.extensionID,publisherVerified:verified.publisherVerified)
+    }
+    private static func stagedPackage(_ entries:[ExtensionZIPEntry],stagingRoot:URL,source:ExtensionSourceKind,signerID:String?,storeID:String?,publisherVerified:Bool) throws -> PreparedExtensionPackage {
+        try Task.checkCancellation()
         let manifest = try inspectedManifest(entries)
         let digest = fingerprint(entries)
         let parent = try ExtensionDirectory(url:stagingRoot,create:true,owned:true), name = UUID().uuidString

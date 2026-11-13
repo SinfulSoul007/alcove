@@ -24,6 +24,25 @@ private final class OwnedExtensionProtocol:URLProtocol,@unchecked Sendable {
     override func stopLoading() {Self.lock.lock();Self.stops += 1;Self.lock.unlock()}
 }
 
+private final class OwnedPackageResponses:@unchecked Sendable {
+    let metadata:Data,archive:Data
+    private let lock = NSLock()
+    private var urls:[URL] = [],limits:[Int] = []
+    init(metadata:Data,archive:Data) {self.metadata = metadata;self.archive = archive}
+    func respond(_ url:URL,_ resource:ExtensionStoreResource,_ limit:Int) -> Data {
+        lock.lock();defer {lock.unlock()};urls.append(url);limits.append(limit)
+        switch resource {case .metadata:return metadata;case .package:return archive}
+    }
+    func observation() -> ([URL],[Int]) {lock.lock();defer {lock.unlock()};return (urls,limits)}
+}
+private final class OwnedMetadataGate:@unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation:CheckedContinuation<Data,Never>?
+    func wait() async -> Data {await withCheckedContinuation {lock.lock();continuation = $0;lock.unlock()}}
+    var pending:Bool {lock.lock();defer {lock.unlock()};return continuation != nil}
+    func release(_ data:Data) {lock.lock();let continuation = self.continuation;self.continuation = nil;lock.unlock();continuation?.resume(returning:data)}
+}
+
 @main struct ExtensionDownloadChecks {
     static func main() async throws {
         setbuf(stdout,nil)
@@ -72,6 +91,37 @@ private final class OwnedExtensionProtocol:URLProtocol,@unchecked Sendable {
         do {_ = try await pending.value;check(false,"Caller cancellation stops the actual URLSession task")} catch is CancellationError {check(true,"Caller cancellation stops the actual URLSession task")} catch {check(false,"Cancellation returned an unrelated error: \(error)")}
         for _ in 0..<500 {if OwnedExtensionProtocol.observation().1 > 0 {break};try await Task.sleep(for:.milliseconds(2))}
         check(OwnedExtensionProtocol.observation().1 > 0,"Cancellation reaches the actual owned protocol's stopLoading callback")
+        let manager = FileManager.default,root = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {try? manager.removeItem(at:root)}
+        let package = try ownedDownloadPackageFixture(),responses = OwnedPackageResponses(metadata:metadata,archive:package.bytes)
+        let transport:ExtensionStoreDownload.Transport = {responses.respond($0,$1,$2)}
+        var rejectedPublisher = false
+        do {let prepared = try await ExtensionStoreDownload.fetch(id:package.id,stagingRoot:root,platform:.arm64,transport:transport);try prepared.discard()}
+        catch {rejectedPublisher = error.localizedDescription.localizedCaseInsensitiveContains("publisher")}
+        check(rejectedPublisher,"The complete network pipeline requires the production publisher proof even for a valid generated developer signature")
+        let observed = responses.observation(),expectedPackageURL = try ExtensionStoreCatalog.downloadURL(id:package.id,version:"143.0.1234.56")
+        check(observed.0 == [metadataURL,expectedPackageURL] && observed.1 == [1_048_576,ExtensionPackageLimits.default.inputBytes],"The pipeline requests fresh stable metadata before its exact ID/version package with the correct byte limits")
+        check(!manager.fileExists(atPath:root.path),"A fetched but unauthenticated package cannot create staged resources")
+        let wrongID = (package.id.first == "a" ? "b" : "a")+package.id.dropFirst(),wrong = OwnedPackageResponses(metadata:metadata,archive:package.bytes)
+        var rejectedIdentity = false
+        do {_ = try await ExtensionStoreDownload.fetch(id:String(wrongID),stagingRoot:root,platform:.arm64,transport:{wrong.respond($0,$1,$2)})}
+        catch {rejectedIdentity = error.localizedDescription.localizedCaseInsensitiveContains("requested extension")}
+        check(rejectedIdentity,"The complete fetch pipeline binds the downloaded developer key to the requested extension ID")
+        let invalid = OwnedPackageResponses(metadata:metadata,archive:package.bytes)
+        do {_ = try await ExtensionStoreDownload.fetch(id:"invalid",stagingRoot:root,platform:.arm64,transport:{invalid.respond($0,$1,$2)});check(false,"Invalid input cannot begin a store transfer")}
+        catch {check(invalid.observation().0.isEmpty,"Invalid input cannot begin a store transfer")}
+        let gate = OwnedMetadataGate()
+        let cancelled = Task {try await ExtensionStoreDownload.fetch(id:package.id,stagingRoot:root,platform:.arm64,transport:{_,resource,_ in
+            guard case .metadata = resource else {throw ExtensionDownloadError.invalidResponse}
+            return await gate.wait()
+        })}
+        for _ in 0..<500 {if gate.pending {break};try await Task.sleep(for:.milliseconds(2))}
+        check(gate.pending,"The pipeline cancellation fixture holds an actual pending metadata result")
+        cancelled.cancel();gate.release(metadata)
+        do {_ = try await cancelled.value;check(false,"A late metadata response cannot publish after caller cancellation")}
+        catch is CancellationError {check(true,"A late metadata response cannot publish after caller cancellation")}
+        catch {check(false,"Pipeline cancellation returned an unrelated error: \(error)")}
+        check(!manager.fileExists(atPath:root.path),"Cancelling package selection leaves no unauthenticated resource files")
         print("Extension download checks: \(failures) failures");exit(failures == 0 ? 0 : 1)
     }
 }

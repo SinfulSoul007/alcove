@@ -53,7 +53,20 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             let websiteID = normal.newTab(url:fixture),website = normal.view(for:websiteID)
             try await wait{(try? await website.evaluateJavaScript("document.body?.dataset.ownedExtensionPage === 'ready' && document.documentElement.dataset.ownedUninstallScript === 'ran'")) as? Bool == true}
             _ = try await website.evaluateJavaScript("document.getElementById('owned-form').value='keep unrelated live form';document.cookie='owned_uninstall_website=keep; path=/';true")
-            check((try await js(website,"try{await fetch('/owned-uninstall-deny');return false}catch{return (await fetch('/owned-uninstall-control')).ok}")) as? Bool == true,"The actual installed extension injects its registered script and blocks a real loopback request before removal")
+            var blockingWitness = false,attempts = 0,firstObservation = "",lastObservation = ""
+            let blockingDeadline = ContinuousClock.now.advanced(by:.seconds(7))
+            repeat {
+                attempts += 1
+                lastObservation = (try await js(website,"let result={blocked:false,controlOK:false};try{let response=await fetch('/owned-uninstall-deny',{cache:'no-store'});result.denyStatus=response.status}catch(error){result.blocked=true;result.denial=String(error)}try{let response=await fetch('/owned-uninstall-control',{cache:'no-store'});result.controlOK=response.ok;result.controlStatus=response.status}catch(error){result.controlError=String(error)}return JSON.stringify(result);")) as? String ?? ""
+                if firstObservation.isEmpty {firstObservation = lastObservation}
+                let observation = try JSONSerialization.jsonObject(with:Data(lastObservation.utf8)) as? [String:Any]
+                blockingWitness = observation?["blocked"] as? Bool == true && observation?["controlOK"] as? Bool == true
+                if blockingWitness {break}
+                try await Task.sleep(for:.milliseconds(50))
+            } while ContinuousClock.now < blockingDeadline
+            let ruleState = (try? await js(api,"return JSON.stringify(await browser.declarativeNetRequest.getDynamicRules());")) as? String ?? "unavailable"
+            print("INFO: Owned request-blocking readiness attempts=\(attempts) first=\(firstObservation) final=\(lastObservation) storedRules=\(ruleState)")
+            check(blockingWitness,"The actual installed extension injects its registered script and blocks a real loopback request before removal")
             try normal.beginRemoveExtension(id,profileID:profile)
             check(normal.extensionRecords(profileID:profile).first?.pendingRemoval == true && context.isLoaded == false,"Removal first persists its tombstone and unloads the approved native context")
             // Reproduce a previously interrupted app-owned cleanup. Its saved

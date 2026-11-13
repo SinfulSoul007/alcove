@@ -47,6 +47,19 @@ private func ownedRSA() throws -> (signer:OwnedCRXSigner,key:SecKey) {
     }),key)
 }
 
+/// Shared generated package for network-pipeline tests; it deliberately has no
+/// production publisher proof and is never loaded into an extension context.
+func ownedDownloadPackageFixture() throws -> (id:String,bytes:Data,updatedBytes:Data) {
+    let key = P256.Signing.PrivateKey(),signer = OwnedCRXSigner(spki:key.publicKey.derRepresentation,kind:3,sign:{try key.signature(for:$0).derRepresentation})
+    func revision(_ version:String) throws -> Data {
+        var manifest = OwnedZIPFile();manifest.name = "manifest.json"
+        manifest.contents = try JSONSerialization.data(withJSONObject:["manifest_version":3,"name":"Owned Download Fixture","version":version])
+        manifest.checksum = manifest.contents.withUnsafeBytes{UInt32(crc32(0,$0.bindMemory(to:UInt8.self).baseAddress,uInt($0.count)))}
+        return try ownedCRX([signer],archive:ownedZIP([manifest]))
+    }
+    return (signer.id,try revision("1"),try revision("2"))
+}
+
 func runExtensionCRXChecks(_ check:(Bool,String)->Void) throws {
     let (rsa,rsaKey) = try ownedRSA(), ecKey = P256.Signing.PrivateKey()
     let ec = OwnedCRXSigner(spki:ecKey.publicKey.derRepresentation,kind:3,sign:{try ecKey.signature(for:$0).derRepresentation})
@@ -115,4 +128,12 @@ func runExtensionCRXChecks(_ check:(Bool,String)->Void) throws {
     var rejectedBadZIP = false
     do { let value = try ExtensionPackage.prepare(at:signedPackage,stagingRoot:staging); try value.discard() } catch { rejectedBadZIP = true }
     check(rejectedBadZIP,"A valid CRX signature never bypasses ZIP resource validation")
+    let webStage = root.appendingPathComponent("unverified-store-stage"),developerPackage = try ownedCRX([ec],archive:ownedZIP([manifest]))
+    func rejectsWebPackage(_ bytes:Data,id:String,limits:ExtensionPackageLimits = .default) -> Bool {
+        do {let package = try ExtensionPackage.prepareWebStoreArchive(bytes,expectedID:id,stagingRoot:webStage,limits:limits);try package.discard();return false} catch {return true}
+    }
+    check(rejectsWebPackage(developerPackage,id:ec.id),"A downloaded developer-signed package cannot bypass the required production publisher proof")
+    check(rejectsWebPackage(developerPackage,id:String(repeating:"a",count:32)),"A downloaded package cannot bypass the expected Web Store identity")
+    check(rejectsWebPackage(developerPackage,id:ec.id,limits:ExtensionPackageLimits(inputBytes:developerPackage.count-1)),"Downloaded package bytes are capped before signature and extraction work")
+    check(!manager.fileExists(atPath:webStage.path),"An unverified store response cannot create staged package files")
 }

@@ -2,7 +2,7 @@ import Foundation
 import BrowserCore
 
 enum ExtensionActionError:LocalizedError {
-    case missing, stale, approvalRequired, invalidApproval, busy
+    case missing, stale, approvalRequired, invalidApproval, busy, identityChanged
     var errorDescription:String? {
         switch self {
         case .missing: return "This extension no longer exists."
@@ -10,6 +10,7 @@ enum ExtensionActionError:LocalizedError {
         case .approvalRequired: return "Review this code version's permissions before enabling it."
         case .invalidApproval: return "Choose permissions declared by this extension and supported by Alcove."
         case .busy: return "An extension installation is still finishing. Try again shortly."
+        case .identityChanged:return "This package identifies a different extension. Install it separately so the original extension and its data can still be removed safely."
         }
     }
 }
@@ -74,6 +75,7 @@ extension BrowserStore {
             requestedPermissions:package.manifest.requestedPermissions,optionalPermissions:package.manifest.optionalPermissions,hostPermissions:package.manifest.hostPermissions,optionalHostPermissions:package.manifest.optionalHostPermissions)
         record.packageID = previous?.packageID ?? id; record.summary = package.manifest.summary; record.incognito = package.manifest.incognito
         record.signerID = package.signerID; record.storeID = package.storeID; record.publisherVerified = package.publisherVerified
+        if let previous,previous.runtimeIdentifier != record.runtimeIdentifier {throw ExtensionActionError.identityChanged}
         if enable || !permissions.isEmpty || !hostPatterns.isEmpty || allowPrivate {
             record.grants = ExtensionGrantSet(profileID:profileID,recordID:id,controllerID:profile.extensionControllerID!,packageDigest:package.digest,permissions:permissions,hostPatterns:hostPatterns,allowPrivate:allowPrivate)
             record.enabled = enable

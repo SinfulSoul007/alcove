@@ -14,6 +14,27 @@ enum ExtensionDownloadError:LocalizedError {
     }
 }
 
+enum ExtensionStoreDownload {
+    typealias Transport = @Sendable (URL,ExtensionStoreResource,Int) async throws -> Data
+    static var liveTransport:Transport {{url,resource,limit in
+        let (data,_) = try await ExtensionStoreTransfer.fetch(url:url,resource:resource,limit:limit)
+        return data
+    }}
+    static func fetch(id:String,stagingRoot:URL,platform:ExtensionStorePlatform = .current,transport:Transport = liveTransport) async throws -> PreparedExtensionPackage {
+        guard BrowserExtensionRecord.validExternalID(id) else {throw ExtensionStoreError.invalidLocation}
+        try Task.checkCancellation()
+        let metadata = try await transport(ExtensionStoreCatalog.versionURL(platform:platform),.metadata(platform),1_048_576)
+        try Task.checkCancellation()
+        let version = try ExtensionStoreCatalog.selectionVersion(from:metadata,platform:platform)
+        let address = try ExtensionStoreCatalog.downloadURL(id:id,version:version)
+        let archive = try await transport(address,.package,ExtensionPackageLimits.default.inputBytes)
+        try Task.checkCancellation()
+        let preparation = Task.detached(priority:.userInitiated) {try ExtensionPackage.prepareWebStoreArchive(archive,expectedID:id,stagingRoot:stagingRoot)}
+        let package = try await withTaskCancellationHandler(operation:{try await preparation.value},onCancel:{preparation.cancel()})
+        try Task.checkCancellation();return package
+    }
+}
+
 /// Foundation calls its delegate on a serial queue; cancellation can arrive on any
 /// thread. The lock protects completion, buffers and native task ownership only.
 final class ExtensionStoreTransfer:NSObject,URLSessionDataDelegate,@unchecked Sendable {
