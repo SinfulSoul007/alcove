@@ -21,7 +21,7 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             catch MetadataOwnershipError.inUse {exit(23)}
             catch {exit(24)}
         }
-        NSApplication.shared.setActivationPolicy(.prohibited);setbuf(stdout,nil)
+        NSApplication.shared.setActivationPolicy(.regular);NSApplication.shared.finishLaunching();setbuf(stdout,nil)
         guard #available(macOS 15.4,*) else {print("UNAVAILABLE: Native erasure fixtures require macOS15.4.");return}
         let owned = try OwnedWebsiteStores(),controllers = try OwnedExtensionControllers()
         guard !FileManager.default.fileExists(atPath:controllers.manifest.path) else {print("FAIL: Finish the previous owned erasure fixture's recorded recovery before rerunning.");exit(1)}
@@ -35,6 +35,7 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             defer {normal.shutdown()}
             let browserWindow=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
             browserWindow.isReleasedWhenClosed=false;normal.registerExtensionWindow(browserWindow,kind:.primary)
+            browserWindow.title="Owned request-blocking QA";browserWindow.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
             defer {normal.unregisterExtensionWindow(kind:.primary);browserWindow.contentView=nil;browserWindow.close()}
             let profile = try normal.createProfile(name:"Owned uninstall account"),controllerID = normal.profiles.first(where:{$0.id == profile})!.extensionControllerID!
             try owned.register(profile);try controllers.register(controllerID)
@@ -69,6 +70,7 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
                 if blockingWitness {break}
                 try await Task.sleep(for:.milliseconds(50))
             } while ContinuousClock.now < blockingDeadline
+            print("INFO: Visible browser active=\(NSApp.isActive) visible=\(browserWindow.isVisible) key=\(browserWindow.isKeyWindow) URLAccess=\(context.hasAccess(to:fixture))")
             let ruleState = (try? await js(api,"return JSON.stringify(await browser.declarativeNetRequest.getDynamicRules());")) as? String ?? "unavailable"
             print("INFO: Owned request-blocking readiness attempts=\(attempts) first=\(firstObservation) final=\(lastObservation) storedRules=\(ruleState)")
             check(blockingWitness,"The actual installed extension injects its registered script and blocks a real loopback request before removal")
