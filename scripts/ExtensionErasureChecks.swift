@@ -48,11 +48,24 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             try Data("/* Generated inert readiness resource */".utf8).write(to:source.appendingPathComponent("sentinel.js"))
             try Data("(async()=>{let id='owned-readiness-'+String(Math.random());await browser.scripting.registerContentScripts([{id,matches:['https://owned-readiness.invalid/*'],js:['sentinel.js'],persistAcrossSessions:true}]);await browser.scripting.unregisterContentScripts({ids:[id]});await browser.storage.session.set({ownedErasureReadiness:'ready'})})();".utf8).write(to:source.appendingPathComponent("bootstrap.js"))
             let package = try ExtensionPackage.prepare(at:source,stagingRoot:root.appendingPathComponent("staging")),approval = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],hostPatterns:["http://127.0.0.1/*"],enable:true)
-            let id = try await normal.installExtension(package,approval:approval);try await normal.prepareExtensions(profileID:profile)
+            let id = try await normal.installExtension(package,approval:approval)
+            let bootstrapStage=ProcessInfo.processInfo.environment["ALCOVE_BOOTSTRAP_STAGE"] ?? "none"
+            var bootstrap:WKWebView?
+            func makeBootstrap() -> WKWebView {
+                let configuration=WKWebViewConfiguration()
+                configuration.websiteDataStore=normal.websiteDataStore(forProfile:profile)
+                normal.configureExtensions(configuration,profileID:profile)
+                return WKWebView(frame:.zero,configuration:configuration)
+            }
+            if bootstrapStage == "beforeLoad" {bootstrap=makeBootstrap()}
+            defer {bootstrap?.stopLoading()}
+            try await normal.prepareExtensions(profileID:profile)
             let record = normal.extensionRecords(profileID:profile).first!,server = normal.extensionHosting as! NativeBrowserExtensionHost,context = server.profiles[profile]!.contexts[id]!,api = try await page(context)
             print("INFO: Native DNR grant=\(context.hasPermission(WKWebExtension.Permission(rawValue:"declarativeNetRequest"))) hosts=\(context.grantedPermissionMatchPatterns.keys.map(\.string))")
             let dataStore = normal.websiteDataStore(forProfile:profile)
             try JSONSerialization.data(withJSONObject:["controller":controllerID.uuidString,"runtime":record.runtimeIdentifier,"website":profile.uuidString],options:.sortedKeys).write(to:root.appendingPathComponent("owned-identities.json"))
+            if bootstrapStage == "beforeRules" {bootstrap=makeBootstrap()}
+            print("INFO: bootstrap stage=\(bootstrapStage) view=\(bootstrap != nil)")
             let seedIDB = "await new Promise((resolve,reject)=>{let r=indexedDB.open('owned-uninstall',1);r.onupgradeneeded=()=>r.result.createObjectStore('items');r.onerror=()=>reject(r.error);r.onsuccess=()=>{let d=r.result,t=d.transaction('items','readwrite');t.objectStore('items').put('private fixture value','key');t.oncomplete=()=>{d.close();resolve(true)};t.onerror=()=>{d.close();reject(t.error)}}});"
             _ = try await js(api,"await browser.storage.local.set({owned:'local'});await browser.storage.sync.set({owned:'sync'});localStorage.setItem('owned-origin','retire');"+seedIDB+"await browser.scripting.registerContentScripts([{id:'owned-installed-script',matches:['http://127.0.0.1/*'],js:['registered.js'],persistAcrossSessions:true,runAt:'document_end'}]);await browser.declarativeNetRequest.updateDynamicRules({addRules:[{id:917,priority:1,action:{type:'block'},condition:{urlFilter:'/owned-uninstall-deny',resourceTypes:['xmlhttprequest']}},{id:918,priority:1,action:{type:'block'},condition:{urlFilter:'/owned-uninstall-any-deny'}}]});return true;")
             let websiteID = normal.newTab(url:fixture),website = normal.view(for:websiteID)
