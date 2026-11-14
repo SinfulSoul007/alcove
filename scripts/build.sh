@@ -268,6 +268,11 @@ if [[ "${1:-}" == "sidebar-layout-test" ]]; then
     "$MANUAL/sidebar-layout-checks"
     exit
 fi
+run_native_fullscreen_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library Sources/Browser/NativeWindowChrome.swift scripts/NativeChromeFullscreenChecks.swift -o "$MANUAL/native-fullscreen-checks"
+    "$MANUAL/native-fullscreen-checks"
+}
+if [[ "${1:-}" == "native-fullscreen-test" ]]; then run_native_fullscreen_checks; exit; fi
 if [[ "${1:-}" == "chrome-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ChromeChecks.swift -o "$MANUAL/chrome-checks"
     "$MANUAL/chrome-checks"

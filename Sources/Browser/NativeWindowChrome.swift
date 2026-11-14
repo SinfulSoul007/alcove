@@ -12,6 +12,7 @@ import SwiftUI
     /// Window-content x coordinate where the first custom control may start.
     var leadingEdge: CGFloat { layout.leadingEdge }
     private weak var window: NSWindow?
+    private let ownedToolbars = NSHashTable<NSToolbar>.weakObjects()
     private var observations: [NSObjectProtocol] = []
     private var measurementScheduled = false
 
@@ -26,6 +27,7 @@ import SwiftUI
                 let toolbar = NSToolbar(identifier: "AlcoveNativeChrome")
                 toolbar.allowsUserCustomization = false
                 toolbar.autosavesConfiguration = false
+                ownedToolbars.add(toolbar)
                 window.toolbar = toolbar
             }
             window.toolbarStyle = .unifiedCompact
@@ -65,6 +67,13 @@ import SwiftUI
 
     private func measure() {
         guard let window, let content = window.contentView else { return }
+        // The empty native toolbar supplies normal-window traffic-light
+        // geometry, but becomes an opaque overlay in fullscreen. Only manage
+        // toolbars created here; callers can supply their own visible/hidden UI.
+        if let toolbar = window.toolbar, ownedToolbars.contains(toolbar) {
+            let visible = !window.styleMask.contains(.fullScreen)
+            if toolbar.isVisible != visible { toolbar.isVisible = visible }
+        }
         content.superview?.layoutSubtreeIfNeeded()
         guard let close = window.standardWindowButton(.closeButton) else { return }
         let bounds = close.convert(close.bounds, to: content)
