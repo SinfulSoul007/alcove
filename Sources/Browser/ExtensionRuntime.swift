@@ -32,11 +32,13 @@ import BrowserCore
     let id:UUID, controllerID:UUID
     let controller:WKWebExtensionController
     let contentController = WKUserContentController()
+    private let dataStore:WKWebsiteDataStore
+    private var requestRulesView:WKWebView?
     var contexts:[UUID:WKWebExtensionContext] = [:]
     var loaded:[BrowserExtensionRecord]?, epoch:UUID?
     var task:Task<Void,Error>?, taskID:UUID?, preparing:[BrowserExtensionRecord]?
     init(id:UUID,controllerID:UUID,dataStore:WKWebsiteDataStore) {
-        self.id = id; self.controllerID = controllerID
+        self.id = id; self.controllerID = controllerID;self.dataStore = dataStore
         let configuration = WKWebExtensionController.Configuration(identifier:controllerID)
         configuration.defaultWebsiteDataStore = dataStore
         let background = WKWebViewConfiguration(); background.websiteDataStore = dataStore
@@ -44,7 +46,19 @@ import BrowserCore
         configuration.webViewConfiguration = background
         controller = WKWebExtensionController(configuration:configuration)
     }
+    func prepareRequestRules(for context:WKWebExtensionContext) {
+        guard !BrowserExtensionCompatibility.supportsPrivateRequestBlocking,requestRulesView==nil,
+              ["declarativeNetRequest","declarativeNetRequestWithHostAccess"].contains(where:{context.hasPermission(WKWebExtension.Permission(rawValue:$0))}) else {return}
+        // A backgroundless static blocker has no native view to register this
+        // profile's UCC before its rules compile. Register an inert, URL-less
+        // view after approval; it is never exposed as a browser tab.
+        let configuration=WKWebViewConfiguration()
+        configuration.websiteDataStore=dataStore;configuration.userContentController=contentController
+        configuration.webExtensionController=controller
+        requestRulesView=WKWebView(frame:.zero,configuration:configuration)
+    }
     func unload() throws {
+        defer {requestRulesView?.stopLoading();requestRulesView=nil}
         task?.cancel(); task = nil; taskID = nil; preparing = nil; loaded = nil; epoch = nil
         var failure:Error?
         for (id,context) in contexts {
@@ -230,6 +244,7 @@ import BrowserCore
             context.isInspectable = false
             context.unsupportedAPIs = ["browser.runtime.sendNativeMessage","browser.runtime.connectNative","browser.debugger","browser.devtools","browser.sidePanel"]
             try apply(record.grants!,record:record,to:context)
+            runtime.prepareRequestRules(for:context)
             runtime.contexts[record.id] = context
             do {try runtime.controller.load(context)} catch {runtime.contexts.removeValue(forKey:record.id);throw error}
         }
