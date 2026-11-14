@@ -1,19 +1,55 @@
-name: Native extension erasure check
-
+name: Native bundled erasure diagnostic
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   macos:
     runs-on: macos-15
     timeout-minutes: 10
     steps:
-      - name: Check out source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Verify owned native erasure and request-blocking controls
-        run: caffeinate -is scripts/build.sh extension-erasure-test
+      - name: Compile and observe the loose test executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .build
+          if caffeinate -is scripts/build.sh extension-erasure-test > .build/unbundled-erasure.log 2>&1; then result=0; else result=$?; fi
+          echo "Unbundled test result=$result"
+          grep -E '^INFO:|^FAIL:|checks:|error:' .build/unbundled-erasure.log || true
+          test -x ".build/manual/$(uname -m)/extension-erasure-checks"
+      - name: Run the same assertions from an owned app bundle
+        shell: bash
+        run: |
+          #!/bin/bash
+          set -euo pipefail
+          SHARE="$PWD/.build"
+          MANUAL="$PWD/.build/manual/$(uname -m)"
+          PROBE="$MANUAL/OwnedErasureDiagnostic.app"
+          mkdir -p "$PROBE/Contents/MacOS"
+          cp "$MANUAL/extension-erasure-checks" "$PROBE/Contents/MacOS/Probe"
+          cat > "$PROBE/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>CFBundleIdentifier</key><string>dev.openbrowser.mac.owned-erasure-diagnostic</string><key>CFBundleExecutable</key><string>Probe</string><key>CFBundleName</key><string>Owned Erasure Diagnostic</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>1</string><key>LSMinimumSystemVersion</key><string>14.0</string></dict></plist>
+          PLIST
+          codesign --force --sign - "$PROBE"
+          codesign --verify --deep --strict "$PROBE"
+          PORT=$(mktemp "$MANUAL/diagnostic-port.XXXXXX")
+          python3 scripts/ExtensionFixture.py "$PORT" > "$MANUAL/bundle-fixture.log" 2>&1 &
+          FIXTURE_PID=$!
+          trap 'kill "$FIXTURE_PID" 2>/dev/null || true; wait "$FIXTURE_PID" 2>/dev/null || true; rm -f "$PORT"' EXIT
+          for attempt in {1..500}; do [[ -s "$PORT" ]] && break; kill -0 "$FIXTURE_PID" 2>/dev/null || break; sleep 0.02; done
+          [[ -s "$PORT" ]]
+          if ALCOVE_EXTENSION_FIXTURE_URL="http://127.0.0.1:$(cat "$PORT")/" "$PROBE/Contents/MacOS/Probe" > "$SHARE/bundled-erasure.log" 2>&1; then result=0; else result=$?; fi
+          grep -E '^INFO:|^FAIL:|checks:' "$SHARE/bundled-erasure.log" || true
+          exit "$result"
+      - name: Preserve owned diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-bundle-diagnostic
+          path: .build/*erasure.log
+          retention-days: 7
