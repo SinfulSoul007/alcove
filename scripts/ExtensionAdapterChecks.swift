@@ -76,6 +76,34 @@ enum OwnedExtensionAdapterError:Error {case missingFixture,timedOut,missingTab}
             check(options.configuration.webExtensionController === webA.configuration.webExtensionController,"Options uses the loaded context's own specialized configuration and account controller")
             let nativeA = webA.configuration.webExtensionController!,contextA = nativeA.extensionContexts.first!
             let record = store.extensionRecords(profileID:a).first!
+            do {
+                var unpinFavorite=BrowserCore.Tab(title:"Owned shelf unpin",url:fixture.appendingPathComponent("shelf-unpin").absoluteString)
+                unpinFavorite.pinned=true;unpinFavorite.favorite=true
+                var activateFavorite=BrowserCore.Tab(title:"Owned shelf activation",url:fixture.appendingPathComponent("shelf-activate").absoluteString)
+                activateFavorite.pinned=true;activateFavorite.favorite=true
+                var document=store.makeDocument(),library=document.library(for:a)
+                library.favoriteTabs=(library.favoriteTabs ?? [])+[unpinFavorite,activateFavorite];document.setLibrary(library,for:a)
+                try store.commitProfileDocument(document)
+                let shelfHost=store.extensionHosting as! NativeBrowserExtensionHost
+                let spaceB=store.session.spaces.first(where:{$0.effectiveProfileID==b})!.id
+                store.selectSpace(spaceB);window.contentView=webB;shelfHost.synchronizeBrowserState()
+                _ = try await webB.evaluateJavaScript("document.getElementById('owned-form').value='keep account B form';true")
+                let unpinKey=NativeExtensionTabKey(storeID:store.extensionStoreID,profileID:a,id:unpinFavorite.id,isPeek:false)
+                guard let shelfUnpin=shelfHost.nativeTabs[unpinKey] else {throw OwnedExtensionAdapterError.missingTab}
+                var unpinReplies=0,unpinError:Error?
+                shelfUnpin.setPinned(false,for:contextA){unpinReplies+=1;unpinError=$0}
+                let materialized=store.session.spaces.filter{$0.effectiveProfileID==a}.flatMap(\.tabs).first(where:{$0.id==unpinFavorite.id})
+                check(unpinReplies==1 && unpinError==nil && materialized?.url==unpinFavorite.url && materialized?.pinned==false && materialized?.favorite != true,"Unpinning an unmounted Favorite keeps its UUID and URL in its owning account's ordinary tabs")
+                check(store.activeProfileID==b && !store.favorites(for:a).contains(where:{$0.id==unpinFavorite.id}),"A background account Favorite unpin never selects or writes into the foreground account")
+                shelfHost.synchronizeBrowserState()
+                let activateKey=NativeExtensionTabKey(storeID:store.extensionStoreID,profileID:a,id:activateFavorite.id,isPeek:false)
+                guard let shelfActivate=shelfHost.nativeTabs[activateKey] else {throw OwnedExtensionAdapterError.missingTab}
+                var activateReplies=0,activateError:Error?
+                shelfActivate.activate(for:contextA){activateReplies+=1;activateError=$0}
+                check(activateReplies==1 && activateError==nil && store.activeProfileID==a && store.selectedID==activateFavorite.id,"Activating an unmounted Favorite selects that exact tab in its own account before reporting success")
+                check((try await webB.evaluateJavaScript("document.getElementById('owned-form').value === 'keep account B form'")) as? Bool==true && store.views[tabB] === webB,"Background Favorite operations preserve the other account's live view and unsaved form")
+                store.selectSpace(spaceA);store.select(optionsID);window.contentView=webA;shelfHost.synchronizeBrowserState()
+            }
             let packageB = try ExtensionPackage.prepare(at:source,stagingRoot:staging)
             _ = try ExtensionPackage.publish(packageB,profileID:b,extensionID:record.packageID ?? record.id,packagesRoot:store.extensionPackagesRoot)
             // Equal extension IDs in two accounts are valid recovery input; grants are approved separately.
@@ -153,6 +181,12 @@ enum OwnedExtensionAdapterError:Error {case missingFixture,timedOut,missingTab}
             let focusedMainType = try await options.callAsyncJavaScript("return (await browser.windows.getLastFocused()).type;",arguments:[:],in:nil,contentWorld:.page) as? String
             check(focusedMainType == "normal","Returning focus to the existing main window updates the real native window API")
             let beforeMove = try await query(options).first(where:{$0["url"] as? String == quickURL.absoluteString})?["id"] as? NSNumber
+            if let quickAPIID=beforeMove {
+                let beforeDuplicate=Set(store.views.keys)
+                let refused=(try await options.callAsyncJavaScript("try{await browser.tabs.duplicate(tabID);return false}catch(error){return true}",arguments:["tabID":quickAPIID],in:nil,contentWorld:.page)) as? Bool==true
+                check(refused && Set(store.views.keys)==beforeDuplicate,"Duplicating a Quick tab refuses the unavailable destination without silently creating a main-window tab")
+                for extra in Set(store.views.keys).subtracting(beforeDuplicate) {store.close(extra)}
+            }
             _ = try await quickWeb.evaluateJavaScript("document.getElementById('owned-form').value='keep across handoff';true")
             _ = try store.promoteQuickPage(quickID,to:spaceA);store.unregisterExtensionWindow(kind:.quick(quickID));quickWindow.contentView = nil
             let afterMove = try await query(options).first(where:{$0["url"] as? String == quickURL.absoluteString})?["id"] as? NSNumber

@@ -15,13 +15,13 @@ extension BrowserStore {
     }
     /// Extension and ordinary documents require different public WebKit configurations.
     /// The user-requested navigation replaces that document while keeping its model/tab ID.
-    func navigateExtensionTab(_ id:UUID,to url:URL,profileID:UUID) throws {
+    func navigateExtensionTab(_ id:UUID,to url:URL,profileID:UUID,request:URLRequest?=nil) throws {
         try requireQuickProfile(profileID)
         guard self.profileID(for:id) == profileID else {throw ExtensionHostError.stale}
         let existing = views[id],previous = existing?.url ?? tab(id).flatMap{URL(string:$0.url)}
         if let existing,extensionOriginPopups.contains(existing),["http","https"].contains(url.scheme?.lowercased() ?? "") {throw ExtensionHostError.unsupportedWebsitePopup}
         if let existing,extensionOriginPopups.contains(existing),url.absoluteString == "about:blank" {
-            update(id){$0.url = url.absoluteString};existing.load(URLRequest(url:url));return
+            update(id){$0.url = url.absoluteString};existing.load(request ?? URLRequest(url:url));return
         }
         let wasExtension = previous?.scheme?.lowercased() == "webkit-extension",isExtension = url.scheme?.lowercased() == "webkit-extension"
         let replace = wasExtension != isExtension || (isExtension && (previous?.host != url.host || existing?.url?.scheme?.lowercased() != "webkit-extension"))
@@ -31,14 +31,48 @@ extension BrowserStore {
         } else {configuration = nil}
         update(id){$0.url = url.absoluteString}
         guard let existing else {_ = view(for:id,configuration:configuration);return}
-        guard replace else {existing.load(URLRequest(url:url));return}
+        guard replace else {existing.load(request ?? URLRequest(url:url));return}
         let destination = configuration ?? WKWebViewConfiguration()
         destination.websiteDataStore = websiteDataStore(forProfile:profileID)
         destination.preferences.javaScriptCanOpenWindowsAutomatically = false
         configureExtensions(destination,profileID:profileID)
         let replacement = WKWebView(frame:existing.frame,configuration:destination)
         registerView(replacement,for:id,profile:profileID)
-        replacement.load(URLRequest(url:url));revision += 1;extensionHosting?.refresh()
+        replacement.load(request ?? URLRequest(url:url));revision += 1;extensionHosting?.refresh()
+    }
+    private func extensionTabDocument(_ id:UUID,profileID:UUID) throws -> (BrowserDocument,Int,Int) {
+        try requireQuickProfile(profileID)
+        guard self.profileID(for:id)==profileID,quickPage(id)==nil,let value=tab(id) else {throw ExtensionHostError.stale}
+        var document=makeDocument()
+        if let owner=document.session.spaces.firstIndex(where:{$0.tabs.contains(where:{$0.id==id})}) {
+            guard isPrivate || document.session.spaces[owner].effectiveProfileID==profileID,
+                  let index=document.session.spaces[owner].tabs.firstIndex(where:{$0.id==id}) else {throw ExtensionHostError.stale}
+            return (document,owner,index)
+        }
+        guard value.favorite==true,
+              let owner=document.session.spaces.firstIndex(where:{$0.id==document.session.selectedSpace && (isPrivate || $0.effectiveProfileID==profileID)}) ?? document.session.spaces.firstIndex(where:{isPrivate || $0.effectiveProfileID==profileID}) else {throw ExtensionHostError.native("Open a Space in this profile before changing this Favorite.")}
+        document.session.spaces[owner].tabs.append(value)
+        return (document,owner,document.session.spaces[owner].tabs.count-1)
+    }
+    func setExtensionTabPinned(_ id:UUID,profileID:UUID,pinned:Bool) throws {
+        guard tab(id)?.pinned != pinned else {return}
+        var (document,owner,index)=try extensionTabDocument(id,profileID:profileID)
+        var value=document.session.spaces[owner].tabs[index]
+        value.pinned=pinned
+        if pinned {value.homeURL=value.url;value.pinnedTitle=value.title}
+        else {value.favorite=nil;value.folder=nil;value.homeURL=nil;value.pinnedTitle=nil}
+        document.session.spaces[owner].tabs[index]=value
+        var library=document.library(for:profileID)
+        if value.favorite != true {library.favoriteTabs?.removeAll{$0.id==id}}
+        document.setLibrary(library,for:profileID)
+        try commitQuickDocument(document)
+    }
+    func activateExtensionTab(_ id:UUID,profileID:UUID) throws {
+        var (document,owner,_)=try extensionTabDocument(id,profileID:profileID)
+        document.session.activateSpace(document.session.spaces[owner].id)
+        document.session.spaces[owner].selected=id
+        try commitQuickDocument(document)
+        dismissCommand();closePrimaryPeek();activePaneID=nil;splitID=nil
     }
     @discardableResult func openExtensionOptions(_ id:UUID,profileID:UUID) async throws -> UUID {
         try await prepareExtensions(profileID:profileID)
@@ -116,7 +150,7 @@ struct NativeExtensionTabState:Equatable {
     func shouldBypassPermissions(for context:WKWebExtensionContext) -> Bool {false}
     func setPinned(_ pinned:Bool,for context:WKWebExtensionContext,completionHandler:@escaping(Error?)->Void) {
         guard let store = live(context),!key.isPeek,store.quickPage(key.id) == nil else {completionHandler(ExtensionHostError.stale);return}
-        if state.pinned != pinned {store.togglePin(key.id)};host?.synchronizeBrowserState();completionHandler(nil)
+        do {try store.setExtensionTabPinned(key.id,profileID:store.isPrivate ? BrowserProfile.defaultID : key.profileID,pinned:pinned);host?.synchronizeBrowserState();completionHandler(nil)} catch {completionHandler(error)}
     }
     func setZoomFactor(_ value:Double,for context:WKWebExtensionContext,completionHandler:@escaping(Error?)->Void) {
         let zoom = value == 0 ? 1 : value
@@ -145,9 +179,8 @@ struct NativeExtensionTabState:Equatable {
         if !key.isPeek {
             if store.quickPage(key.id) != nil {store.focusedQuickPageID = key.id;store.quickPageRequested?(key.id)}
             else {
-                if let space = store.session.spaces.first(where:{$0.tabs.contains(where:{$0.id == key.id})}) {store.selectSpace(space.id)}
-                else {_ = store.materializeFavorite(key.id)}
-                store.select(key.id)
+                do {try store.activateExtensionTab(key.id,profileID:store.isPrivate ? BrowserProfile.defaultID : key.profileID)}
+                catch {completionHandler(error);return}
             }
         }
         host?.synchronizeBrowserState();window.focus(for:context,completionHandler:completionHandler)
@@ -167,9 +200,9 @@ struct NativeExtensionTabState:Equatable {
     }
     func duplicate(using configuration:WKWebExtension.TabConfiguration,for context:WKWebExtensionContext,completionHandler:@escaping((any WKWebExtensionTab)?,Error?)->Void) {
         guard let store = live(context),let host,host.permitsNavigation(state.url,context:context,profileID:key.profileID) else {completionHandler(nil,ExtensionHostError.stale);return}
-        if let requested = configuration.window {
-            guard let target = requested as? NativeExtensionWindow,target.store === store,target.key.profileID == key.profileID,target.live(context) != nil else {completionHandler(nil,ExtensionHostError.stale);return}
-        }
+        let requested:(any WKWebExtensionWindow)?=configuration.window ?? browserWindow
+        guard let target=requested as? NativeExtensionWindow,target.store === store,target.key.profileID==key.profileID,target.live(context) != nil,
+              target.reference.kind == .primary,!configuration.shouldBeMuted,!configuration.shouldReaderModeBeActive else {completionHandler(nil,ExtensionHostError.native("This duplicate destination or tab configuration is unavailable."));return}
         do {let id = try store.createExtensionTab(url:state.url,profileID:store.isPrivate ? BrowserProfile.defaultID : key.profileID,activate:configuration.shouldBeActive,pinned:configuration.shouldBePinned,index:configuration.index);host.synchronizeBrowserState();completionHandler(host.nativeTabs[NativeExtensionTabKey(storeID:store.extensionStoreID,profileID:key.profileID,id:id,isPeek:false)],nil)} catch {completionHandler(nil,error)}
     }
 }

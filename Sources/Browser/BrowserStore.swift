@@ -108,6 +108,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     let extensionStoreID = UUID()
     var extensionPrivateAttachments:[UUID:PrivateExtensionAttachment] = [:]
     var extensionWindows:[ExtensionWindowKind:ExtensionBrowserWindow] = [:]
+    var extensionManagers:[UUID:ExtensionManagerWindowController] = [:]
     var extensionPrimaryWindowRequested:(()->Void)?
     var vault: MetadataStore?
     @Published var savingEnabled = true
@@ -212,6 +213,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
+        closeExtensionManagers()
         flush(); isShuttingDown = true; privateExtensionReopenJob?.finish(.failure(ExtensionHostError.closed)); cancelAllExtensionNavigations(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
@@ -464,14 +466,23 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             // Keep the extension document mounted until the same preparation/lifetime gate
             // authorizes its destination. The scoped source view itself cannot leave its origin.
             let document = documentIdentity(for:webView)
-            decideExtensionNavigation(webView,url:url,isMainFrame:true,allow:.allow) { [weak self,weak webView] policy in
+            decideExtensionNavigation(webView,request:action.request,isMainFrame:true,allow:.allow) { [weak self,weak webView] policy in
                 decisionHandler(.cancel)
                 guard policy == .allow,let self,let webView,self.profileID(for:webView) == owner,self.documentIdentity(for:webView) === document else {return}
-                do {try self.navigateExtensionSurface(webView,to:url,profileID:owner)} catch {self.message = error.localizedDescription}
+                guard ExtensionNavigationProblem.canReplay(action.request) else {
+                    if let host=self.extensionHosting {
+                        let source=ExtensionNavigationSource(store:self,web:webView,host:host,profileID:owner)
+                        let problem=ExtensionNavigationProblem(source:source,request:action.request,isMainFrame:true,policy:.allow,error:ExtensionHostError.native("This request cannot move between an extension page and a website."))
+                        problem.recoveryNotice="This request was kept in its original page. Open the website in an ordinary tab before submitting a form there."
+                        self.extensionNavigationProblem=problem
+                    }
+                    return
+                }
+                do {try self.navigateExtensionSurface(webView,to:url,profileID:owner,request:action.request)} catch {self.message = error.localizedDescription}
             }
             return
         }
-        decideExtensionNavigation(webView,url:url,isMainFrame:action.targetFrame?.isMainFrame != false,allow:action.shouldPerformDownload ? .download : .allow,decision:decisionHandler)
+        decideExtensionNavigation(webView,request:action.request,isMainFrame:action.targetFrame?.isMainFrame != false,allow:action.shouldPerformDownload ? .download : .allow,decision:decisionHandler)
     }
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         guard let owner = profileID(for: webView), !profileUnavailable(owner) else { decisionHandler(.cancel); return }

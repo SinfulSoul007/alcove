@@ -76,6 +76,7 @@ extension BrowserStore {
         record.packageID = previous?.packageID ?? id; record.summary = package.manifest.summary; record.incognito = package.manifest.incognito
         record.signerID = package.signerID; record.storeID = package.storeID; record.publisherVerified = package.publisherVerified
         if let previous,previous.runtimeIdentifier != record.runtimeIdentifier {throw ExtensionActionError.identityChanged}
+        if allowPrivate,BrowserExtensionCompatibility.privateAccessIssue(for:record) != nil {throw ExtensionHostError.unsupportedPrivateRequestBlocking}
         if enable || !permissions.isEmpty || !hostPatterns.isEmpty || allowPrivate {
             record.grants = ExtensionGrantSet(profileID:profileID,recordID:id,controllerID:profile.extensionControllerID!,packageDigest:package.digest,permissions:permissions,hostPatterns:hostPatterns,allowPrivate:allowPrivate)
             record.enabled = enable
@@ -151,6 +152,7 @@ extension BrowserStore {
         guard var record = extensionRecords(profileID:profileID).first(where:{$0.id == id}) else { throw ExtensionActionError.missing }
         guard record.pendingRemoval != true else { throw ExtensionActionError.stale }
         record.grants = grants
+        if grants?.allowPrivate==true,BrowserExtensionCompatibility.privateAccessIssue(for:record) != nil {throw ExtensionHostError.unsupportedPrivateRequestBlocking}
         if grants != nil { record = try validatedExtensionRecord(record,profile:profile) }
         else {record.revokeApproval()}
         try persistExtensionRecord(record,profileID:profileID)

@@ -59,12 +59,23 @@ import BrowserCore
         defer {try? manager.removeItem(at:root)}
         var failures = 0
         func check(_ value:Bool,_ description:String) {print("\(value ? "PASS" : "FAIL"): \(description)");if !value {failures += 1}}
+        func button(_ name:String,in view:NSView) -> NSButton? {
+            if let value=view as? NSButton,value.identifier?.rawValue=="extension.recovery."+name {return value}
+            for child in view.subviews {if let found=button(name,in:child) {return found}}
+            return nil
+        }
         func exercise() async throws {
             let store = BrowserStore(dataRoot:root.appendingPathComponent("normal"),keyProvider:{_ in key})
             defer {store.shutdown()}
             let profile = try store.createProfile(name:"Owned navigation gate");try owned.register(profile)
             let host = OwnedDelayedExtensionHost();store.extensionHosting = host
             let tab = store.newTab(), web = store.view(for:tab)
+            let window=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
+            window.isReleasedWhenClosed=false;store.registerExtensionWindow(window,kind:.primary)
+            let edge=EdgeToEdgeWebHost(frame:NSRect(x:0,y:0,width:800,height:600));edge.setContent(web);edge.setRecovery(store:store,webView:web)
+            window.contentView=edge
+            defer {store.unregisterExtensionWindow(kind:.primary);window.contentView=nil;window.close()}
+
             let firstURL = fixture.appending(queryItems:[URLQueryItem(name:"phase",value:"first")])
             let nextURL = fixture.appending(queryItems:[URLQueryItem(name:"phase",value:"newer")])
             var first:[WKNavigationActionPolicy] = [], newer:[WKNavigationActionPolicy] = []
@@ -104,9 +115,51 @@ import BrowserCore
             host.release(ExtensionHostError.damaged)
             try await until {store.extensionNavigationProblem != nil}
             check((try await web.evaluateJavaScript("document.getElementById('owned-form')?.value === 'keep this owned form'")) as? Bool == true,"A host failure cancels the navigation without reloading the existing form")
-            try store.continueWithoutExtensions()
+            try await until {button("without",in:edge) != nil}
+            let keptFrame=web.frame
+            button("without",in:edge)!.performClick(nil)
             try await ready(web,failURL)
+            check(web.superview === edge && web.frame==keptFrame,"The real recovery control keeps the mounted website and viewport instead of replacing its form host")
             check(store.extensionNavigationProblem == nil,"Explicit Continue Without completes the originally requested page")
+            let headerURL=fixture.appending(queryItems:[URLQueryItem(name:"phase",value:"retry-header")])
+            var request=URLRequest(url:headerURL);request.setValue("owned-header-kept",forHTTPHeaderField:"X-Owned-Recovery")
+            host.invalidate(profileID:profile);let beforeHeader=host.starts
+            web.load(request);try await until {host.starts>beforeHeader};host.release(ExtensionHostError.damaged)
+            try await until {store.extensionNavigationProblem != nil && button("retry",in:edge) != nil}
+            let beforeRetry=host.starts;button("retry",in:edge)!.performClick(nil)
+            try await until {host.starts>beforeRetry};host.release();try await ready(web,headerURL)
+            check((try await web.evaluateJavaScript("document.body.dataset.ownedRecovery === 'owned-header-kept'")) as? Bool==true,"The production Retry control preserves the original GET request headers")
+            _ = try await web.evaluateJavaScript("document.getElementById('owned-form').value='keep POST form';true")
+            host.invalidate(profileID:profile);let beforePost=host.starts
+            _ = try? await web.callAsyncJavaScript("const f=document.createElement('form');f.method='POST';f.action=target;const v=document.createElement('input');v.name='owned';v.value='fake-owned-payload';f.appendChild(v);document.body.appendChild(f);f.submit();return true;",arguments:["target":fixture.appendingPathComponent("owned-post").absoluteString],in:nil,contentWorld:.page)
+            try await until {host.starts>beforePost};host.release(ExtensionHostError.damaged)
+            try await until {store.extensionNavigationProblem != nil && button("retry",in:edge) != nil}
+            check(store.extensionNavigationProblem?.request.httpMethod=="POST","The real form navigation retains its POST identity for recovery")
+            let beforePostRetry=host.starts;button("retry",in:edge)!.performClick(nil)
+            try await until {host.starts>beforePostRetry};host.release()
+            try await until {store.extensionNavigationProblem?.recoveryNotice != nil}
+            let postKept=(try await web.evaluateJavaScript("document.getElementById('owned-form')?.value === 'keep POST form'")) as? Bool==true
+            check(web.url==headerURL && postKept,"Retrying extension setup never turns a POST into GET or destroys the unsent form")
+            try await until {button("dismiss",in:edge) != nil};button("dismiss",in:edge)!.performClick(nil)
+            for (isMain,policy,label) in [(false,WKNavigationActionPolicy.allow,"embedded frame"),(true,WKNavigationActionPolicy.download,"download")] {
+                host.invalidate(profileID:profile);let before=host.starts
+                store.decideExtensionNavigation(web,url:fixture.appendingPathComponent("owned-"+label.replacingOccurrences(of:" ",with:"-")),isMainFrame:isMain,allow:policy){_ in}
+                try await until {host.starts>before};host.release(ExtensionHostError.damaged)
+                try await until {store.extensionNavigationProblem != nil && button("without",in:edge) != nil}
+                button("without",in:edge)!.performClick(nil)
+                let kept=(try await web.evaluateJavaScript("document.getElementById('owned-form')?.value === 'keep POST form'")) as? Bool==true
+                check(web.url==headerURL && kept && store.extensionNavigationProblem?.recoveryNotice != nil,"An explicit bypass does not replay a \(label) as a top-level GET")
+                try await until {button("dismiss",in:edge) != nil};button("dismiss",in:edge)!.performClick(nil)
+            }
+            host.invalidate(profileID:profile);let beforeStale=host.starts
+            store.decideExtensionNavigation(web,url:firstURL,isMainFrame:true,allow:.allow){_ in}
+            try await until {host.starts>beforeStale};host.release(ExtensionHostError.damaged)
+            try await until {button("without",in:edge) != nil}
+            let staleButton=button("without",in:edge)!,newRequest=fixture.appendingPathComponent("owned-newer-than-recovery")
+            let beforeNew=host.starts;web.load(URLRequest(url:newRequest));try await until {host.starts>beforeNew}
+            if let action=staleButton.action,let target=staleButton.target {_ = NSApp.sendAction(action,to:target,from:staleButton)}
+            check(!host.ready,"An old recovery button cannot bypass extensions for a newer request")
+            host.release();try await ready(web,newRequest)
             host.invalidate(profileID:profile)
             var timedOut:[WKNavigationActionPolicy] = []
             let beforeTimeout = host.starts
@@ -136,7 +189,34 @@ import BrowserCore
             try await until {weakStore.value == nil}
             check(abandonedReplies == [.cancel] && weakStore.value == nil,"Shutdown completes navigation and releases the owner even while preparation is outstanding")
         }
-        do {try await exercise()} catch {check(false,"Owned navigation fixture failed: " + error.localizedDescription)}
+        func unavailableExercise() async throws {
+            let store=BrowserStore(dataRoot:root.appendingPathComponent("unavailable"),keyProvider:{_ in key})
+            defer {store.shutdown()}
+            let profile=try store.createProfile(name:"Owned unavailable native API");try owned.register(profile)
+            let unavailable=UnavailableBrowserExtensionHost(owner:store);store.extensionHosting=unavailable
+            let id=store.newTab(),web=store.view(for:id),form=fixture.appendingPathComponent("owned-unavailable-form")
+            web.load(URLRequest(url:form));try await ready(web,form)
+            check(!unavailable.requiresPreparation(profileID:profile),"An unavailable native API still permits immediate ordinary browsing when no extension is expected")
+            let window=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
+            window.isReleasedWhenClosed=false;store.registerExtensionWindow(window,kind:.primary)
+            let edge=EdgeToEdgeWebHost(frame:NSRect(x:0,y:0,width:800,height:600));edge.setContent(web);edge.setRecovery(store:store,webView:web);window.contentView=edge
+            defer {store.unregisterExtensionWindow(kind:.primary);window.contentView=nil;window.close()}
+            let source=root.appendingPathComponent("unavailable-source");try manager.createDirectory(at:source,withIntermediateDirectories:true)
+            try Data(#"{"manifest_version":3,"name":"Owned expected extension","version":"1","permissions":["storage"]}"#.utf8).write(to:source.appendingPathComponent("manifest.json"))
+            let package=try ExtensionPackage.prepare(at:source,stagingRoot:root.appendingPathComponent("unavailable-staging"))
+            let approval=try store.extensionInstallApproval(for:package,profileID:profile,permissions:["storage"],enable:true)
+            let extensionID=try await store.installExtension(package,approval:approval)
+            _ = try await web.evaluateJavaScript("document.getElementById('owned-form').value='keep unavailable form';true")
+            let target=fixture.appendingPathComponent("owned-unavailable-target");web.load(URLRequest(url:target))
+            try await until {store.extensionNavigationProblem != nil && button("without",in:edge) != nil}
+            let kept=(try await web.evaluateJavaScript("document.getElementById('owned-form')?.value === 'keep unavailable form'")) as? Bool==true
+            check(web.url==form && kept && unavailable.requiresPreparation(profileID:profile),"An enabled saved extension on an unavailable engine blocks navigation visibly and preserves the mounted form")
+            button("without",in:edge)!.performClick(nil);try await ready(web,target)
+            check(!unavailable.requiresPreparation(profileID:profile) && store.extensionRecords(profileID:profile).first?.enabled==true,"Explicit Continue Without is session-only and never clears the saved enabled approval")
+            try store.setExtensionEnabled(extensionID,profileID:profile,enabled:false);try store.setExtensionEnabled(extensionID,profileID:profile,enabled:true)
+            check(unavailable.requiresPreparation(profileID:profile),"Changing the expected catalog invalidates an unavailable-engine bypass")
+        }
+        do {try await exercise();try await unavailableExercise()} catch {check(false,"Owned navigation fixture failed: " + error.localizedDescription)}
         check(await owned.cleanup(),"Navigation fixtures release and remove only their owned website stores")
         print("Extension navigation checks: \(failures) failures");exit(failures == 0 ? 0 : 1)
     }

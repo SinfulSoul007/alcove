@@ -3,6 +3,18 @@ import WebKit
 import BrowserCore
 
 final class EdgeToEdgeWebHost: NSView {
+    private var recovery:ExtensionRecoveryBanner?
+    func setRecovery(store:BrowserStore,webView:WKWebView) {
+        let banner=recovery ?? ExtensionRecoveryBanner(container:self);recovery=banner
+        if banner.superview !== self {addSubview(banner)}
+        banner.bind(store:store,webView:webView);layoutRecovery()
+    }
+    func layoutRecovery() {
+        guard let recovery,!recovery.isHidden else {return}
+        let width=max(0,min(560,bounds.width-16)),height=recovery.measuredHeight(width:width,maximum:max(0,bounds.height-16))
+        recovery.frame=NSRect(x:(bounds.width-width)/2,y:bounds.maxY-height-8,width:width,height:height)
+        recovery.layoutSubtreeIfNeeded()
+    }
     func setContent(_ view: NSView) {
         guard subviews.first !== view else { fitContent();return }
         for old in subviews { old.removeFromSuperview() }
@@ -17,17 +29,19 @@ final class EdgeToEdgeWebHost: NSView {
         removeTitlebarInset(view)
     }
     private func fitContent() {if let view = subviews.first,view.frame != bounds {view.frame = bounds}}
-    override func layout() {super.layout();fitContent()}
+    override func layout() {super.layout();fitContent();layoutRecovery()}
     override var safeAreaInsets: NSEdgeInsets { .init(top: 0, left: 0, bottom: 0, right: 0) }
 }
 struct WebPane: NSViewRepresentable {
     let webView: WKWebView
+    var store:BrowserStore?=nil
     func makeNSView(context: Context) -> EdgeToEdgeWebHost {
         let host = EdgeToEdgeWebHost()
         host.setContent(webView)
+        if let store {host.setRecovery(store:store,webView:webView)}
         return host
     }
-    func updateNSView(_ nsView: EdgeToEdgeWebHost, context: Context) { nsView.setContent(webView) }
+    func updateNSView(_ nsView: EdgeToEdgeWebHost, context: Context) {nsView.setContent(webView);if let store {nsView.setRecovery(store:store,webView:webView)}}
 }
 
 struct BrowserUI: View {
@@ -199,6 +213,7 @@ struct BrowserUI: View {
                 mini("arrow.left", "Back") { store.currentView?.goBack() }.disabled(store.currentView?.canGoBack != true)
                 mini("arrow.right", "Forward") { store.currentView?.goForward() }.disabled(store.currentView?.canGoForward != true)
                 mini(store.currentView?.isLoading == true ? "xmark" : "arrow.clockwise", "Reload / Stop") { if store.currentView?.isLoading == true { store.currentView?.stopLoading() } else { store.currentView?.reload() } }
+                ExtensionControls(store:store,web:store.primaryPeekView ?? store.currentView).frame(width:22,height:26)
             }.padding(.horizontal, 10).frame(height: chrome.height)
                 .background(NativeChromeReader(chrome: chrome))
             Button { store.showCommand() } label: {
@@ -228,6 +243,7 @@ struct BrowserUI: View {
                     Button("New Space…") { store.requestNewSpace() }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(store.activeProfileID)))
                     Button("Customize…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata)
                     Button("Boost This Site…") { do { try store.requestBoostEditor(for: store.primaryPeekView ?? store.currentView) } catch { store.message = error.localizedDescription } }
+                    Button("Extensions…") {store.requestExtensionManager()}
                     Menu("Theme") { ForEach(SidebarTheme.allCases) { choice in Button(choice.name) { withAnimation(motion) { store.setTheme(choice) } } } }.disabled(!store.canModifyLocalMetadata)
                     Button("Split View") { store.toggleSplit() }
                     Button("Bookmark Page") { store.addBookmark() }.disabled(store.isPrivate || !store.savingEnabled || store.profileUnavailable(store.activeProfileID))
@@ -277,7 +293,7 @@ struct BrowserUI: View {
         if let id, let profile = store.profileID(for: id), store.profileUnavailable(profile) {
             VStack(spacing: 12) { if store.clearingProfileID == profile { ProgressView(); Text("Clearing this profile’s website data…") } else { Text("This profile is unavailable. Unlock local data or finish its pending operation.") } }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        else if let id, let tab = store.tab(id), !tab.url.isEmpty { WebPane(webView: store.view(for: id)).id(id).frame(minWidth: 160) }
+        else if let id, let tab = store.tab(id), !tab.url.isEmpty { WebPane(webView: store.view(for: id),store:store).id(id).frame(minWidth: 160) }
         else {
             VStack(spacing: 10) {
                 Spacer()
@@ -311,6 +327,7 @@ struct SidebarTabRow: View {
     let appearance: AppearanceSettings
     let motion: Animation?
     @State private var hovered = false
+    @StateObject private var extensionMenuAnchor=ExtensionTabMenuAnchor()
     var body: some View {
         HStack(spacing: 7) {
             Button { store.select(tab.id) } label: {
@@ -320,6 +337,7 @@ struct SidebarTabRow: View {
         }.padding(.horizontal, 10).frame(height: appearance.rowHeight).background(store.focusedID == tab.id ? theme.selected : (hovered ? theme.tile : .clear), in: RoundedRectangle(cornerRadius: appearance.cornerRadius)).onHover { hovered = $0 }.animation(motion, value: hovered)
         .onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }
         .onDrop(of: [.text], delegate: TabDrop(store: store, section: tab.pinned ? .pinned : .today, before: tab.id, folder: tab.folder))
+        .background(ExtensionTabAnchorReader(anchor:extensionMenuAnchor))
         .contextMenu {
             Button(tab.pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id) }.disabled(!store.canModifyLocalMetadata)
             Button("Add to Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata)
@@ -331,6 +349,7 @@ struct SidebarTabRow: View {
                         .disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(s.effectiveProfileID)))
                 }
             }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress)
+            if store.extensionHosting != nil {Button("Extension Actions…") {extensionMenuAnchor.show(store:store,tabID:tab.id)}}
             Divider()
             Button(tab.pinned ? "Remove from Sidebar" : "Close Tab") { if tab.pinned { store.removeFromSidebar(tab.id) } else { store.close(tab.id) } }.disabled(tab.pinned && !store.canModifyLocalMetadata)
         }

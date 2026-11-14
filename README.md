@@ -6,7 +6,7 @@ A native, open-source WebKit browser for Mac, inspired by Arc’s sidebar, Space
 
 ## Download
 
-Latest preview: [Download 0.8.0 DMG](https://github.com/SinfulSoul007/alcove/releases/download/v0.8.0-preview.1/Alcove-0.8.0-universal-unsigned-preview.dmg) · [ZIP](https://github.com/SinfulSoul007/alcove/releases/download/v0.8.0-preview.1/Alcove-0.8.0-universal-unsigned-preview.zip).
+Latest preview: [Download 0.9.0 DMG](https://github.com/SinfulSoul007/alcove/releases/download/v0.9.0-preview.1/Alcove-0.9.0-universal-unsigned-preview.dmg) · [ZIP](https://github.com/SinfulSoul007/alcove/releases/download/v0.9.0-preview.1/Alcove-0.9.0-universal-unsigned-preview.zip).
 
 Download the universal DMG or ZIP from [GitHub Releases](https://github.com/SinfulSoul007/alcove/releases). The app is self-contained: you do **not** need Xcode or developer tools to use a download. Open the DMG and drag **Alcove.app** to Applications, or unzip it and move the app there.
 
@@ -20,12 +20,12 @@ Download the universal DMG or ZIP from [GitHub Releases](https://github.com/Sinf
 - A bottom Space dock and delayed collapsed-sidebar edge reveal; sidebar drag width saves on release.
 - Themed Spaces overview, rename/icons/reordering, and encrypted Recently Deleted/Undo recovery.
 - Responsive startup while Keychain approval waits, with private browsing available immediately.
-- Animated, skippable first-launch setup, plus a replayable welcome tour. Existing sessions and private windows skip setup.
+- Original skippable opening animation before first-launch setup, plus a replayable welcome tour. Existing sessions and private windows skip setup.
+- Experimental native extension manager for reviewed Chrome Web Store packages, CRX3, ZIPs and folders. Native APIs require macOS 15.4+; compatibility varies. Full uBlock Origin is unsupported.
 - Manual GitHub update checks, stable/preview channels and optional daily checks. Downloads and installation remain explicit actions.
 - Favorites, Pinned and Today scroll separately, keeping saved pages visible while you browse daily tabs. Bookmarking also pins the original page without reloading it.
 - Create empty folders from the Pinned header, File menu or command bar. Move tabs into folders using their context menu or drag-and-drop; rename folders or remove them while keeping their tabs pinned. Folder definitions survive relaunch.
 - Drag tabs between sections and into folders. Pinned tabs keep their title and saved home URL when closed. ⌘W closes the focused page (or Peek/panel first), then closes an empty window while leaving Alcove running.
-- Folders for pinned tabs; right-click a tab to organize it.
 - Split view with actions targeted to the clicked pane.
 - Keyboard-driven command bar with tab switching, Pin/Favorite commands and no empty tab created on cancellation.
 - Shift-click Peek previews in their originating main or compact window, with close and open-in-Space controls.
@@ -125,11 +125,15 @@ The first profile-enabled launch migrates encrypted `session.sealed` into `sessi
 
 If a legacy `session.json` already exists inside Alcove’s own storage directory, startup migrates it to encrypted metadata before removing that in-container legacy file. Existing unrelated browser profiles are never imported automatically.
 
-The developing sidebar checkpoint has [verification notes](docs/releases/0.9.0-sidebar-preview-verification.md).
+The earlier sidebar checkpoint has [historical verification notes](docs/releases/0.9.0-sidebar-preview-verification.md). The combined 0.9 source has [verification notes](docs/releases/0.9.0-preview-verification.md).
 
 ## Build from source
 
-The developing 0.9 source upgrades metadata to format 5 for extension identities and permissions. Public 0.8 downloads use format 4 and cannot read format 5. Keep a backup and quit Alcove before replacing its bundle; extension installation and hosting are still in development.
+The 0.9 preview upgrades metadata to format 5 for extension identities and permissions. Public 0.8 downloads use format 4 and cannot read format 5. Keep a backup and quit Alcove before replacing its bundle. This source also adds a skippable opening greeting before setup; turning interface animations off or using Reduce Motion bypasses it.
+
+The extension manager is available from **Alcove → Extensions…**, Settings, the command bar, the sidebar and Quick Browse. Review a Chrome Web Store link/ID, extension folder, ZIP or CRX3 before installing. Reviews show the code version, source, supported API/site access and unavailable capabilities. Enable/disable, permission editing, options, explicit package updates and removal use the selected profile. Private windows cannot edit the catalog or grants. Their explicit reload controls can attach an already-open approved profile or detach its extensions after consent; private access is off by default and only spanning extensions can be approved for it. Permission and installation changes remain bound to their initiating browser window and reviewed profile.
+
+Chrome extension compatibility varies with WebKit and macOS. Full **uBlock Origin is unsupported**; the separate **uBlock Origin Lite** package has passed a real request-blocking check on macOS 26, and its manager installation, popup, dashboard, permission editing, relaunch and removal have been exercised in the development VM. Its declared `offscreen` and `userScripts` APIs are unavailable in this engine; this is not complete vendor compatibility certification. Native extension APIs require macOS 15.4+. On older engines, normal profiles reuse their own registered content controller to apply blocking rules. Request-blocking extensions cannot be approved or attached privately below system WebKit 624.1.16; the manager explains that macOS needs updating and keeps existing private pages intact. Basic private browsing and private access for other supported spanning extensions remain available. This compatibility boundary addresses a confirmed upstream WebKit bug; it is not a claim that every Chrome API works. If an enabled extension cannot start, visible recovery controls keep the existing page mounted. Retry preserves safe navigation requests; forms, frames and downloads must be submitted again from their page. On macOS 14, expected extensions cannot be silently bypassed: Continue Without is an explicit session-only choice.
 
 See the [native extension development checkpoint](docs/releases/0.9.0-extension-development.md) for tested private-window, permission, action and command/menu boundaries and the remaining integration work.
 

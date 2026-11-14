@@ -30,6 +30,7 @@ extension BrowserStore {
         try metadataOwnership.validate()
         guard #available(macOS 15.4,*) else {throw ExtensionHostError.unavailable}
         guard let server = normal.ensureExtensionHost() as? NativeBrowserExtensionHost else {throw ExtensionHostError.unavailable}
+        try BrowserExtensionCompatibility.requirePrivateAccess(normal.extensionRecords(profileID:profileID))
         let lease = try owner.acquireAuxiliary()
         let association = AssociatedPrivateExtensionHost(client:self,owner:owner,server:server,profileID:profileID,controllerID:controllerID,lease:lease)
         extensionHosting = association
@@ -66,7 +67,9 @@ extension BrowserStore {
               normal.extensionHosting === server,
               normal.profiles.first(where:{$0.id == profileID})?.extensionControllerID == controllerID,
               let metadataOwnership = normal.metadataOwnership else {throw ExtensionHostError.stale}
-        try metadataOwnership.validate();return normal
+        try metadataOwnership.validate()
+        try BrowserExtensionCompatibility.requirePrivateAccess(normal.extensionRecords(profileID:profileID))
+        return normal
     }
     private func expectsPrivateExtensions() throws -> Bool {
         try normal().extensionRecords(profileID:profileID).contains{$0.enabled && $0.pendingRemoval != true && $0.grants?.allowPrivate == true}

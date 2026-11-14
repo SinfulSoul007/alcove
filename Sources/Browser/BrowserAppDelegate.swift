@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var normalOwner: BrowserWindowOwner?
     var temporaryStartupOwners: Set<UUID> = []
     var preparingMetadataOwners: Set<UUID> = []
+    var pendingStartupQuickRequests:[UUID:Int] = [:]
     var quickWindows: [QuickWindowKey: QuickBrowseWindowController] = [:]
     let pageOutput: PageOutputCoordinator
     let outputTermination: PageOutputTermination
@@ -93,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @discardableResult func handleEscape(in window: NSWindow?) -> Bool {
         guard let window, !hasMarkedText(in: window) else { return false }
+        if let manager=ExtensionManagerWindowController.active {manager.escape();return true}
         if SidebarResizeHandle.cancelActiveResize(in: window) { return true }
         if let pickerStore = browserStore(in: window), pickerStore.boostPicker?.source.window === window { pickerStore.cancelBoostPicker(); return true }
         if let quick = quickWindows.values.first(where: { $0.window === window }),
@@ -109,7 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func makeOwner(_ store: BrowserStore) -> BrowserWindowOwner {
         let owner = BrowserWindowOwner(store: store) { [weak self, weak store] in
             guard let self, let store else { return }
-            if let id = self.owners.first(where: { $0.value.store === store })?.key { self.temporaryStartupOwners.remove(id) }
+            if let id = self.owners.first(where: { $0.value.store === store })?.key {
+                self.temporaryStartupOwners.remove(id);self.pendingStartupQuickRequests.removeValue(forKey:id)
+            }
             self.owners = self.owners.filter { $0.value.store !== store }
             if self.normalOwner?.store === store { self.normalOwner = nil }
         }
@@ -139,6 +143,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let mayActivate = NSApp.isActive && (activeStore == nil || activeStore === owner.store)
         preparingMetadataOwners.insert(owner.id)
         owner.store.archiveInactiveQuickPages()
+        // Resolve explicit New Quick Browse requests only after the actual saved
+        // account is known. Native compact leases precede placeholder disposal.
+        let requests=pendingStartupQuickRequests.removeValue(forKey:owner.id) ?? 0
+        for _ in 0..<requests {
+            do {_ = try owner.store.openQuickPage()}
+            catch {owner.store.message=error.localizedDescription;break}
+        }
         let destinations = owner.drainExternalLinks()
         preparingMetadataOwners.remove(owner.id)
         syncQuickWindows(owner, orderFront: mayActivate)
@@ -195,7 +206,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         let store = owner.store
         guard let lease = try? owner.acquirePrimary() else { return }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1260, height: 820), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        let window = ExtensionCommandWindow(contentRect: NSRect(x: 0, y: 0, width: 1260, height: 820), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.extensionStore=store;window.extensionCommandSource={[weak store] in store?.primaryPeekView ?? store?.currentView}
         window.title = store.isPrivate ? "Alcove — Private" : "Alcove"; window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false; window.delegate = self; window.minSize = NSSize(width: 800, height: 540)
         let hosting = NSHostingView(rootView: BrowserUI(store: store).environmentObject(updates))
@@ -266,6 +278,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(app, "Site Search Settings…", #selector(siteSearchSettings), "")
         add(app, "Link Routing Settings…", #selector(linkRoutingSettings), "")
         add(app, "Website Boosts…", #selector(websiteBoosts), "")
+        add(app, "Extensions…", #selector(manageExtensions), "")
         add(app, "Customize…", #selector(customize), ",", [.command, .shift])
         add(app, "Manage Profiles…", #selector(manageProfiles), "")
         add(app, "Check for Updates…", #selector(checkUpdates), "")
@@ -304,6 +317,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.mainMenu = main
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if ExtensionManagerWindowController.active != nil {
+            return [#selector(closeTab),#selector(quit),#selector(about),#selector(manageExtensions)].contains(menuItem.action)
+        }
+        if menuItem.action == #selector(manageExtensions) {return activeStore != nil}
         if menuItem.action == #selector(closePeek), hasMarkedText(in: NSApp.keyWindow) { return false }
         let outputActions: Set<Selector> = [#selector(printPage), #selector(exportPDF), #selector(savePage)]
         if let action = menuItem.action, outputActions.contains(action) {
@@ -311,7 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return pageOutput.canBegin(web: target.web, store: target.store, window: target.window)
         }
         if activeStore?.awaitingInitialMetadata == true {
-            return [#selector(openMain), #selector(privateWindow), #selector(closeTab), #selector(quit), #selector(about)].contains(menuItem.action)
+            return [#selector(openMain), #selector(newQuick), #selector(privateWindow), #selector(closeTab), #selector(quit), #selector(about)].contains(menuItem.action)
         }
         let general: Set<Selector> = [#selector(openMain), #selector(privateWindow), #selector(manageProfiles), #selector(quit), #selector(about), #selector(settings), #selector(customize), #selector(checkUpdates), #selector(siteSearchSettings), #selector(linkRoutingSettings), #selector(websiteBoosts), #selector(manageSpaces), #selector(recentlyDeletedSpaces)]
         if let action = menuItem.action, general.contains(action) { return true }
@@ -353,10 +370,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func newQuick() {
         if let quick = activeQuick { quick.newQuick(); return }
         let owner = activeBrowserWindow.flatMap { primaryOwners[$0] } ?? ensureNormalOwner()
+        if owner.store.awaitingInitialMetadata {
+            let count=pendingStartupQuickRequests[owner.id,default:0]
+            guard count<8 else {owner.store.message="Eight Quick Browse windows are already waiting for this profile to unlock.";return}
+            pendingStartupQuickRequests[owner.id]=count+1
+            let temporary=temporaryStartupOwners.contains(owner.id) || !primaryOwners.values.contains(where:{$0 === owner})
+            openPrimary(owner,startupPlaceholder:temporary);return
+        }
         do { _ = try owner.store.openQuickPage() }
         catch { openPrimary(owner); owner.store.message = error.localizedDescription }
     }
     @objc func newTab() {
+        guard ExtensionManagerWindowController.active == nil else {return}
         if let quick = activeQuick { quick.newQuick(); return }
         if activeStore == nil { openMain() }
         guard let store = activeStore else { return }
@@ -389,12 +414,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func newSpace() { if activeQuick == nil { activeStore?.requestNewSpace() } }
     @objc func newFolder() {if activeQuick == nil {activeStore?.requestNewTabFolder()}}
     @objc func location() {
+        guard ExtensionManagerWindowController.active == nil else {return}
         if let quick = activeQuick { quick.requestLocation(); return }
         if activeStore == nil { openMain() }
         guard let store = activeStore else { return }
         store.presentedPanel = nil; if store.onboardingVisible { store.finishOnboarding() }; store.showCommand()
     }
     @objc func closeTab() {
+        if let manager=ExtensionManagerWindowController.active {manager.closeFrontmost();return}
         if let quick = activeQuick { quick.window?.performClose(nil); return }
         guard let window = activeBrowserWindow,let store = browserStore(in:window) else {return}
         if store.awaitingInitialMetadata {window.performClose(nil);return}
@@ -436,6 +463,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let web = activeStore?.presentedPanel == nil ? activeWebView : nil
         let store = primaryForActive()
         do { try store.requestBoostEditor(for: web) } catch { store.message = error.localizedDescription }
+    }
+    @objc func manageExtensions() {
+        if let manager=ExtensionManagerWindowController.active {manager.surface();return}
+        guard let store=activeStore,let window=activeBrowserWindow else {return}
+        store.requestExtensionManager(from:window,profileID:activeQuick.flatMap{store.quickProfileID($0.pageID)})
     }
     @objc func customize() { primaryForActive().appearanceVisible = true }
     @objc func manageProfiles() {

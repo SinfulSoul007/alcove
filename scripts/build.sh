@@ -103,6 +103,11 @@ run_extension_store_checks() {
     "$MANUAL/extension-store-checks"
 }
 if [[ "${1:-}" == "extension-store-test" ]]; then run_extension_store_checks; exit; fi
+run_extension_ui_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ExtensionUIChecks.swift scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$MANUAL/extension-ui-checks"
+    "$MANUAL/extension-ui-checks"
+}
+if [[ "${1:-}" == "extension-ui-test" ]]; then run_extension_ui_checks; exit; fi
 run_extension_runtime_checks() {
     local extension_check_name="${1:-runtime}" extension_check_source="scripts/ExtensionRuntimeChecks.swift"
     if [[ "$extension_check_name" == "navigation" ]]; then extension_check_source="scripts/ExtensionNavigationChecks.swift"; fi
@@ -313,6 +318,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_extension_core_checks
     run_extension_download_checks
     run_extension_store_checks
+    run_extension_ui_checks
     run_extension_runtime_checks
     run_extension_runtime_checks navigation
     run_extension_runtime_checks adapter

@@ -158,6 +158,36 @@ final class KeyGate: @unchecked Sendable {
         application.fixtureActive = nil
         quickController.window!.close(); placeholder.close(); foregroundPrivate.close(); privateForegroundStore.shutdown(); quickStore.shutdown()
 
+        for (cancelBeforeReady,keepPrimary) in [(false,false),(true,false),(false,true)] {
+            let pendingRoot=root.appendingPathComponent(cancelBeforeReady ? "cancel-new-quick":(keepPrimary ? "keep-main-new-quick":"queued-new-quick"))
+            let seed=BrowserStore(dataRoot:pendingRoot,keyProvider:{_ in key});seed.finishOnboarding();seed.shutdown()
+            let initialBytes=try Data(contentsOf:seed.sessionURL),gate=KeyGate()
+            let waiting=BrowserStore(dataRoot:pendingRoot,metadataKeyAccess:MetadataKeyAccess{_,_ in gate.key(key)})
+            let app=AppDelegate(),owner=app.makeOwner(waiting);app.normalOwner=owner
+            application.fixtureWindow=nil;application.fixtureActive=false
+            if keepPrimary {app.openPrimary(owner);app.primaryOwners.first(where:{$0.value === owner})?.key.alphaValue=0}
+            for _ in 0..<200 where !gate.pollStarted() {try await Task.sleep(for:.milliseconds(10))}
+            app.newQuick()
+            let loading=app.primaryOwners.first(where:{$0.value === owner})?.key
+            loading?.alphaValue=0
+            check(waiting.awaitingInitialMetadata && waiting.allQuickPages.isEmpty && waiting.message==nil,"New Quick Browse waits for its protected profile without a misleading data-operation error")
+            if cancelBeforeReady {loading?.close()}
+            gate.release.signal()
+            for _ in 0..<300 where waiting.unlocking {try await Task.sleep(for:.milliseconds(10))}
+            try await Task.sleep(for:.milliseconds(100))
+            if cancelBeforeReady {
+                check(owner.isClosed && app.quickWindows.isEmpty && waiting.allQuickPages.isEmpty,"Closing the loading window cancels its deferred Quick Browse request")
+                check(try Data(contentsOf:seed.sessionURL)==initialBytes,"A cancelled startup request cannot write after its owner closes")
+            } else {
+                check(waiting.allQuickPages.count==1 && app.quickWindows.count==1 && app.primaryOwners.count==(keepPrimary ? 1:0) && !owner.isClosed,keepPrimary ? "A deferred Quick Browse command preserves a main window explicitly opened by the user":"The cold-start Quick Browse command opens once after unlock and releases its temporary main window")
+                app.metadataDidLoad(owner)
+                check(waiting.allQuickPages.count==1 && app.quickWindows.count==1,"Repeated readiness cannot duplicate a deferred Quick Browse command")
+            }
+            for controller in Array(app.quickWindows.values) {controller.window?.close()}
+            for window in Array(app.windows.keys) {window.close()}
+            waiting.shutdown();application.fixtureActive=nil
+        }
+
         let fresh = BrowserStore(dataRoot: root.appendingPathComponent("fresh"), metadataKeyAccess: MetadataKeyAccess { create, interactive in
             guard create && !interactive && !Thread.isMainThread else { throw CocoaError(.coderInvalidValue) }; return key
         })

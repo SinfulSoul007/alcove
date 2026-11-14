@@ -234,6 +234,7 @@ struct QuickBrowseUI: View {
                 store.performQuickNavigation(id, action: foregroundWeb?.isLoading == true ? .stop : .reload)
             }
             addressField
+            ExtensionControls(store:store,web:foregroundWeb,profileID:store.quickProfileID(id)).frame(width:25,height:28)
             if !compact {
                 Button { profilePickerVisible.toggle() } label: {
                     HStack(spacing: 5) {
@@ -265,6 +266,7 @@ struct QuickBrowseUI: View {
                 Divider()
                 Button("Settings…", action: onOpenSettings)
                 Button("Boost This Site…", action: onOpenBoosts)
+                Button("Extensions…") {store.requestExtensionManager(profileID:store.quickProfileID(id))}
                 Button("Close Quick Browse", action: onClose)
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 14, weight: .medium)).frame(width: 25, height: 30)
@@ -441,7 +443,7 @@ struct QuickBrowseUI: View {
                     Button(store.peekOpenTitle(in: .quick(id)), action: onPromotePeek).font(.system(size: 11 * appearance.textScale))
                         .disabled(!canMove).help("Move the Peek page into a Space")
                 }.padding(10).background(theme.gradient)
-                WebPane(webView: web).id(ObjectIdentifier(web))
+                WebPane(webView: web,store:store).id(ObjectIdentifier(web))
             }
             .background(.background)
             .clipShape(RoundedRectangle(cornerRadius: appearance.cornerRadius + 2))
@@ -513,7 +515,7 @@ private struct QuickBrowsePageContent: View {
                     }.padding(24)
                 } else if !page.tab.url.isEmpty {
                     let web = store.view(for: id)
-                    WebPane(webView: web).id(ObjectIdentifier(web))
+                    WebPane(webView: web,store:store).id(ObjectIdentifier(web))
                         .task(id: ObjectIdentifier(web)) {
                             state.refreshMediaStatus(web: web) { [weak store] candidate in
                                 store?.foregroundQuickView(id) === candidate && store?.quickPage(id) != nil

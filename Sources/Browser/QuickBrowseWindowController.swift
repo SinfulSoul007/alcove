@@ -27,12 +27,13 @@ import BrowserCore
         let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
         let size = NSSize(width: min(760, visible.width), height: min(600, visible.height))
         let frame = NSRect(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2, width: size.width, height: size.height)
-        let window = NSWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        let window = ExtensionCommandWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.minSize = NSSize(width: 480, height: 360)
         window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false
         window.animationBehavior = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || !owner.store.appearance.animationsEnabled ? .none : .documentWindow
         super.init(window: window)
+        window.extensionStore=store;window.extensionCommandSource={[weak self] in self?.activeWebView}
         window.delegate = self
         let content = QuickBrowseUI(store: store, id: pageID, state: state,
             onPromoteSpace: { [weak self] in self?.promote(to: $0) },

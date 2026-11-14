@@ -4,7 +4,7 @@ import CryptoKit
 import BrowserCore
 
 enum OwnedExtensionCommandError:Error {case missingFixture,timedOut}
-@MainActor final class OwnedExtensionCommandWindow:NSWindow {
+@MainActor final class OwnedExtensionCommandWindow:ExtensionCommandWindow {
     var fixtureKey = true
     override var isKeyWindow:Bool {fixtureKey}
     override func makeKeyAndOrderFront(_ sender:Any?) {}
@@ -24,6 +24,7 @@ enum OwnedExtensionCommandError:Error {case missingFixture,timedOut}
         }
         return false
     }
+    @MainActor static func jsCommandCount(_ web:WKWebView) async throws -> Any? {try await web.callAsyncJavaScript("return (await browser.storage.local.get('ownedCommandCount')).ownedCommandCount;",arguments:[:],in:nil,contentWorld:.page)}
     @MainActor static func main() async throws {
         NSApplication.shared.setActivationPolicy(.prohibited);setbuf(stdout,nil)
         guard #available(macOS 15.4,*) else {print("UNAVAILABLE: Extension command fixtures require macOS15.4.");return}
@@ -66,6 +67,7 @@ enum OwnedExtensionCommandError:Error {case missingFixture,timedOut}
             try await ready(web,url)
             let window = OwnedExtensionCommandWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
             window.isReleasedWhenClosed = false;window.contentView = web;store.registerExtensionWindow(window,kind:.primary)
+            window.extensionStore=store;window.extensionCommandSource={[weak store] in store?.currentView}
             defer {store.unregisterExtensionWindow(kind:.primary);window.contentView = nil;window.close()}
             let optionsID = try await store.openExtensionOptions(id,profileID:profile),options = store.views[optionsID]!
             let host = store.extensionHosting as! NativeBrowserExtensionHost,context = host.profiles[profile]!.contexts[id]!
@@ -93,6 +95,20 @@ enum OwnedExtensionCommandError:Error {case missingFixture,timedOut}
             check(try !store.performExtensionCommand(for:event([.command,.shift,.option]),from:web,anchor:web),"Additional modifiers cannot accidentally match a less-specific extension shortcut")
             check(try !store.performExtensionCommand(for:event([.command,.shift],repeatKey:true),from:web,anchor:web),"A repeated key event does not repeatedly execute an extension command")
             check(try !store.performExtensionCommand(for:event([.command,.shift],number:window.windowNumber+1000),from:web,anchor:web),"An event from a different native window cannot borrow the source tab")
+            check(try await eventually(options,"return (await browser.storage.local.get('ownedCommandCount')).ownedCommandCount===2;"),"The preceding asynchronous command finishes before window input is measured")
+            store.onboardingVisible=false
+            check(window.performKeyEquivalent(with:event([.command,.shift])),"The actual browser window dispatches an unclaimed extension shortcut")
+            check(try await eventually(options,"return (await browser.storage.local.get('ownedCommandCount')).ownedCommandCount===3;"),"Window keyboard routing reaches the real extension background exactly once")
+            print("INFO: window shortcut count=\(String(describing:try await jsCommandCount(options))) responder=\(String(describing:window.firstResponder))")
+            let editor=NSTextView(frame:NSRect(x:0,y:0,width:100,height:30));web.addSubview(editor);window.makeFirstResponder(editor)
+            check(!window.performKeyEquivalent(with:event([.command,.shift])),"Typing in a native editor does not dispatch a page's extension shortcut")
+            window.makeFirstResponder(web);editor.removeFromSuperview()
+            let oldMenu=NSApp.mainMenu,reserved=NSMenu(title:"Owned reserved menu"),reservedItem=NSMenuItem(title:"Owned browser shortcut",action:nil,keyEquivalent:"y")
+            reservedItem.keyEquivalentModifierMask=[.command,.shift];reserved.addItem(reservedItem);NSApp.mainMenu=reserved
+            _ = window.performKeyEquivalent(with:event([.command,.shift]))
+            try await Task.sleep(for:.milliseconds(120))
+            check((try await options.callAsyncJavaScript("return (await browser.storage.local.get('ownedCommandCount')).ownedCommandCount===3;",arguments:[:],in:nil,contentWorld:.page)) as? Bool == true,"A browser menu shortcut remains reserved ahead of extension commands")
+            NSApp.mainMenu=oldMenu
             var presentations = 0
             host.actionPresenter = NativeExtensionActionPresenter(present:{_,anchor in presentations += 1;check(anchor === web,"An action command retains its actual source popup anchor")})
             try store.performExtensionCommand(id,command:"_execute_action",from:web,anchor:web)

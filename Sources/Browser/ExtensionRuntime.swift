@@ -31,18 +31,34 @@ import BrowserCore
 @available(macOS 15.4,*) @MainActor final class NativeExtensionProfile {
     let id:UUID, controllerID:UUID
     let controller:WKWebExtensionController
+    let contentController = WKUserContentController()
+    private let dataStore:WKWebsiteDataStore
+    private var requestRulesView:WKWebView?
     var contexts:[UUID:WKWebExtensionContext] = [:]
     var loaded:[BrowserExtensionRecord]?, epoch:UUID?
     var task:Task<Void,Error>?, taskID:UUID?, preparing:[BrowserExtensionRecord]?
     init(id:UUID,controllerID:UUID,dataStore:WKWebsiteDataStore) {
-        self.id = id; self.controllerID = controllerID
+        self.id = id; self.controllerID = controllerID;self.dataStore = dataStore
         let configuration = WKWebExtensionController.Configuration(identifier:controllerID)
         configuration.defaultWebsiteDataStore = dataStore
         let background = WKWebViewConfiguration(); background.websiteDataStore = dataStore
+        background.userContentController = contentController
         configuration.webViewConfiguration = background
         controller = WKWebExtensionController(configuration:configuration)
     }
+    func prepareRequestRules(for context:WKWebExtensionContext) {
+        guard !BrowserExtensionCompatibility.supportsPrivateRequestBlocking,requestRulesView==nil,
+              ["declarativeNetRequest","declarativeNetRequestWithHostAccess"].contains(where:{context.hasPermission(WKWebExtension.Permission(rawValue:$0))}) else {return}
+        // A backgroundless static blocker has no native view to register this
+        // profile's UCC before its rules compile. Register an inert, URL-less
+        // view after approval; it is never exposed as a browser tab.
+        let configuration=WKWebViewConfiguration()
+        configuration.websiteDataStore=dataStore;configuration.userContentController=contentController
+        configuration.webExtensionController=controller
+        requestRulesView=WKWebView(frame:.zero,configuration:configuration)
+    }
     func unload() throws {
+        defer {requestRulesView?.stopLoading();requestRulesView=nil}
         task?.cancel(); task = nil; taskID = nil; preparing = nil; loaded = nil; epoch = nil
         var failure:Error?
         for (id,context) in contexts {
@@ -90,7 +106,14 @@ import BrowserCore
         return runtime
     }
     func configure(_ configuration:WKWebViewConfiguration,profileID:UUID) {
-        do {configuration.webExtensionController = try profile(profileID).controller}
+        do {
+            let runtime = try profile(profileID)
+            configuration.webExtensionController = runtime.controller
+            // Keep normal profile pages on the controller already registered by its
+            // extension backgrounds. Older WebKit can miss saved request rules on a
+            // fresh user-content controller. Private pages retain their separate UCC.
+            if !BrowserExtensionCompatibility.supportsPrivateRequestBlocking,configuration.websiteDataStore.isPersistent {configuration.userContentController = runtime.contentController}
+        }
         catch {configuration.webExtensionController = nil;owner?.extensionStates[profileID] = .failed(error.localizedDescription)}
     }
     func invalidate(profileID:UUID) {
@@ -207,6 +230,9 @@ import BrowserCore
             if record.grants?.hostPatterns.contains("<all_urls>") == true {
                 self.owner?.extensionDiagnostics[profileID,default:[:]][record.id,default:[]].append("All-sites approval covers HTTP and HTTPS in WebKit. File, FTP and unsupported standalone WebSocket patterns are excluded.")
             }
+            if record.grants?.allowPrivate==true,let issue=BrowserExtensionCompatibility.privateAccessIssue(for:record) {
+                self.owner?.extensionDiagnostics[profileID,default:[:]][record.id,default:[]].append(issue)
+            }
             // WebKit reports optional display metadata (including a missing description) as an
             // invalid-entry diagnostic. Preserve every diagnostic for review, while malformed
             // archives, resources, background persistence and unsupported versions remain fatal.
@@ -217,7 +243,8 @@ import BrowserCore
             context.baseURL = URL(string:"webkit-extension://" + record.runtimeIdentifier + "/")!
             context.isInspectable = false
             context.unsupportedAPIs = ["browser.runtime.sendNativeMessage","browser.runtime.connectNative","browser.debugger","browser.devtools","browser.sidePanel"]
-            try apply(record.grants!,to:context)
+            try apply(record.grants!,record:record,to:context)
+            runtime.prepareRequestRules(for:context)
             runtime.contexts[record.id] = context
             do {try runtime.controller.load(context)} catch {runtime.contexts.removeValue(forKey:record.id);throw error}
         }
@@ -227,14 +254,14 @@ import BrowserCore
         let values = raw == "<all_urls>" ? ["http://*/*","https://*/*"] : [raw]
         return try values.map {try WKWebExtension.MatchPattern(string:$0)}
     }
-    private func apply(_ grant:ExtensionGrantSet,to context:WKWebExtensionContext) throws {
+    private func apply(_ grant:ExtensionGrantSet,record:BrowserExtensionRecord,to context:WKWebExtensionContext) throws {
         context.grantedPermissions = Dictionary(uniqueKeysWithValues:grant.permissions.map{(WKWebExtension.Permission(rawValue:$0),Date.distantFuture)})
         context.deniedPermissions = Dictionary(uniqueKeysWithValues:(grant.deniedPermissions ?? []).map{(WKWebExtension.Permission(rawValue:$0),Date.distantFuture)})
         var allowed:[WKWebExtension.MatchPattern:Date] = [:], denied:[WKWebExtension.MatchPattern:Date] = [:]
         for raw in grant.hostPatterns {for pattern in try patterns(raw) {allowed[pattern] = .distantFuture}}
         for raw in grant.deniedHostPatterns ?? [] {for pattern in try patterns(raw) {denied[pattern] = .distantFuture}}
         context.grantedPermissionMatchPatterns = allowed;context.deniedPermissionMatchPatterns = denied
-        context.hasAccessToPrivateData = grant.allowPrivate
+        context.hasAccessToPrivateData = grant.allowPrivate && BrowserExtensionCompatibility.privateAccessIssue(for:record)==nil
     }
     func shutdown() {
         cancelActionJobs()

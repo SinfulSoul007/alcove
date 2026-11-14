@@ -142,7 +142,7 @@ struct PeekPanel: View {
                 Spacer()
                 Button(store.peekOpenTitle(in: .primary)) { store.expandPeek(in: .primary) }
             }.buttonStyle(.plain).padding(14).background(.regularMaterial)
-            if let web = store.primaryPeekView { WebPane(webView: web) }
+            if let web = store.primaryPeekView { WebPane(webView: web,store:store) }
         }.background(.background).clipShape(RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.12))).shadow(color: .black.opacity(0.4), radius: 35, y: 15)
     }
 }

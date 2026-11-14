@@ -3,10 +3,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from socketserver import TCPServer
 from pathlib import Path
 import sys
+import html
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = b'<!doctype html><html><head><title>Owned Extension Page</title></head><body data-owned-extension-page="ready"><label>Owned form <input id="owned-form"></label></body></html>'
+        token = html.escape(self.headers.get('X-Owned-Recovery', ''), quote=True)
+        body = ('<!doctype html><html><head><title>Owned Extension Page</title></head><body data-owned-extension-page="ready" data-owned-recovery="' + token + '"><label>Owned form <input id="owned-form"></label></body></html>').encode('utf-8')
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Cache-Control', 'no-store')

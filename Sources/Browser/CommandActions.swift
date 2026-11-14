@@ -33,6 +33,7 @@ extension BrowserStore {
         case .split: toggleSplit()
         case .library: libraryVisible = true
         case .settings: settingsVisible = true
+        case .extensions: requestExtensionManager()
         case .profiles: if !isPrivate { profilesVisible = true }
         case .spaces: showSpacesManager()
         case .deletedSpaces: showSpacesManager(deleted:true)
