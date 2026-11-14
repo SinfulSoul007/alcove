@@ -1,19 +1,32 @@
-name: Native extension erasure check
-
+name: Native extension toolchain comparison
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   macos:
+    name: ${{ matrix.toolchain.name }}
     runs-on: macos-15
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - name: Xcode 16.4
+            developer: /Applications/Xcode_16.4.app/Contents/Developer
+          - name: Xcode 26.3
+            developer: /Applications/Xcode_26.3.app/Contents/Developer
+    env:
+      DEVELOPER_DIR: ${{ matrix.toolchain.developer }}
     steps:
-      - name: Check out source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Verify owned native erasure and request-blocking controls
+      - name: Identify build tools and system WebKit
+        run: |
+          sw_vers
+          xcrun --show-sdk-path
+          xcrun swiftc --version
+          xcrun swift -e 'import Foundation; import WebKit; print("WebKit build:", Bundle(for: WKWebView.self).infoDictionary?["CFBundleVersion"] ?? "unknown")'
+      - name: Verify identical owned native erasure and network controls
         run: caffeinate -is scripts/build.sh extension-erasure-test
