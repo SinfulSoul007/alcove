@@ -1,19 +1,19 @@
-name: Verify profile content-controller fix
+name: Native extension erasure check
+
 on:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   macos:
     runs-on: macos-15
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: [extension-erasure-test, extension-private-test]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Verify original native blocking or private isolation
-        run: caffeinate -is scripts/build.sh ${{ matrix.mode }}
+      - name: Verify owned native erasure and request-blocking controls
+        run: caffeinate -is scripts/build.sh extension-erasure-test

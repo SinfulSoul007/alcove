@@ -32,6 +32,8 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
         func check(_ value:Bool,_ name:String) {print("\(value ? "PASS" : "FAIL"): \(name)");if !value {failures += 1}}
         func exercise() async throws {
             let normal = BrowserStore(dataRoot:root.appendingPathComponent("normal"),keyProvider:{_ in key})
+            let normalOwner=BrowserWindowOwner(store:normal),normalLease=try normalOwner.acquirePrimary()
+            defer {normalOwner.release(normalLease)}
             defer {normal.shutdown()}
             let browserWindow=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
             browserWindow.isReleasedWhenClosed=false;normal.registerExtensionWindow(browserWindow,kind:.primary)
@@ -46,7 +48,7 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             try Data("document.documentElement.dataset.ownedUninstallScript='ran';".utf8).write(to:source.appendingPathComponent("registered.js"))
             try Data("/* Generated inert readiness resource */".utf8).write(to:source.appendingPathComponent("sentinel.js"))
             try Data("(async()=>{let id='owned-readiness-'+String(Math.random());await browser.scripting.registerContentScripts([{id,matches:['https://owned-readiness.invalid/*'],js:['sentinel.js'],persistAcrossSessions:true}]);await browser.scripting.unregisterContentScripts({ids:[id]});await browser.storage.session.set({ownedErasureReadiness:'ready'})})();".utf8).write(to:source.appendingPathComponent("bootstrap.js"))
-            let package = try ExtensionPackage.prepare(at:source,stagingRoot:root.appendingPathComponent("staging")),approval = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],hostPatterns:["http://127.0.0.1/*"],enable:true)
+            let package = try ExtensionPackage.prepare(at:source,stagingRoot:root.appendingPathComponent("staging")),approval = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],hostPatterns:["http://127.0.0.1/*"],allowPrivate:true,enable:true)
             let id = try await normal.installExtension(package,approval:approval);try await normal.prepareExtensions(profileID:profile)
             let record = normal.extensionRecords(profileID:profile).first!,server = normal.extensionHosting as! NativeBrowserExtensionHost,context = server.profiles[profile]!.contexts[id]!,api = try await page(context)
             let dataStore = normal.websiteDataStore(forProfile:profile)
@@ -71,6 +73,29 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             let ruleState = (try? await js(api,"return JSON.stringify(await browser.declarativeNetRequest.getDynamicRules());")) as? String ?? "unavailable"
             print("INFO: Owned request-blocking readiness attempts=\(attempts) first=\(firstObservation) final=\(lastObservation) storedRules=\(ruleState)")
             check(blockingWitness,"The actual installed extension injects its registered script and blocks a real loopback request before removal")
+            for privateIndex in 1...2 {
+                let temporary=BrowserStore(isPrivate:true,dataRoot:root.appendingPathComponent("private-dnr-\(privateIndex)"),keyProvider:{_ in throw OwnedExtensionErasureError.missingFixture})
+                defer {temporary.shutdown()}
+                try temporary.associateExtensions(with:normalOwner,profileID:profile)
+                let privateWindow=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
+                privateWindow.isReleasedWhenClosed=false;temporary.registerExtensionWindow(privateWindow,kind:.primary)
+                defer {temporary.unregisterExtensionWindow(kind:.primary);privateWindow.contentView=nil;privateWindow.close()}
+                let privateID=temporary.newTab(url:fixture),privateWeb=temporary.view(for:privateID)
+                privateWindow.contentView=privateWeb
+                try await wait{(try? await privateWeb.evaluateJavaScript("document.body?.dataset.ownedExtensionPage === 'ready'")) as? Bool == true}
+                var privateBlocked=false,privateObservation=""
+                let deadline=ContinuousClock.now.advanced(by:.seconds(7))
+                repeat {
+                    privateObservation=(try await js(privateWeb,"let blocked=false;try{await fetch('/owned-uninstall-deny',{cache:'no-store'})}catch(error){blocked=true}let control=await fetch('/owned-uninstall-control',{cache:'no-store'});return JSON.stringify({blocked,control:control.ok});")) as? String ?? ""
+                    let value=try JSONSerialization.jsonObject(with:Data(privateObservation.utf8)) as? [String:Any]
+                    privateBlocked=value?["blocked"] as? Bool == true && value?["control"] as? Bool == true
+                    if privateBlocked {break}
+                    try await Task.sleep(for:.milliseconds(50))
+                } while ContinuousClock.now < deadline
+                print("INFO: private DNR client=\(privateIndex) observation=\(privateObservation)")
+                check(privateBlocked,"A new explicitly approved private client \(privateIndex) applies existing rules with a working control")
+                check(privateWeb.configuration.userContentController !== website.configuration.userContentController,"Private client \(privateIndex) keeps a separate user-content controller")
+            }
             try normal.beginRemoveExtension(id,profileID:profile)
             check(normal.extensionRecords(profileID:profile).first?.pendingRemoval == true && context.isLoaded == false,"Removal first persists its tombstone and unloads the approved native context")
             // Reproduce a previously interrupted app-owned cleanup. Its saved
