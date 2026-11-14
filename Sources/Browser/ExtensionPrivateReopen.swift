@@ -156,6 +156,7 @@ extension BrowserStore {
         try metadata.validate()
         let records = normal.extensionRecords(profileID:profileID)
         guard records.contains(where:{$0.enabled && $0.pendingRemoval != true && $0.grants?.allowPrivate == true}) else {throw ExtensionActionError.invalidApproval}
+        try BrowserExtensionCompatibility.requirePrivateAccess(records)
         self.client = client;self.owner = owner;self.server = server;self.profileID = profileID;self.controllerID = controllerID
         self.metadata = metadata;self.records = records;profileName = profile.name;epoch = normal.extensionReviewEpoch(for:profileID)
         lease = try owner.acquireAuxiliary()

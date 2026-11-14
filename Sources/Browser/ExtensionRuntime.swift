@@ -98,7 +98,7 @@ import BrowserCore
             // Keep normal profile pages on the controller already registered by its
             // extension backgrounds. Older WebKit can miss saved request rules on a
             // fresh user-content controller. Private pages retain their separate UCC.
-            if configuration.websiteDataStore.isPersistent {configuration.userContentController = runtime.contentController}
+            if !BrowserExtensionCompatibility.supportsPrivateRequestBlocking,configuration.websiteDataStore.isPersistent {configuration.userContentController = runtime.contentController}
         }
         catch {configuration.webExtensionController = nil;owner?.extensionStates[profileID] = .failed(error.localizedDescription)}
     }

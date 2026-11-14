@@ -123,6 +123,49 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             let profile=try normal.createProfile(name:"Owned private rule checks"),controllerID=normal.profiles.first(where:{$0.id==profile})!.extensionControllerID!
             try owned.register(profile);try controllers.register(controllerID)
             let package=try ExtensionPackage.prepare(at:root.appendingPathComponent("source"),stagingRoot:root.appendingPathComponent("private-rule-staging"))
+            if !BrowserExtensionCompatibility.supportsPrivateRequestBlocking {
+                var approvalRefused=false
+                do {_ = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],hostPatterns:["http://127.0.0.1/*"],allowPrivate:true,enable:true)}
+                catch ExtensionHostError.unsupportedPrivateRequestBlocking {approvalRefused=true}
+                check(approvalRefused && normal.extensionRecords(profileID:profile).isEmpty,"An affected engine refuses new private blocking approval before publication")
+                let normalApproval=try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],hostPatterns:["http://127.0.0.1/*"],enable:true)
+                let id=try await normal.installExtension(package,approval:normalApproval)
+                try await normal.prepareExtensions(profileID:profile)
+                check(normal.extensionRecords(profileID:profile).first?.enabled==true,"An affected engine still permits the extension in normal browsing")
+                // Model a previously saved approval from a fixed engine. Reading it
+                // must not associate a broken private runtime or erase the choice.
+                var legacy=normal.makeDocument(),library=legacy.library(for:profile),record=normal.extensionRecords(profileID:profile).first!
+                record.grants?.allowPrivate=true;library.extensions=[record];legacy.setLibrary(library,for:profile)
+                try normal.commitProfileDocument(legacy)
+                let ciphertext=try Data(contentsOf:normal.sessionURL)
+                var privateKeys=0
+                let privateRoot=root.appendingPathComponent("old-engine-private")
+                let temporary=BrowserStore(isPrivate:true,dataRoot:privateRoot,keyProvider:{_ in privateKeys+=1;throw OwnedExtensionErasureError.missingFixture})
+                defer {temporary.shutdown()}
+                var associationRefused=false
+                do {try temporary.associateExtensions(with:owner,profileID:profile)}
+                catch ExtensionHostError.unsupportedPrivateRequestBlocking {associationRefused=true}
+                check(associationRefused && temporary.extensionHosting==nil,"A saved private blocking approval cannot silently attach on an affected engine")
+                temporary.extensionHosting?.shutdown();temporary.extensionHosting=nil
+                let window=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
+                window.isReleasedWhenClosed=false;temporary.registerExtensionWindow(window,kind:.primary)
+                defer {temporary.unregisterExtensionWindow(kind:.primary);window.contentView=nil;window.close()}
+                let pageID=temporary.newTab(url:fixture),web=temporary.view(for:pageID)
+                window.contentView=web
+                try await wait{(try? await web.evaluateJavaScript("document.body?.dataset.ownedExtensionPage === 'ready'")) as? Bool == true}
+                _ = try await web.evaluateJavaScript("document.getElementById('owned-form').value='keep private state';true")
+                var promptCount=0,replies=0,reloadRefused=false
+                temporary.requestReopenPrivateExtensions(with:owner,profileID:profile,from:window,confirmation:PrivateExtensionReopenPrompt(confirm:{_,_,reply in promptCount+=1;reply(false);return nil})) { result in
+                    replies+=1
+                    if case .failure(ExtensionHostError.unsupportedPrivateRequestBlocking)=result {reloadRefused=true}
+                }
+                check(replies==1 && reloadRefused && promptCount==0,"An unsupported private reload fails once before displaying destructive consent")
+                let formKept=(try await web.evaluateJavaScript("document.getElementById('owned-form').value === 'keep private state'")) as? Bool == true
+                check(temporary.views[pageID] === web && formKept,"Refused private blocking preserves the existing document and unsaved form")
+                let savedUnchanged=try Data(contentsOf:normal.sessionURL)==ciphertext
+                check(privateKeys==0 && !manager.fileExists(atPath:privateRoot.path) && savedUnchanged && normal.extensionRecords(profileID:profile).first(where:{$0.id==id})?.grants?.allowPrivate==true,"Compatibility refusal requests no private key and preserves the saved approval and ciphertext")
+                nativeCleanupSafe=true;return
+            }
             let approval=try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],hostPatterns:["http://127.0.0.1/*"],allowPrivate:true,enable:true)
             let id=try await normal.installExtension(package,approval:approval)
             try await normal.prepareExtensions(profileID:profile)
@@ -135,19 +178,6 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
                 let privateWindow=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
                 privateWindow.isReleasedWhenClosed=false;temporary.registerExtensionWindow(privateWindow,kind:.primary)
                 defer {temporary.unregisterExtensionWindow(kind:.primary);privateWindow.contentView=nil;privateWindow.close()}
-                let primeStage=ProcessInfo.processInfo.environment["ALCOVE_PRIVATE_PRIME"] ?? "none"
-                var prime:WKWebView?
-                if primeStage == "immediate" || primeStage == "document" {
-                    let config=WKWebViewConfiguration()
-                    config.websiteDataStore=temporary.websiteDataStore(forProfile:BrowserProfile.defaultID)
-                    temporary.configureExtensions(config,profileID:BrowserProfile.defaultID)
-                    prime=WKWebView(frame:.zero,configuration:config)
-                    if primeStage == "document",let prime {
-                        prime.loadHTMLString("<!doctype html><title>Owned blank initialization</title>",baseURL:nil)
-                        try await wait{(try? await prime.evaluateJavaScript("document.readyState === 'complete'")) as? Bool == true}
-                    }
-                }
-                defer {prime?.stopLoading()}
                 let privateID=temporary.newTab(url:fixture),privateWeb=temporary.view(for:privateID)
                 privateWindow.contentView=privateWeb
                 try await wait{(try? await privateWeb.evaluateJavaScript("document.body?.dataset.ownedExtensionPage === 'ready'")) as? Bool == true}
