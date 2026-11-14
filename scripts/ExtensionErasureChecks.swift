@@ -32,8 +32,6 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
         func check(_ value:Bool,_ name:String) {print("\(value ? "PASS" : "FAIL"): \(name)");if !value {failures += 1}}
         func exercise() async throws {
             let normal = BrowserStore(dataRoot:root.appendingPathComponent("normal"),keyProvider:{_ in key})
-            let normalOwner=BrowserWindowOwner(store:normal),normalLease=try normalOwner.acquirePrimary()
-            defer {normalOwner.release(normalLease)}
             defer {normal.shutdown()}
             let browserWindow=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
             browserWindow.isReleasedWhenClosed=false;normal.registerExtensionWindow(browserWindow,kind:.primary)
@@ -48,7 +46,7 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             try Data("document.documentElement.dataset.ownedUninstallScript='ran';".utf8).write(to:source.appendingPathComponent("registered.js"))
             try Data("/* Generated inert readiness resource */".utf8).write(to:source.appendingPathComponent("sentinel.js"))
             try Data("(async()=>{let id='owned-readiness-'+String(Math.random());await browser.scripting.registerContentScripts([{id,matches:['https://owned-readiness.invalid/*'],js:['sentinel.js'],persistAcrossSessions:true}]);await browser.scripting.unregisterContentScripts({ids:[id]});await browser.storage.session.set({ownedErasureReadiness:'ready'})})();".utf8).write(to:source.appendingPathComponent("bootstrap.js"))
-            let package = try ExtensionPackage.prepare(at:source,stagingRoot:root.appendingPathComponent("staging")),approval = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],hostPatterns:["http://127.0.0.1/*"],allowPrivate:true,enable:true)
+            let package = try ExtensionPackage.prepare(at:source,stagingRoot:root.appendingPathComponent("staging")),approval = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],hostPatterns:["http://127.0.0.1/*"],enable:true)
             let id = try await normal.installExtension(package,approval:approval);try await normal.prepareExtensions(profileID:profile)
             let record = normal.extensionRecords(profileID:profile).first!,server = normal.extensionHosting as! NativeBrowserExtensionHost,context = server.profiles[profile]!.contexts[id]!,api = try await page(context)
             let dataStore = normal.websiteDataStore(forProfile:profile)
@@ -73,29 +71,6 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             let ruleState = (try? await js(api,"return JSON.stringify(await browser.declarativeNetRequest.getDynamicRules());")) as? String ?? "unavailable"
             print("INFO: Owned request-blocking readiness attempts=\(attempts) first=\(firstObservation) final=\(lastObservation) storedRules=\(ruleState)")
             check(blockingWitness,"The actual installed extension injects its registered script and blocks a real loopback request before removal")
-            for privateIndex in 1...2 {
-                let temporary=BrowserStore(isPrivate:true,dataRoot:root.appendingPathComponent("private-dnr-\(privateIndex)"),keyProvider:{_ in throw OwnedExtensionErasureError.missingFixture})
-                defer {temporary.shutdown()}
-                try temporary.associateExtensions(with:normalOwner,profileID:profile)
-                let privateWindow=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
-                privateWindow.isReleasedWhenClosed=false;temporary.registerExtensionWindow(privateWindow,kind:.primary)
-                defer {temporary.unregisterExtensionWindow(kind:.primary);privateWindow.contentView=nil;privateWindow.close()}
-                let privateID=temporary.newTab(url:fixture),privateWeb=temporary.view(for:privateID)
-                privateWindow.contentView=privateWeb
-                try await wait{(try? await privateWeb.evaluateJavaScript("document.body?.dataset.ownedExtensionPage === 'ready'")) as? Bool == true}
-                var privateBlocked=false,privateObservation=""
-                let deadline=ContinuousClock.now.advanced(by:.seconds(7))
-                repeat {
-                    privateObservation=(try await js(privateWeb,"let blocked=false;try{await fetch('/owned-uninstall-deny',{cache:'no-store'})}catch(error){blocked=true}let control=await fetch('/owned-uninstall-control',{cache:'no-store'});return JSON.stringify({blocked,control:control.ok});")) as? String ?? ""
-                    let value=try JSONSerialization.jsonObject(with:Data(privateObservation.utf8)) as? [String:Any]
-                    privateBlocked=value?["blocked"] as? Bool == true && value?["control"] as? Bool == true
-                    if privateBlocked {break}
-                    try await Task.sleep(for:.milliseconds(50))
-                } while ContinuousClock.now < deadline
-                print("INFO: private DNR client=\(privateIndex) observation=\(privateObservation)")
-                check(privateBlocked,"A new explicitly approved private client \(privateIndex) applies existing rules with a working control")
-                check(privateWeb.configuration.userContentController !== website.configuration.userContentController,"Private client \(privateIndex) keeps a separate user-content controller")
-            }
             try normal.beginRemoveExtension(id,profileID:profile)
             check(normal.extensionRecords(profileID:profile).first?.pendingRemoval == true && context.isLoaded == false,"Removal first persists its tombstone and unloads the approved native context")
             // Reproduce a previously interrupted app-owned cleanup. Its saved
@@ -139,6 +114,57 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             // remove their real rules, registered scripts and origin data before exit.
             _ = try await js(restoredAPI,"await browser.scripting.unregisterContentScripts();let rules=await browser.declarativeNetRequest.getDynamicRules();await browser.declarativeNetRequest.updateDynamicRules({removeRuleIds:rules.map(r=>r.id)});localStorage.clear();for(let database of await indexedDB.databases()){await new Promise((resolve,reject)=>{let r=indexedDB.deleteDatabase(database.name);r.onsuccess=()=>resolve(true);r.onerror=()=>reject(r.error)})}return true;")
             try restoredController.unload(restored);nativeCleanupSafe = true
+        }
+        func privateBlockingExercise() async throws {
+            nativeCleanupSafe = false
+            let normal=BrowserStore(dataRoot:root.appendingPathComponent("private-rules-owner"),keyProvider:{_ in key})
+            let owner=BrowserWindowOwner(store:normal),lease=try owner.acquirePrimary()
+            defer {owner.release(lease);normal.shutdown()}
+            let profile=try normal.createProfile(name:"Owned private rule checks"),controllerID=normal.profiles.first(where:{$0.id==profile})!.extensionControllerID!
+            try owned.register(profile);try controllers.register(controllerID)
+            let package=try ExtensionPackage.prepare(at:root.appendingPathComponent("source"),stagingRoot:root.appendingPathComponent("private-rule-staging"))
+            let approval=try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],hostPatterns:["http://127.0.0.1/*"],allowPrivate:true,enable:true)
+            let id=try await normal.installExtension(package,approval:approval)
+            try await normal.prepareExtensions(profileID:profile)
+            let server=normal.extensionHosting as! NativeBrowserExtensionHost,context=server.profiles[profile]!.contexts[id]!,api=try await page(context)
+            _ = try await js(api,"await browser.declarativeNetRequest.updateDynamicRules({addRules:[{id:917,priority:1,action:{type:'block'},condition:{urlFilter:'/owned-uninstall-deny',resourceTypes:['xmlhttprequest']}}]});return true;")
+            for privateIndex in 1...2 {
+                let temporary=BrowserStore(isPrivate:true,dataRoot:root.appendingPathComponent("private-dnr-\(privateIndex)"),keyProvider:{_ in throw OwnedExtensionErasureError.missingFixture})
+                defer {temporary.shutdown()}
+                try temporary.associateExtensions(with:owner,profileID:profile)
+                let privateWindow=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
+                privateWindow.isReleasedWhenClosed=false;temporary.registerExtensionWindow(privateWindow,kind:.primary)
+                defer {temporary.unregisterExtensionWindow(kind:.primary);privateWindow.contentView=nil;privateWindow.close()}
+                let primeStage=ProcessInfo.processInfo.environment["ALCOVE_PRIVATE_PRIME"] ?? "none"
+                var prime:WKWebView?
+                if primeStage == "immediate" || primeStage == "document" {
+                    let config=WKWebViewConfiguration()
+                    config.websiteDataStore=temporary.websiteDataStore(forProfile:BrowserProfile.defaultID)
+                    temporary.configureExtensions(config,profileID:BrowserProfile.defaultID)
+                    prime=WKWebView(frame:.zero,configuration:config)
+                    if primeStage == "document",let prime {
+                        prime.loadHTMLString("<!doctype html><title>Owned blank initialization</title>",baseURL:nil)
+                        try await wait{(try? await prime.evaluateJavaScript("document.readyState === 'complete'")) as? Bool == true}
+                    }
+                }
+                defer {prime?.stopLoading()}
+                let privateID=temporary.newTab(url:fixture),privateWeb=temporary.view(for:privateID)
+                privateWindow.contentView=privateWeb
+                try await wait{(try? await privateWeb.evaluateJavaScript("document.body?.dataset.ownedExtensionPage === 'ready'")) as? Bool == true}
+                var privateBlocked=false,privateObservation=""
+                let deadline=ContinuousClock.now.advanced(by:.seconds(7))
+                repeat {
+                    privateObservation=(try await js(privateWeb,"let blocked=false;try{await fetch('/owned-uninstall-deny',{cache:'no-store'})}catch(error){blocked=true}let control=await fetch('/owned-uninstall-control',{cache:'no-store'});return JSON.stringify({blocked,control:control.ok});")) as? String ?? ""
+                    let value=try JSONSerialization.jsonObject(with:Data(privateObservation.utf8)) as? [String:Any]
+                    privateBlocked=value?["blocked"] as? Bool == true && value?["control"] as? Bool == true
+                    if privateBlocked {break}
+                    try await Task.sleep(for:.milliseconds(50))
+                } while ContinuousClock.now < deadline
+                print("INFO: private DNR client=\(privateIndex) observation=\(privateObservation)")
+                check(privateBlocked,"A new explicitly approved private client \(privateIndex) applies existing rules with a working control")
+                check(privateWeb.configuration.userContentController !== server.profiles[profile]!.contentController,"Private client \(privateIndex) keeps a separate user-content controller")
+            }
+            nativeCleanupSafe = true
         }
         func lifetimeExercise(cancelWaiter:Bool,failFinalSave:Bool = false) async throws {
             nativeCleanupSafe = false
@@ -464,7 +490,7 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             await inspector.removeData(ofTypes:types,from:remaining)
             nativeCleanupSafe = true
         }
-        do {try await exercise();try await lifetimeExercise(cancelWaiter:true);try await lifetimeExercise(cancelWaiter:false);try await lifetimeExercise(cancelWaiter:false,failFinalSave:true);try await damagedPackageExercise(missing:false);try await damagedPackageExercise(missing:true);try await profileClearExercise();try await profileDeleteExercise();try await retiredNamespaceExercise(removing:false);try await retiredNamespaceExercise(removing:true);try await openPagesExercise();try await retainedPageExercise();try await retainedPageExercise(clearing:true)} catch {check(false,"Owned erasure fixture failed: "+String(describing:error))}
+        do {try await exercise();try await privateBlockingExercise();try await lifetimeExercise(cancelWaiter:true);try await lifetimeExercise(cancelWaiter:false);try await lifetimeExercise(cancelWaiter:false,failFinalSave:true);try await damagedPackageExercise(missing:false);try await damagedPackageExercise(missing:true);try await profileClearExercise();try await profileDeleteExercise();try await retiredNamespaceExercise(removing:false);try await retiredNamespaceExercise(removing:true);try await openPagesExercise();try await retainedPageExercise();try await retainedPageExercise(clearing:true)} catch {check(false,"Owned erasure fixture failed: "+String(describing:error))}
         if nativeCleanupSafe {check(await controllers.cleanup(),"Erasure fixtures clear only their journaled native storage")}
         else {print("RECOVERY_REQUIRED",root.path)}
         check(await owned.cleanup(),"Erasure fixtures remove only their owned named website stores")
