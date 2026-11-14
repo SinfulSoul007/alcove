@@ -68,15 +68,29 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             print("INFO: bootstrap stage=\(bootstrapStage) view=\(bootstrap != nil)")
             let seedIDB = "await new Promise((resolve,reject)=>{let r=indexedDB.open('owned-uninstall',1);r.onupgradeneeded=()=>r.result.createObjectStore('items');r.onerror=()=>reject(r.error);r.onsuccess=()=>{let d=r.result,t=d.transaction('items','readwrite');t.objectStore('items').put('private fixture value','key');t.oncomplete=()=>{d.close();resolve(true)};t.onerror=()=>{d.close();reject(t.error)}}});"
             _ = try await js(api,"await browser.storage.local.set({owned:'local'});await browser.storage.sync.set({owned:'sync'});localStorage.setItem('owned-origin','retire');"+seedIDB+"await browser.scripting.registerContentScripts([{id:'owned-installed-script',matches:['http://127.0.0.1/*'],js:['registered.js'],persistAcrossSessions:true,runAt:'document_end'}]);await browser.declarativeNetRequest.updateDynamicRules({addRules:[{id:917,priority:1,action:{type:'block'},condition:{urlFilter:'/owned-uninstall-deny',resourceTypes:['xmlhttprequest']}},{id:918,priority:1,action:{type:'block'},condition:{urlFilter:'/owned-uninstall-any-deny'}}]});return true;")
-            let websiteID = normal.newTab(url:fixture),website = normal.view(for:websiteID)
+            let websiteConfiguration=WKWebViewConfiguration()
+            if let bootstrap {websiteConfiguration.userContentController=bootstrap.configuration.userContentController}
+            let websiteID = normal.newTab(url:fixture),website = normal.view(for:websiteID,configuration:websiteConfiguration)
             browserWindow.contentView=website;server.synchronizeBrowserState()
+            let rawStoreURL=root.appendingPathComponent("owned-raw-rules")
+            try manager.createDirectory(at:rawStoreURL,withIntermediateDirectories:true)
+            let rawStore=WKContentRuleListStore(url:rawStoreURL)!
+            let rawRule:WKContentRuleList=try await withCheckedThrowingContinuation { continuation in
+                rawStore.compileContentRuleList(forIdentifier:"owned-raw-control",encodedContentRuleList:#"[{"trigger":{"url-filter":"/owned-raw-deny"},"action":{"type":"block"}}]"#) { list,error in
+                    if let error {continuation.resume(throwing:error)}
+                    else if let list {continuation.resume(returning:list)}
+                    else {continuation.resume(throwing:OwnedExtensionErasureError.missingFixture)}
+                }
+            }
+            website.configuration.userContentController.add(rawRule)
+
             try await wait{(try? await website.evaluateJavaScript("document.body?.dataset.ownedExtensionPage === 'ready' && document.documentElement.dataset.ownedUninstallScript === 'ran'")) as? Bool == true}
             _ = try await website.evaluateJavaScript("document.getElementById('owned-form').value='keep unrelated live form';document.cookie='owned_uninstall_website=keep; path=/';true")
             var blockingWitness = false,attempts = 0,firstObservation = "",lastObservation = ""
             let blockingDeadline = ContinuousClock.now.advanced(by:.seconds(7))
             repeat {
                 attempts += 1
-                lastObservation = (try await js(website,"let result={blocked:false,controlOK:false};try{let response=await fetch('/owned-uninstall-deny',{cache:'no-store'});result.denyStatus=response.status}catch(error){result.blocked=true;result.denial=String(error)}try{let response=await fetch('/owned-uninstall-control',{cache:'no-store'});result.controlOK=response.ok;result.controlStatus=response.status}catch(error){result.controlError=String(error)}try{let response=await fetch('/owned-uninstall-any-deny',{cache:'no-store'});result.anyBlocked=false;result.anyStatus=response.status}catch(error){result.anyBlocked=true;result.anyDenial=String(error)}return JSON.stringify(result);")) as? String ?? ""
+                lastObservation = (try await js(website,"let result={blocked:false,controlOK:false};try{let response=await fetch('/owned-uninstall-deny',{cache:'no-store'});result.denyStatus=response.status}catch(error){result.blocked=true;result.denial=String(error)}try{let response=await fetch('/owned-uninstall-control',{cache:'no-store'});result.controlOK=response.ok;result.controlStatus=response.status}catch(error){result.controlError=String(error)}try{let response=await fetch('/owned-uninstall-any-deny',{cache:'no-store'});result.anyBlocked=false;result.anyStatus=response.status}catch(error){result.anyBlocked=true;result.anyDenial=String(error)}try{let response=await fetch('/owned-raw-deny',{cache:'no-store'});result.rawBlocked=false;result.rawStatus=response.status}catch(error){result.rawBlocked=true;result.rawDenial=String(error)}return JSON.stringify(result);")) as? String ?? ""
                 if firstObservation.isEmpty {firstObservation = lastObservation}
                 let observation = try JSONSerialization.jsonObject(with:Data(lastObservation.utf8)) as? [String:Any]
                 blockingWitness = observation?["blocked"] as? Bool == true && observation?["controlOK"] as? Bool == true
