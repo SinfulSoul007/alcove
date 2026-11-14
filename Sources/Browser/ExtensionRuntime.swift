@@ -216,6 +216,9 @@ import BrowserCore
             if record.grants?.hostPatterns.contains("<all_urls>") == true {
                 self.owner?.extensionDiagnostics[profileID,default:[:]][record.id,default:[]].append("All-sites approval covers HTTP and HTTPS in WebKit. File, FTP and unsupported standalone WebSocket patterns are excluded.")
             }
+            if record.grants?.allowPrivate==true,let issue=BrowserExtensionCompatibility.privateAccessIssue(for:record) {
+                self.owner?.extensionDiagnostics[profileID,default:[:]][record.id,default:[]].append(issue)
+            }
             // WebKit reports optional display metadata (including a missing description) as an
             // invalid-entry diagnostic. Preserve every diagnostic for review, while malformed
             // archives, resources, background persistence and unsupported versions remain fatal.
@@ -226,7 +229,7 @@ import BrowserCore
             context.baseURL = URL(string:"webkit-extension://" + record.runtimeIdentifier + "/")!
             context.isInspectable = false
             context.unsupportedAPIs = ["browser.runtime.sendNativeMessage","browser.runtime.connectNative","browser.debugger","browser.devtools","browser.sidePanel"]
-            try apply(record.grants!,to:context)
+            try apply(record.grants!,record:record,to:context)
             runtime.contexts[record.id] = context
             do {try runtime.controller.load(context)} catch {runtime.contexts.removeValue(forKey:record.id);throw error}
         }
@@ -236,14 +239,14 @@ import BrowserCore
         let values = raw == "<all_urls>" ? ["http://*/*","https://*/*"] : [raw]
         return try values.map {try WKWebExtension.MatchPattern(string:$0)}
     }
-    private func apply(_ grant:ExtensionGrantSet,to context:WKWebExtensionContext) throws {
+    private func apply(_ grant:ExtensionGrantSet,record:BrowserExtensionRecord,to context:WKWebExtensionContext) throws {
         context.grantedPermissions = Dictionary(uniqueKeysWithValues:grant.permissions.map{(WKWebExtension.Permission(rawValue:$0),Date.distantFuture)})
         context.deniedPermissions = Dictionary(uniqueKeysWithValues:(grant.deniedPermissions ?? []).map{(WKWebExtension.Permission(rawValue:$0),Date.distantFuture)})
         var allowed:[WKWebExtension.MatchPattern:Date] = [:], denied:[WKWebExtension.MatchPattern:Date] = [:]
         for raw in grant.hostPatterns {for pattern in try patterns(raw) {allowed[pattern] = .distantFuture}}
         for raw in grant.deniedHostPatterns ?? [] {for pattern in try patterns(raw) {denied[pattern] = .distantFuture}}
         context.grantedPermissionMatchPatterns = allowed;context.deniedPermissionMatchPatterns = denied
-        context.hasAccessToPrivateData = grant.allowPrivate
+        context.hasAccessToPrivateData = grant.allowPrivate && BrowserExtensionCompatibility.privateAccessIssue(for:record)==nil
     }
     func shutdown() {
         cancelActionJobs()
