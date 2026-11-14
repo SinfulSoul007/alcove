@@ -31,6 +31,7 @@ import BrowserCore
 @available(macOS 15.4,*) @MainActor final class NativeExtensionProfile {
     let id:UUID, controllerID:UUID
     let controller:WKWebExtensionController
+    let contentController = WKUserContentController()
     var contexts:[UUID:WKWebExtensionContext] = [:]
     var loaded:[BrowserExtensionRecord]?, epoch:UUID?
     var task:Task<Void,Error>?, taskID:UUID?, preparing:[BrowserExtensionRecord]?
@@ -39,6 +40,7 @@ import BrowserCore
         let configuration = WKWebExtensionController.Configuration(identifier:controllerID)
         configuration.defaultWebsiteDataStore = dataStore
         let background = WKWebViewConfiguration(); background.websiteDataStore = dataStore
+        background.userContentController = contentController
         configuration.webViewConfiguration = background
         controller = WKWebExtensionController(configuration:configuration)
     }
@@ -90,7 +92,14 @@ import BrowserCore
         return runtime
     }
     func configure(_ configuration:WKWebViewConfiguration,profileID:UUID) {
-        do {configuration.webExtensionController = try profile(profileID).controller}
+        do {
+            let runtime = try profile(profileID)
+            configuration.webExtensionController = runtime.controller
+            // Keep normal profile pages on the controller already registered by its
+            // extension backgrounds. Older WebKit can miss saved request rules on a
+            // fresh user-content controller. Private pages retain their separate UCC.
+            if configuration.websiteDataStore.isPersistent {configuration.userContentController = runtime.contentController}
+        }
         catch {configuration.webExtensionController = nil;owner?.extensionStates[profileID] = .failed(error.localizedDescription)}
     }
     func invalidate(profileID:UUID) {

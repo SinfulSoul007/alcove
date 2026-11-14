@@ -1,23 +1,19 @@
-name: Native extension initialization-order comparison
+name: Verify profile content-controller fix
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   macos:
-    name: ${{ matrix.stage }}
     runs-on: macos-15
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        stage: [none, beforeLoad, beforeRules]
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
-      ALCOVE_BOOTSTRAP_STAGE: ${{ matrix.stage }}
+        mode: [extension-erasure-test, extension-private-test]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Verify original request blocking and owned erasure controls
-        run: caffeinate -is scripts/build.sh extension-erasure-test
+      - name: Verify original native blocking or private isolation
+        run: caffeinate -is scripts/build.sh ${{ matrix.mode }}

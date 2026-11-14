@@ -21,7 +21,7 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             catch MetadataOwnershipError.inUse {exit(23)}
             catch {exit(24)}
         }
-        NSApplication.shared.setActivationPolicy(.regular);NSApplication.shared.finishLaunching();setbuf(stdout,nil)
+        NSApplication.shared.setActivationPolicy(.prohibited);setbuf(stdout,nil)
         guard #available(macOS 15.4,*) else {print("UNAVAILABLE: Native erasure fixtures require macOS15.4.");return}
         let owned = try OwnedWebsiteStores(),controllers = try OwnedExtensionControllers()
         guard !FileManager.default.fileExists(atPath:controllers.manifest.path) else {print("FAIL: Finish the previous owned erasure fixture's recorded recovery before rerunning.");exit(1)}
@@ -35,7 +35,6 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             defer {normal.shutdown()}
             let browserWindow=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
             browserWindow.isReleasedWhenClosed=false;normal.registerExtensionWindow(browserWindow,kind:.primary)
-            browserWindow.title="Owned request-blocking QA";browserWindow.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
             defer {normal.unregisterExtensionWindow(kind:.primary);browserWindow.contentView=nil;browserWindow.close()}
             let profile = try normal.createProfile(name:"Owned uninstall account"),controllerID = normal.profiles.first(where:{$0.id == profile})!.extensionControllerID!
             try owned.register(profile);try controllers.register(controllerID)
@@ -48,56 +47,27 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             try Data("/* Generated inert readiness resource */".utf8).write(to:source.appendingPathComponent("sentinel.js"))
             try Data("(async()=>{let id='owned-readiness-'+String(Math.random());await browser.scripting.registerContentScripts([{id,matches:['https://owned-readiness.invalid/*'],js:['sentinel.js'],persistAcrossSessions:true}]);await browser.scripting.unregisterContentScripts({ids:[id]});await browser.storage.session.set({ownedErasureReadiness:'ready'})})();".utf8).write(to:source.appendingPathComponent("bootstrap.js"))
             let package = try ExtensionPackage.prepare(at:source,stagingRoot:root.appendingPathComponent("staging")),approval = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],hostPatterns:["http://127.0.0.1/*"],enable:true)
-            let id = try await normal.installExtension(package,approval:approval)
-            let bootstrapStage=ProcessInfo.processInfo.environment["ALCOVE_BOOTSTRAP_STAGE"] ?? "none"
-            var bootstrap:WKWebView?
-            func makeBootstrap() -> WKWebView {
-                let configuration=WKWebViewConfiguration()
-                configuration.websiteDataStore=normal.websiteDataStore(forProfile:profile)
-                normal.configureExtensions(configuration,profileID:profile)
-                return WKWebView(frame:.zero,configuration:configuration)
-            }
-            if bootstrapStage == "beforeLoad" {bootstrap=makeBootstrap()}
-            defer {bootstrap?.stopLoading()}
-            try await normal.prepareExtensions(profileID:profile)
+            let id = try await normal.installExtension(package,approval:approval);try await normal.prepareExtensions(profileID:profile)
             let record = normal.extensionRecords(profileID:profile).first!,server = normal.extensionHosting as! NativeBrowserExtensionHost,context = server.profiles[profile]!.contexts[id]!,api = try await page(context)
-            print("INFO: Native DNR grant=\(context.hasPermission(WKWebExtension.Permission(rawValue:"declarativeNetRequest"))) hosts=\(context.grantedPermissionMatchPatterns.keys.map(\.string))")
             let dataStore = normal.websiteDataStore(forProfile:profile)
             try JSONSerialization.data(withJSONObject:["controller":controllerID.uuidString,"runtime":record.runtimeIdentifier,"website":profile.uuidString],options:.sortedKeys).write(to:root.appendingPathComponent("owned-identities.json"))
-            if bootstrapStage == "beforeRules" {bootstrap=makeBootstrap()}
-            print("INFO: bootstrap stage=\(bootstrapStage) view=\(bootstrap != nil)")
             let seedIDB = "await new Promise((resolve,reject)=>{let r=indexedDB.open('owned-uninstall',1);r.onupgradeneeded=()=>r.result.createObjectStore('items');r.onerror=()=>reject(r.error);r.onsuccess=()=>{let d=r.result,t=d.transaction('items','readwrite');t.objectStore('items').put('private fixture value','key');t.oncomplete=()=>{d.close();resolve(true)};t.onerror=()=>{d.close();reject(t.error)}}});"
-            _ = try await js(api,"await browser.storage.local.set({owned:'local'});await browser.storage.sync.set({owned:'sync'});localStorage.setItem('owned-origin','retire');"+seedIDB+"await browser.scripting.registerContentScripts([{id:'owned-installed-script',matches:['http://127.0.0.1/*'],js:['registered.js'],persistAcrossSessions:true,runAt:'document_end'}]);await browser.declarativeNetRequest.updateDynamicRules({addRules:[{id:917,priority:1,action:{type:'block'},condition:{urlFilter:'/owned-uninstall-deny',resourceTypes:['xmlhttprequest']}},{id:918,priority:1,action:{type:'block'},condition:{urlFilter:'/owned-uninstall-any-deny'}}]});return true;")
-            let websiteConfiguration=WKWebViewConfiguration()
-            if let bootstrap {websiteConfiguration.userContentController=bootstrap.configuration.userContentController}
-            let websiteID = normal.newTab(url:fixture),website = normal.view(for:websiteID,configuration:websiteConfiguration)
+            _ = try await js(api,"await browser.storage.local.set({owned:'local'});await browser.storage.sync.set({owned:'sync'});localStorage.setItem('owned-origin','retire');"+seedIDB+"await browser.scripting.registerContentScripts([{id:'owned-installed-script',matches:['http://127.0.0.1/*'],js:['registered.js'],persistAcrossSessions:true,runAt:'document_end'}]);await browser.declarativeNetRequest.updateDynamicRules({addRules:[{id:917,priority:1,action:{type:'block'},condition:{urlFilter:'/owned-uninstall-deny',resourceTypes:['xmlhttprequest']}}]});return true;")
+            let websiteID = normal.newTab(url:fixture),website = normal.view(for:websiteID)
             browserWindow.contentView=website;server.synchronizeBrowserState()
-            let rawStoreURL=root.appendingPathComponent("owned-raw-rules")
-            try manager.createDirectory(at:rawStoreURL,withIntermediateDirectories:true)
-            let rawStore=WKContentRuleListStore(url:rawStoreURL)!
-            let rawRule:WKContentRuleList=try await withCheckedThrowingContinuation { continuation in
-                rawStore.compileContentRuleList(forIdentifier:"owned-raw-control",encodedContentRuleList:#"[{"trigger":{"url-filter":"/owned-raw-deny"},"action":{"type":"block"}}]"#) { list,error in
-                    if let error {continuation.resume(throwing:error)}
-                    else if let list {continuation.resume(returning:list)}
-                    else {continuation.resume(throwing:OwnedExtensionErasureError.missingFixture)}
-                }
-            }
-            website.configuration.userContentController.add(rawRule)
-
             try await wait{(try? await website.evaluateJavaScript("document.body?.dataset.ownedExtensionPage === 'ready' && document.documentElement.dataset.ownedUninstallScript === 'ran'")) as? Bool == true}
             _ = try await website.evaluateJavaScript("document.getElementById('owned-form').value='keep unrelated live form';document.cookie='owned_uninstall_website=keep; path=/';true")
             var blockingWitness = false,attempts = 0,firstObservation = "",lastObservation = ""
             let blockingDeadline = ContinuousClock.now.advanced(by:.seconds(7))
             repeat {
                 attempts += 1
-                lastObservation = (try await js(website,"let result={blocked:false,controlOK:false};try{let response=await fetch('/owned-uninstall-deny',{cache:'no-store'});result.denyStatus=response.status}catch(error){result.blocked=true;result.denial=String(error)}try{let response=await fetch('/owned-uninstall-control',{cache:'no-store'});result.controlOK=response.ok;result.controlStatus=response.status}catch(error){result.controlError=String(error)}try{let response=await fetch('/owned-uninstall-any-deny',{cache:'no-store'});result.anyBlocked=false;result.anyStatus=response.status}catch(error){result.anyBlocked=true;result.anyDenial=String(error)}try{let response=await fetch('/owned-raw-deny',{cache:'no-store'});result.rawBlocked=false;result.rawStatus=response.status}catch(error){result.rawBlocked=true;result.rawDenial=String(error)}return JSON.stringify(result);")) as? String ?? ""
+                lastObservation = (try await js(website,"let result={blocked:false,controlOK:false};try{let response=await fetch('/owned-uninstall-deny',{cache:'no-store'});result.denyStatus=response.status}catch(error){result.blocked=true;result.denial=String(error)}try{let response=await fetch('/owned-uninstall-control',{cache:'no-store'});result.controlOK=response.ok;result.controlStatus=response.status}catch(error){result.controlError=String(error)}return JSON.stringify(result);")) as? String ?? ""
                 if firstObservation.isEmpty {firstObservation = lastObservation}
                 let observation = try JSONSerialization.jsonObject(with:Data(lastObservation.utf8)) as? [String:Any]
                 blockingWitness = observation?["blocked"] as? Bool == true && observation?["controlOK"] as? Bool == true
                 if blockingWitness {break}
                 try await Task.sleep(for:.milliseconds(50))
             } while ContinuousClock.now < blockingDeadline
-            print("INFO: Visible browser active=\(NSApp.isActive) visible=\(browserWindow.isVisible) key=\(browserWindow.isKeyWindow) URLAccess=\(context.hasAccess(to:fixture))")
             let ruleState = (try? await js(api,"return JSON.stringify(await browser.declarativeNetRequest.getDynamicRules());")) as? String ?? "unavailable"
             print("INFO: Owned request-blocking readiness attempts=\(attempts) first=\(firstObservation) final=\(lastObservation) storedRules=\(ruleState)")
             check(blockingWitness,"The actual installed extension injects its registered script and blocks a real loopback request before removal")
