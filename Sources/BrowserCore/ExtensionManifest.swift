@@ -102,10 +102,16 @@ public struct ExtensionManifest:Equatable,Sendable {
         let incognito = try string(manifest["incognito"],"incognito") ?? "spanning"
         guard ["spanning","split","not_allowed"].contains(incognito) else { throw invalid("unknown incognito mode") }
         if incognito == "split" {warnings.insert("Private access is unavailable for extensions requiring separate private runtimes. Normal browsing can be approved separately.")}
+        func packageResourcePath(_ raw:String) throws -> String {
+            // Manifest URLs may start at the extension's own URL root. Strip one
+            // slash here only; archive names still use the strict path validator.
+            guard !raw.hasPrefix("//") else { throw ExtensionValidationError.invalidResourcePath }
+            return try ExtensionResourcePath.normalized(raw.hasPrefix("/") ? String(raw.dropFirst()) : raw)
+        }
         func resource(_ value:Any?,_ key:String,allowEmpty:Bool = false) throws -> String? {
             guard let raw = try string(value,key) else { return nil }
             if raw.isEmpty && allowEmpty { return nil }
-            let path = try ExtensionResourcePath.normalized(raw); resources.insert(path); return path
+            let path = try packageResourcePath(raw); resources.insert(path); return path
         }
         func icons(_ value:Any?,_ key:String) throws {
             guard let value else { return }
@@ -198,7 +204,7 @@ public struct ExtensionManifest:Equatable,Sendable {
             for path in try strings(sandbox["pages"],"sandbox.pages") { _ = try resource(path,"sandbox.pages") }
         }
         if let exposed = manifest["web_accessible_resources"] {
-            func pattern(_ raw:String) throws { _ = try ExtensionResourcePath.normalized(raw) }
+            func pattern(_ raw:String) throws { _ = try packageResourcePath(raw) }
             if manifestVersion == 2 {
                 for path in try strings(exposed,"web_accessible_resources") { try pattern(path) }
             } else {

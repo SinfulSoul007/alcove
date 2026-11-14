@@ -43,6 +43,24 @@ import BrowserCore
     check(rejected {_ = try ExtensionPackage.prepareGeneratedResources(["manifest.json":manifest,"content.js":Data(),"CONTENT.JS":Data()],stagingRoot:stage)},"Generated maintenance resources reject filesystem-colliding names")
     check(rejected {_ = try ExtensionPackage.prepareGeneratedResources(["manifest.json":manifest,"content.js":Data(),"content.js/child":Data()],stagingRoot:stage)},"Generated maintenance resources reject file/directory prefix collisions")
     try generated.discard()
+    let rootedManifest = Data(#"{"manifest_version":3,"name":"Owned Rooted Resources","version":"1","permissions":["declarativeNetRequest"],"background":{"service_worker":"/worker.js"},"declarative_net_request":{"rule_resources":[{"id":"owned","enabled":true,"path":"/rules.json"}]},"web_accessible_resources":[{"resources":["/assets/*"],"matches":["https://example.com/*"]}]}"#.utf8)
+    var rootedPackage:PreparedExtensionPackage?
+    do {
+        rootedPackage = try ExtensionPackage.prepareGeneratedResources(["manifest.json":rootedManifest,"worker.js":Data("// owned inert worker".utf8),"rules.json":Data("[]".utf8),"assets/style.css":Data("/* owned inert style */".utf8)],stagingRoot:stage)
+    } catch {}
+    check(rootedPackage != nil && Set(rootedPackage?.manifest.resourcePaths ?? []) == ["worker.js","rules.json"],"A package with rooted background, rule and public-resource declarations prepares without executing code")
+    if let rootedPackage {
+        let rootedRecord = BrowserExtensionRecord(name:rootedPackage.manifest.name,version:"1",manifestVersion:3,packageDigest:rootedPackage.digest,source:.folder,requestedPermissions:["declarativeNetRequest"])
+        _ = try ExtensionPackage.publish(rootedPackage,profileID:profile,extensionID:rootedRecord.id,packagesRoot:packages)
+        let inspected = try ExtensionPackage.inspectInstalled(record:rootedRecord,profileID:profile,packagesRoot:packages)
+        check(inspected.manifest.resourcePaths == ["rules.json","worker.js"],"Reinspection retains the same package-root resource identity after publication")
+        try rootedPackage.discard()
+    }
+    let outsideIcon = root.appendingPathComponent("outside-icon.png")
+    try Data("outside icon sentinel".utf8).write(to:outsideIcon)
+    let outsideManifest = try JSONSerialization.data(withJSONObject:["manifest_version":3,"name":"Owned Outside Reference","version":"1","icons":["16":outsideIcon.path]])
+    check(rejected {_ = try ExtensionPackage.prepareGeneratedResources(["manifest.json":outsideManifest],stagingRoot:stage)},"An OS-absolute-looking manifest URL cannot read a file outside its package")
+    check(try Data(contentsOf:outsideIcon) == Data("outside icon sentinel".utf8),"Rejected rooted resource resolution leaves the outside file intact")
     let replacedRoot = try ExtensionPackage.prepare(at:source,stagingRoot:stage)
     let retired = root.appendingPathComponent("retired-stage")
     try manager.moveItem(at:stage,to:retired); try manager.createDirectory(at:stage,withIntermediateDirectories:true)

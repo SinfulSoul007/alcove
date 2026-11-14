@@ -17,6 +17,19 @@ func runExtensionManifestChecks(_ check:(Bool,String)->Void) throws {
     check(Set(parsed.requestedPermissions) == ["storage","activeTab"] && parsed.optionalPermissions == ["tabs"],"Required and optional APIs stay distinct for review")
     check(Set(parsed.hostPermissions) == ["https://example.com/*","https://content.example/*"] && parsed.optionalHostPermissions == ["https://*.example.org/*"],"Static content-script sites participate in permission review")
     check(parsed.actionPopup == "popup.html" && parsed.optionsPage == "options.html" && Set(parsed.resourcePaths) == ["popup.html","icons/16.png","options.html","worker.js","content.js","content.css"],"Manifest entry points retain their package-relative resource references")
+    var rooted = complete
+    rooted["action"] = ["default_popup":"/popup.html","default_icon":["16":"/icons/16.png"]]
+    rooted["options_ui"] = ["page":"/options.html","open_in_tab":true]
+    rooted["background"] = ["service_worker":"/worker.js","type":"module"]
+    rooted["content_scripts"] = [["matches":["https://content.example/*"],"js":["/content.js"],"css":["/content.css"]]]
+    rooted["declarative_net_request"] = ["rule_resources":[["id":"owned","enabled":true,"path":"/rules.json"]]]
+    rooted["web_accessible_resources"] = [["resources":["/assets/*"],"matches":["https://example.com/*"]]]
+    let rootedParsed = try? ExtensionManifest.parse(data(rooted))
+    check(rootedParsed?.actionPopup == "popup.html" && rootedParsed?.optionsPage == "options.html" && Set(rootedParsed?.resourcePaths ?? []) == ["popup.html","icons/16.png","options.html","worker.js","content.js","content.css","rules.json"],"Root-relative extension URLs resolve inside the package for every entry-point kind")
+    for path in ["//host/code.js","/../outside.js","/%2e%2e/outside.js","/js//code.js","/js/./code.js"] {
+        var unsafeRooted = minimal; unsafeRooted["background"] = ["service_worker":path]
+        check(rejects(unsafeRooted),"A rooted resource cannot hide authority, traversal or ambiguous path segments")
+    }
     var legacy = minimal; legacy["manifest_version"] = 2
     legacy["permissions"] = ["storage","https://legacy.example/*"]; legacy["optional_permissions"] = ["https://optional.example/*","tabs"]
     legacy["background"] = ["scripts":["one.js","two.js"],"persistent":false]; legacy["page_action"] = ["default_popup":"legacy.html"]
@@ -43,7 +56,7 @@ func runExtensionManifestChecks(_ check:(Bool,String)->Void) throws {
         ("permissions",[1],"Permission arrays must contain strings"),
         ("action","popup.html","An action must be an object"),
         ("content_scripts",[["matches":["https://example.com/*"],"js":["../escape.js"]]],"Content-script resource traversal is rejected"),
-        ("icons",["16":"/tmp/icon.png"],"Absolute icon paths are rejected"),
+        ("icons",["16":"//host/icon.png"],"Protocol-relative icon URLs are rejected"),
         ("background",["service_worker":"https://example.com/code.js"],"Background code must be inside the package"),
         ("options_page","a%2f..%2fescape.html","Encoded path separators cannot escape the package"),
         ("version","01.2","Ambiguous leading-zero extension versions are rejected"),
