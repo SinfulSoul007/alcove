@@ -33,6 +33,9 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
         func exercise() async throws {
             let normal = BrowserStore(dataRoot:root.appendingPathComponent("normal"),keyProvider:{_ in key})
             defer {normal.shutdown()}
+            let browserWindow=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
+            browserWindow.isReleasedWhenClosed=false;normal.registerExtensionWindow(browserWindow,kind:.primary)
+            defer {normal.unregisterExtensionWindow(kind:.primary);browserWindow.contentView=nil;browserWindow.close()}
             let profile = try normal.createProfile(name:"Owned uninstall account"),controllerID = normal.profiles.first(where:{$0.id == profile})!.extensionControllerID!
             try owned.register(profile);try controllers.register(controllerID)
             let source = root.appendingPathComponent("source")
@@ -51,6 +54,7 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             let seedIDB = "await new Promise((resolve,reject)=>{let r=indexedDB.open('owned-uninstall',1);r.onupgradeneeded=()=>r.result.createObjectStore('items');r.onerror=()=>reject(r.error);r.onsuccess=()=>{let d=r.result,t=d.transaction('items','readwrite');t.objectStore('items').put('private fixture value','key');t.oncomplete=()=>{d.close();resolve(true)};t.onerror=()=>{d.close();reject(t.error)}}});"
             _ = try await js(api,"await browser.storage.local.set({owned:'local'});await browser.storage.sync.set({owned:'sync'});localStorage.setItem('owned-origin','retire');"+seedIDB+"await browser.scripting.registerContentScripts([{id:'owned-installed-script',matches:['http://127.0.0.1/*'],js:['registered.js'],persistAcrossSessions:true,runAt:'document_end'}]);await browser.declarativeNetRequest.updateDynamicRules({addRules:[{id:917,priority:1,action:{type:'block'},condition:{urlFilter:'/owned-uninstall-deny',resourceTypes:['xmlhttprequest']}}]});return true;")
             let websiteID = normal.newTab(url:fixture),website = normal.view(for:websiteID)
+            browserWindow.contentView=website;server.synchronizeBrowserState()
             try await wait{(try? await website.evaluateJavaScript("document.body?.dataset.ownedExtensionPage === 'ready' && document.documentElement.dataset.ownedUninstallScript === 'ran'")) as? Bool == true}
             _ = try await website.evaluateJavaScript("document.getElementById('owned-form').value='keep unrelated live form';document.cookie='owned_uninstall_website=keep; path=/';true")
             var blockingWitness = false,attempts = 0,firstObservation = "",lastObservation = ""
