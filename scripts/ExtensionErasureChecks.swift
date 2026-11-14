@@ -115,6 +115,44 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             _ = try await js(restoredAPI,"await browser.scripting.unregisterContentScripts();let rules=await browser.declarativeNetRequest.getDynamicRules();await browser.declarativeNetRequest.updateDynamicRules({removeRuleIds:rules.map(r=>r.id)});localStorage.clear();for(let database of await indexedDB.databases()){await new Promise((resolve,reject)=>{let r=indexedDB.deleteDatabase(database.name);r.onsuccess=()=>resolve(true);r.onerror=()=>reject(r.error)})}return true;")
             try restoredController.unload(restored);nativeCleanupSafe = true
         }
+        func staticBlockingExercise() async throws {
+            nativeCleanupSafe=false
+            let normal=BrowserStore(dataRoot:root.appendingPathComponent("static-rules-owner"),keyProvider:{_ in key})
+            defer {normal.shutdown()}
+            let profile=try normal.createProfile(name:"Owned backgroundless rules"),controllerID=normal.profiles.first(where:{$0.id==profile})!.extensionControllerID!
+            try owned.register(profile);try controllers.register(controllerID)
+            let source=root.appendingPathComponent("static-rule-source")
+            try manager.createDirectory(at:source,withIntermediateDirectories:true)
+            try Data(#"{"manifest_version":3,"name":"Owned static blocking","description":"No background page","version":"1","permissions":["declarativeNetRequest"],"host_permissions":["http://127.0.0.1/*"],"declarative_net_request":{"rule_resources":[{"id":"owned","enabled":true,"path":"rules.json"}]}}"#.utf8).write(to:source.appendingPathComponent("manifest.json"))
+            try Data(#"[{"id":916,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"/owned-static-deny","resourceTypes":["xmlhttprequest"]}}]"#.utf8).write(to:source.appendingPathComponent("rules.json"))
+            let package=try ExtensionPackage.prepare(at:source,stagingRoot:root.appendingPathComponent("static-staging"))
+            let approval=try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["declarativeNetRequest"],hostPatterns:["http://127.0.0.1/*"],enable:true)
+            let id=try await normal.installExtension(package,approval:approval)
+            try await normal.prepareExtensions(profileID:profile)
+            // Model an enabled static extension loaded while the browser is idle;
+            // neither a background nor an extension API page may prime the UCC.
+            try await Task.sleep(for:.seconds(2))
+            let window=NSWindow(contentRect:NSRect(x:0,y:0,width:800,height:600),styleMask:[.titled,.closable],backing:.buffered,defer:false)
+            window.isReleasedWhenClosed=false;normal.registerExtensionWindow(window,kind:.primary)
+            defer {normal.unregisterExtensionWindow(kind:.primary);window.contentView=nil;window.close()}
+            let pageID=normal.newTab(url:fixture),web=normal.view(for:pageID);window.contentView=web
+            try await wait{(try? await web.evaluateJavaScript("document.body?.dataset.ownedExtensionPage === 'ready'")) as? Bool == true}
+            let script="let blocked=false;try{await fetch('/owned-static-deny',{cache:'no-store'})}catch(error){blocked=true}let control=await fetch('/owned-static-control',{cache:'no-store'});return JSON.stringify({blocked,control:control.ok});"
+            var blocked=false,observation=""
+            let deadline=ContinuousClock.now.advanced(by:.seconds(7))
+            repeat {
+                observation=(try await js(web,script)) as? String ?? ""
+                let value=try JSONSerialization.jsonObject(with:Data(observation.utf8)) as? [String:Any]
+                blocked=value?["blocked"] as? Bool==true && value?["control"] as? Bool==true
+                if blocked {break}
+                try await Task.sleep(for:.milliseconds(50))
+            } while ContinuousClock.now < deadline
+            print("INFO: Backgroundless static blocking observation=\(observation)")
+            check(blocked,"An already-loaded static blocker applies its rules to the first normal website without a background or API page")
+            try normal.beginRemoveExtension(id,profileID:profile);try await normal.finishRemoveExtension(id,profileID:profile)
+            check((try await js(web,"return (await fetch('/owned-static-deny',{cache:'no-store'})).ok;")) as? Bool==true,"Removing a backgroundless blocker releases its actual website request")
+            nativeCleanupSafe=true
+        }
         func privateBlockingExercise() async throws {
             nativeCleanupSafe = false
             let normal=BrowserStore(dataRoot:root.appendingPathComponent("private-rules-owner"),keyProvider:{_ in key})
@@ -536,7 +574,7 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             await inspector.removeData(ofTypes:types,from:remaining)
             nativeCleanupSafe = true
         }
-        do {try await exercise();try await privateBlockingExercise();try await lifetimeExercise(cancelWaiter:true);try await lifetimeExercise(cancelWaiter:false);try await lifetimeExercise(cancelWaiter:false,failFinalSave:true);try await damagedPackageExercise(missing:false);try await damagedPackageExercise(missing:true);try await profileClearExercise();try await profileDeleteExercise();try await retiredNamespaceExercise(removing:false);try await retiredNamespaceExercise(removing:true);try await openPagesExercise();try await retainedPageExercise();try await retainedPageExercise(clearing:true)} catch {check(false,"Owned erasure fixture failed: "+String(describing:error))}
+        do {try await exercise();try await staticBlockingExercise();try await privateBlockingExercise();try await lifetimeExercise(cancelWaiter:true);try await lifetimeExercise(cancelWaiter:false);try await lifetimeExercise(cancelWaiter:false,failFinalSave:true);try await damagedPackageExercise(missing:false);try await damagedPackageExercise(missing:true);try await profileClearExercise();try await profileDeleteExercise();try await retiredNamespaceExercise(removing:false);try await retiredNamespaceExercise(removing:true);try await openPagesExercise();try await retainedPageExercise();try await retainedPageExercise(clearing:true)} catch {check(false,"Owned erasure fixture failed: "+String(describing:error))}
         if nativeCleanupSafe {check(await controllers.cleanup(),"Erasure fixtures clear only their journaled native storage")}
         else {print("RECOVERY_REQUIRED",root.path)}
         check(await owned.cleanup(),"Erasure fixtures remove only their owned named website stores")
