@@ -98,6 +98,11 @@ struct SettingsPanel: View {
                 Button("Site Search…") { store.presentedPanel = .siteSearch }
                 Button("Links…") { store.presentedPanel = .links }.accessibilityIdentifier("link-routing-settings")
                 Button("Website Boosts…") { do { try store.requestBoostEditor() } catch { store.message = error.localizedDescription } }.accessibilityIdentifier("boost-settings")
+                Button("Extensions…") {
+                    let source=NSApp.keyWindow?.sheetParent ?? NSApp.keyWindow
+                    store.presentedPanel=nil
+                    Task {@MainActor in await Task.yield();store.requestExtensionManager(from:source)}
+                }.accessibilityIdentifier("extension-settings")
                 Button("Welcome Tour") { store.presentedPanel = nil; store.onboardingVisible = true }.disabled(store.isPrivate || !store.savingEnabled)
                 Button("Updates…") { store.updatesVisible = true }
             }

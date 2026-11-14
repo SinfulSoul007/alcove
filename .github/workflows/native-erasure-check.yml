@@ -1,19 +1,19 @@
-name: Native extension erasure check
-
+name: Native extension manager and startup verification
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   macos:
     runs-on: macos-15
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Check out source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Verify owned native erasure and request-blocking controls
-        run: caffeinate -is scripts/build.sh extension-erasure-test
+      - name: Verify native review and capability controls
+        run: caffeinate -is scripts/build.sh extension-ui-test
+      - name: Verify real command and tab-menu routing
+        run: caffeinate -is scripts/build.sh extension-command-test
+      - name: Verify protected startup and cold Quick Browse
+        run: caffeinate -is scripts/build.sh startup-test

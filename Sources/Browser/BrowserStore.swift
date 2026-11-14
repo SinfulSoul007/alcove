@@ -108,6 +108,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     let extensionStoreID = UUID()
     var extensionPrivateAttachments:[UUID:PrivateExtensionAttachment] = [:]
     var extensionWindows:[ExtensionWindowKind:ExtensionBrowserWindow] = [:]
+    var extensionManagers:[UUID:ExtensionManagerWindowController] = [:]
     var extensionPrimaryWindowRequested:(()->Void)?
     var vault: MetadataStore?
     @Published var savingEnabled = true
@@ -212,6 +213,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
+        closeExtensionManagers()
         flush(); isShuttingDown = true; privateExtensionReopenJob?.finish(.failure(ExtensionHostError.closed)); cancelAllExtensionNavigations(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()

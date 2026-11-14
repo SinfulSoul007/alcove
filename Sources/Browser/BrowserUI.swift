@@ -199,6 +199,7 @@ struct BrowserUI: View {
                 mini("arrow.left", "Back") { store.currentView?.goBack() }.disabled(store.currentView?.canGoBack != true)
                 mini("arrow.right", "Forward") { store.currentView?.goForward() }.disabled(store.currentView?.canGoForward != true)
                 mini(store.currentView?.isLoading == true ? "xmark" : "arrow.clockwise", "Reload / Stop") { if store.currentView?.isLoading == true { store.currentView?.stopLoading() } else { store.currentView?.reload() } }
+                ExtensionControls(store:store,web:store.primaryPeekView ?? store.currentView).frame(width:22,height:26)
             }.padding(.horizontal, 10).frame(height: chrome.height)
                 .background(NativeChromeReader(chrome: chrome))
             Button { store.showCommand() } label: {
@@ -228,6 +229,7 @@ struct BrowserUI: View {
                     Button("New Space…") { store.requestNewSpace() }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(store.activeProfileID)))
                     Button("Customize…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata)
                     Button("Boost This Site…") { do { try store.requestBoostEditor(for: store.primaryPeekView ?? store.currentView) } catch { store.message = error.localizedDescription } }
+                    Button("Extensions…") {store.requestExtensionManager()}
                     Menu("Theme") { ForEach(SidebarTheme.allCases) { choice in Button(choice.name) { withAnimation(motion) { store.setTheme(choice) } } } }.disabled(!store.canModifyLocalMetadata)
                     Button("Split View") { store.toggleSplit() }
                     Button("Bookmark Page") { store.addBookmark() }.disabled(store.isPrivate || !store.savingEnabled || store.profileUnavailable(store.activeProfileID))
@@ -311,6 +313,7 @@ struct SidebarTabRow: View {
     let appearance: AppearanceSettings
     let motion: Animation?
     @State private var hovered = false
+    @StateObject private var extensionMenuAnchor=ExtensionTabMenuAnchor()
     var body: some View {
         HStack(spacing: 7) {
             Button { store.select(tab.id) } label: {
@@ -320,6 +323,7 @@ struct SidebarTabRow: View {
         }.padding(.horizontal, 10).frame(height: appearance.rowHeight).background(store.focusedID == tab.id ? theme.selected : (hovered ? theme.tile : .clear), in: RoundedRectangle(cornerRadius: appearance.cornerRadius)).onHover { hovered = $0 }.animation(motion, value: hovered)
         .onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }
         .onDrop(of: [.text], delegate: TabDrop(store: store, section: tab.pinned ? .pinned : .today, before: tab.id, folder: tab.folder))
+        .background(ExtensionTabAnchorReader(anchor:extensionMenuAnchor))
         .contextMenu {
             Button(tab.pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id) }.disabled(!store.canModifyLocalMetadata)
             Button("Add to Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata)
@@ -331,6 +335,7 @@ struct SidebarTabRow: View {
                         .disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(s.effectiveProfileID)))
                 }
             }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress)
+            if store.extensionHosting != nil {Button("Extension Actions…") {extensionMenuAnchor.show(store:store,tabID:tab.id)}}
             Divider()
             Button(tab.pinned ? "Remove from Sidebar" : "Close Tab") { if tab.pinned { store.removeFromSidebar(tab.id) } else { store.close(tab.id) } }.disabled(tab.pinned && !store.canModifyLocalMetadata)
         }

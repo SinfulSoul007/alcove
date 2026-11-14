@@ -234,6 +234,7 @@ struct QuickBrowseUI: View {
                 store.performQuickNavigation(id, action: foregroundWeb?.isLoading == true ? .stop : .reload)
             }
             addressField
+            ExtensionControls(store:store,web:foregroundWeb,profileID:store.quickProfileID(id)).frame(width:25,height:28)
             if !compact {
                 Button { profilePickerVisible.toggle() } label: {
                     HStack(spacing: 5) {
@@ -265,6 +266,7 @@ struct QuickBrowseUI: View {
                 Divider()
                 Button("Settings…", action: onOpenSettings)
                 Button("Boost This Site…", action: onOpenBoosts)
+                Button("Extensions…") {store.requestExtensionManager(profileID:store.quickProfileID(id))}
                 Button("Close Quick Browse", action: onClose)
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 14, weight: .medium)).frame(width: 25, height: 30)
