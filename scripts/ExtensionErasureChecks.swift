@@ -137,6 +137,9 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
                 var legacy=normal.makeDocument(),library=legacy.library(for:profile),record=normal.extensionRecords(profileID:profile).first!
                 record.grants?.allowPrivate=true;library.extensions=[record];legacy.setLibrary(library,for:profile)
                 try normal.commitProfileDocument(legacy)
+                try await normal.prepareExtensions(profileID:profile)
+                let legacyContext=(normal.extensionHosting as! NativeBrowserExtensionHost).profiles[profile]!.contexts[id]!
+                check(!legacyContext.hasAccessToPrivateData && normal.extensionRecords(profileID:profile).first?.grants?.allowPrivate==true,"An affected engine keeps saved approval but withholds unsupported native private access")
                 let ciphertext=try Data(contentsOf:normal.sessionURL)
                 var privateKeys=0
                 let privateRoot=root.appendingPathComponent("old-engine-private")
@@ -300,13 +303,26 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             check(remaining.allSatisfy{$0.errors.isEmpty && $0.totalSizeInBytes == 0} && noDOMData == true && normal.extensionRecords(profileID:profile).isEmpty,"Damaged-package removal erases the actual native/origin data, keeps changed code unexecuted and finalizes its saved record")
             nativeCleanupSafe = true
         }
+        func privateErasurePackage(staging:String) throws -> PreparedExtensionPackage {
+            // These cases exercise native storage erasure and private form retention,
+            // without depending on private request blocking being available.
+            let source=root.appendingPathComponent("private-erasure-source")
+            if !manager.fileExists(atPath:source.path) {
+                try manager.copyItem(at:root.appendingPathComponent("source"),to:source)
+                let manifestURL=source.appendingPathComponent("manifest.json")
+                var manifest=try JSONSerialization.jsonObject(with:Data(contentsOf:manifestURL)) as! [String:Any]
+                manifest["permissions"]=["storage","scripting"]
+                try JSONSerialization.data(withJSONObject:manifest).write(to:manifestURL)
+            }
+            return try ExtensionPackage.prepare(at:source,stagingRoot:root.appendingPathComponent(staging))
+        }
         func profileClearExercise() async throws {
             nativeCleanupSafe = false
             let normal = BrowserStore(dataRoot:root.appendingPathComponent("profile-clear"),keyProvider:{_ in key}),owner = BrowserWindowOwner(store:normal),primary = try owner.acquirePrimary(),profile = try normal.createProfile(name:"Owned complete clear")
             defer {owner.release(primary);normal.shutdown()}
             let controllerID = normal.profiles.first(where:{$0.id == profile})!.extensionControllerID!
             try owned.register(profile);try controllers.register(controllerID)
-            let source = root.appendingPathComponent("source"),package = try ExtensionPackage.prepare(at:source,stagingRoot:root.appendingPathComponent("clear-staging")),approval = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],allowPrivate:true,enable:true)
+            let source = root.appendingPathComponent("source"),package = try privateErasurePackage(staging:"clear-staging"),approval = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting"],allowPrivate:true,enable:true)
             let id = try await normal.installExtension(package,approval:approval);try await normal.prepareExtensions(profileID:profile)
             let record = normal.extensionRecords(profileID:profile).first!,context = (normal.extensionHosting as! NativeBrowserExtensionHost).profiles[profile]!.contexts[id]!,api = try await page(context),dataStore = normal.websiteDataStore(forProfile:profile)
             _ = try await js(api,"await browser.storage.local.set({owned:'clear this account'});await browser.storage.sync.set({owned:'clear sync'});localStorage.setItem('owned-profile-origin','clear');return true;")
@@ -491,7 +507,7 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             defer {owner.release(primary);normal.shutdown()}
             let oldID = normal.profiles.first(where:{$0.id == profile})!.extensionControllerID!
             try owned.register(profile);try controllers.register(oldID)
-            let package = try ExtensionPackage.prepare(at:root.appendingPathComponent("source"),stagingRoot:root.appendingPathComponent("retired-staging")),approval = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],allowPrivate:true,enable:true)
+            let package = try privateErasurePackage(staging:"retired-staging"),approval = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting"],allowPrivate:true,enable:true)
             let id = try await normal.installExtension(package,approval:approval);try await normal.prepareExtensions(profileID:profile)
             let record = normal.extensionRecords(profileID:profile).first!,context = (normal.extensionHosting as! NativeBrowserExtensionHost).profiles[profile]!.contexts[id]!,api = try await page(context)
             _ = try await js(api,"await browser.storage.local.set({retired:'erase old controller'});await browser.storage.sync.set({retired:'erase old sync'});return true;")
