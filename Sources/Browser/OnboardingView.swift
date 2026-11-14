@@ -17,6 +17,7 @@ struct OnboardingView: View {
     @State private var appeared = false
     @State private var drawing = false
     @State private var automaticChecks = false
+    @State private var introVisible = true
     private var motion: Animation? { reduceMotion || !store.appearance.animationsEnabled ? nil : .spring(response: 0.5, dampingFraction: 0.86) }
     var body: some View {
         GeometryReader { geometry in
@@ -48,6 +49,12 @@ struct OnboardingView: View {
                 }
                 .padding(32).frame(width: min(900, geometry.size.width - 64), height: geometry.size.height - 80)
                 .opacity(appeared ? 1 : 0).offset(y: appeared || reduceMotion ? 0 : 16)
+                .allowsHitTesting(!introVisible).accessibilityHidden(introVisible).disabled(introVisible)
+                if introVisible {
+                    LaunchIntroduction(animate: !reduceMotion && store.appearance.animationsEnabled) {
+                        withAnimation(motion) { introVisible = false }
+                    }.transition(.opacity).zIndex(1)
+                }
             }.foregroundStyle(store.activeTheme.ink)
                 .onAppear {
                     automaticChecks = store.preferences.automaticUpdateChecks ?? false
