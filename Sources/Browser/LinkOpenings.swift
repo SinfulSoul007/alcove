@@ -17,7 +17,8 @@ extension BrowserStore {
     func publishPreservedPeek(_ preserved: PreservedPrimaryPeek?) {
         guard let preserved else { return }
         peekPages.removeValue(forKey:.primary); preserved.page.observations = []
-        preserved.page.web.removeFromSuperview(); registerView(preserved.page.web,for:preserved.tabID,profile:preserved.page.profileID)
+        transferDocumentBindings(for: preserved.page.web, to: self)
+        registerView(preserved.page.web, for: preserved.tabID, profile: preserved.page.profileID)
     }
     func linkSpaceIndex(_ destination: ResolvedLinkDestination, in candidate: inout BrowserDocument) throws -> Int {
         switch destination {
@@ -79,7 +80,17 @@ extension BrowserStore {
               current.decision == request.decision, let page = peekPages[request.context] else { throw LinkRoutingError.contextChanged }
         let targetProfile = current.decision.destination.profileID, crossing = targetProfile != page.profileID
         guard !crossing || allowProfileChange else { throw QuickBrowseError.consentRequired }
-        var candidate = makeDocument()
+        let presenter: BrowserStore
+        switch current.decision.destination {
+        case .quick: presenter = metadataWriter
+        case .space, .newSpace:
+            presenter = request.context == .primary ? self : (windowGroup?.focusedPrimary ?? self)
+        }
+        if !crossing, presenter !== self,
+           !presenter.metadataWriter.matchesBoostWebsiteDataStore(page.web, profileID: targetProfile) {
+            throw LinkRoutingError.contextChanged
+        }
+        var candidate = presenter.makeDocument()
         let tab = BrowserCore.Tab(title:page.web.title ?? current.url.host ?? "Page",url:current.url.absoluteString)
         let preserving: PreservedPrimaryPeek?, discard: [UUID]
         if case .quick(let owner) = current.decision.destination {
@@ -87,23 +98,25 @@ extension BrowserStore {
             records.quickPages = (records.quickPages ?? []) + [QuickPage(tab:tab,intendedSpaceID:page.spaceID)]
             candidate.setLibrary(records,for:owner); preserving = nil; discard = []
         } else {
-            preserving = try preservePrimaryPeek(in:&candidate,excluding:request.context)
-            let index = try linkSpaceIndex(current.decision.destination,in:&candidate); discard = insertLinkTab(tab,at:index,in:&candidate)
+            preserving = try presenter.preservePrimaryPeek(in: &candidate, excluding: request.context)
+            let index = try presenter.linkSpaceIndex(current.decision.destination, in: &candidate)
+            discard = presenter.insertLinkTab(tab, at: index, in: &candidate)
         }
         if !isPrivate {
             var records = candidate.library(for:targetProfile); records.record(title:tab.title,url:tab.url); candidate.setLibrary(records,for:targetProfile)
         }
-        try commitQuickDocument(candidate,discarding:discard,beforePublish:{
-            self.publishPreservedPeek(preserving)
+        try presenter.commitQuickDocument(candidate, discarding: discard, beforePublish: {
+            presenter.publishPreservedPeek(preserving)
             if crossing { self.closePeek(in:request.context) }
             else {
                 self.peekPages.removeValue(forKey:request.context); page.observations = []
-                page.web.removeFromSuperview(); self.registerView(page.web,for:tab.id,profile:targetProfile)
+                self.transferDocumentBindings(for: page.web, to: presenter)
+                presenter.registerView(page.web, for: tab.id, profile: targetProfile)
             }
-            if case .quick = current.decision.destination {} else { self.splitID = nil; self.activePaneID = nil }
+            if case .quick = current.decision.destination {} else { presenter.splitID = nil; presenter.activePaneID = nil }
         })
-        if !crossing { loadSiteIcon(page.web) }
-        if case .quick = current.decision.destination { startArchiveTimer(); quickPageRequested?(tab.id) }
+        if !crossing { presenter.loadSiteIcon(page.web) }
+        if case .quick = current.decision.destination { presenter.startArchiveTimer(); presenter.quickPageRequested?(tab.id) }
         return tab.id
     }
 }

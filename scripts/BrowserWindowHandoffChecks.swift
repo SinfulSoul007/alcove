@@ -126,6 +126,38 @@ struct BrowserWindowHandoffChecks {
             compactPeek.navigationDelegate === child && child.documentIdentity(for: compactPeek) === peekIdentity && previewSurvived,
               "Expanding Quick Browse moves its exact Peek and retains its separate draft")
 
+        let secondaryPeekURL = URL(string: "http://127.0.0.1:9/secondary-peek-compact")!
+        child.openPeek(secondaryPeekURL, from: compactWeb)
+        guard let secondaryPeek = child.primaryPeekView else { throw BrowserWindowHandoffTestError.missingWindow }
+        try await loadFixture(secondaryPeek, token: "source-window-preview", baseURL: secondaryPeekURL)
+        let secondaryDocument = child.documentIdentity(for: secondaryPeek)
+        try child.saveLinkRule(LinkRule(pattern: "/secondary-peek-compact", destination: .quickBrowse))
+        let routedCompact = try child.promotePeek(in: .primary)
+        let secondaryDraft = try await hasFixture(secondaryPeek, token: "source-window-preview")
+        check(root.quickPage(routedCompact) != nil && root.views[routedCompact] === secondaryPeek && child.views[routedCompact] == nil &&
+                root.documentIdentity(for: secondaryPeek) === secondaryDocument && secondaryDraft,
+              "A secondary window's Peek becomes the actual Quick Browse document with its draft intact")
+
+        let parent = try root.openQuickPage(url: URL(string: "http://127.0.0.1:9/quick-peek-parent"))
+        let parentWeb = root.view(for: parent)
+        let compactPromotionURL = URL(string: "http://127.0.0.1:9/quick-peek-expansion")!
+        root.openPeek(compactPromotionURL, from: parentWeb)
+        guard let routedPeek = root.quickPeekView(parent) else { throw BrowserWindowHandoffTestError.missingWindow }
+        try await loadFixture(routedPeek, token: "compact-to-primary", baseURL: compactPromotionURL)
+        let routedDocument = root.documentIdentity(for: routedPeek)
+        let otherPreviewURL = URL(string: "http://127.0.0.1:9/keep-secondary-preview")!
+        child.openPeek(otherPreviewURL, from: compactWeb)
+        guard let unrelatedPeek = child.primaryPeekView else { throw BrowserWindowHandoffTestError.missingWindow }
+        try await loadFixture(unrelatedPeek, token: "separate-preview", baseURL: otherPreviewURL)
+        let routedMain = try root.promotePeek(in: .quick(parent), to: child.space.id)
+        let mainDraft = try await hasFixture(routedPeek, token: "compact-to-primary")
+        check(child.selectedID == routedMain && child.views[routedMain] === routedPeek && root.views[routedMain] == nil &&
+                child.documentIdentity(for: routedPeek) === routedDocument && mainDraft,
+              "A Quick Browse Peek opens as the original document in the surviving normal window")
+        let otherDraft = try await hasFixture(unrelatedPeek, token: "separate-preview")
+        check(child.primaryPeekView == nil && child.views.values.contains { $0 === unrelatedPeek } && otherDraft,
+              "Expanding a Quick Browse Peek also preserves the destination window's existing preview as a tab")
+
         let operations = try await checkProfileOperations(owned: owned)
         for operation in operations { check(operation.0, operation.1) }
         if !(await owned.cleanup()) { failed += 1 }
@@ -180,9 +212,9 @@ struct BrowserWindowHandoffChecks {
     }
 
     @MainActor
-    private static func loadFixture(_ web: WKWebView, token: String) async throws {
+    private static func loadFixture(_ web: WKWebView, token: String, baseURL: URL? = nil) async throws {
         web.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
-        web.loadHTMLString("<input id='draft'><main style='height:5000px'></main>", baseURL: nil)
+        web.loadHTMLString("<input id='draft'><main style='height:5000px'></main>", baseURL: baseURL)
         for _ in 0..<500 {
             let ready = try? await web.evaluateJavaScript("document.getElementById('draft') !== null")
             if ready as? Bool == true {
