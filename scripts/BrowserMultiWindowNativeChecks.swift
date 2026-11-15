@@ -59,10 +59,36 @@ struct BrowserMultiWindowNativeChecks {
             application.fixtureKeyWindow = second
             delegate.sidebar()
             check(!store.sidebarVisible && root.sidebarVisible, "The native sidebar command affects the invoking window only")
+            let appMenu = application.mainMenu?.item(withTitle: "Alcove")?.submenu
+            guard let profiles = appMenu?.items.first(where: { $0.action == #selector(AppDelegate.manageProfiles) }),
+                  let action = profiles.action else { fatalError("Missing native Manage Profiles command") }
+            let showedProfiles = application.sendAction(action, to: profiles.target, from: profiles)
+            check(showedProfiles && store.profilesVisible && !root.profilesVisible,
+                  "Manage Profiles opens in the focused secondary normal window")
+            store.profilesVisible = false; root.profilesVisible = false
             delegate.closeTab()
             check(delegate.windows[second] == nil && delegate.windows[first] === root && !owner.isClosed,
                   "Command-W on an empty normal window closes that window and preserves the other")
         }
+
+        application.fixtureKeyWindow = first
+        _ = application.sendAction(newWindowAction, to: newWindow.target, from: newWindow)
+        if let lastWindow = delegate.primaryOwners.keys.first(where: { $0 !== first }), let store = delegate.windows[lastWindow] {
+            let otherTab = root.newTab(url: URL(string: "about:blank#first"))
+            let localTab = store.newTab(url: URL(string: "about:blank#second"))
+            let otherDocument = root.view(for: otherTab)
+            application.fixtureKeyWindow = lastWindow
+            store.session.spaces[store.spaceIndex].selected = otherTab
+            delegate.closeTab()
+            check(root.views[otherTab] === otherDocument && store.selectedID == localTab,
+                  "Command-W on a remote placeholder leaves its tab alone and returns to a local tab")
+            delegate.closeTab()
+            check(delegate.windows[lastWindow] == nil && delegate.windows[first] === root && root.tab(localTab) == nil &&
+                    root.tab(otherTab) != nil && root.views[otherTab] === otherDocument,
+                  "Command-W closes the last local tab and its window while preserving another window's document")
+            if delegate.windows[lastWindow] != nil { lastWindow.close() }
+            root.close(otherTab)
+        } else { check(false, "Command-W local-tab fixture opens its second window") }
 
         application.fixtureKeyWindow = first
         _ = application.sendAction(newWindowAction, to: newWindow.target, from: newWindow)
@@ -76,6 +102,11 @@ struct BrowserMultiWindowNativeChecks {
             delegate.application(application, open: [url])
             check(store.activeProfileID == profile && store.selectedTab?.url == url.absoluteString && root.selectedID == original,
                   "A macOS link opens in the focused normal window and keeps the other window's selection")
+            first.close()
+            delegate.manageProfiles()
+            check(store.profilesVisible && !root.profilesVisible && delegate.windows[target] === store,
+                  "Manage Profiles stays reachable after the writer's original window has closed")
+            store.profilesVisible = false
         }
 
         let recoveryRoot = dataRoot.appendingPathComponent("restore")

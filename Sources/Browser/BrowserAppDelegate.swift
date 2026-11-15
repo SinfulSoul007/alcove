@@ -573,8 +573,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if store.awaitingInitialMetadata {window.performClose(nil);return}
         if store.presentedPanel != nil {store.presentedPanel = nil;return}
         if store.primaryPeekView != nil {store.closePrimaryPeek();return}
-        if let id = store.focusedID {store.close(id)}
-        if !store.space.tabs.contains(where:{!$0.pinned && !$0.url.isEmpty}) {window.performClose(nil)}
+        func isLocal(_ id: UUID) -> Bool {
+            (store.windowGroup?.presentation(tabID: id, in: store) ?? .owned) == .owned
+        }
+        if let id = store.focusedID, isLocal(id) { store.close(id) }
+        guard let next = store.space.tabs.first(where: { !$0.pinned && !$0.url.isEmpty && isLocal($0.id) }) else {
+            window.performClose(nil)
+            return
+        }
+        if store.focusedID.map(isLocal) != true { store.select(next.id) }
     }
     @objc func reopen() { guard activeQuick == nil, let store = activeStore, store.canModifyLocalMetadata, !store.profileUnavailable(store.activeProfileID) else { return }; store.reopenClosed() }
     @objc func reload() { activeWebView?.reload() }
@@ -618,8 +625,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func customize() { primaryForActive().appearanceVisible = true }
     @objc func manageProfiles() {
-        openWindow(isPrivate: false)
-        guard let store = normalOwner?.store else { return }
+        let owner = ensureNormalOwner()
+        openPrimary(owner)
+        guard let window = preferredPrimary(of: owner), let store = windows[window] else { return }
         store.commandVisible = false; store.onboardingVisible = false; store.profilesVisible = true
     }
     @objc func welcome() {

@@ -21,7 +21,18 @@ final class BrowserWindowGroup {
 
     private(set) weak var root: BrowserStore?
     private(set) var revision = UUID()
-    private var workspace: BrowserWindowWorkspace
+    private var workspace: BrowserWindowWorkspace {
+        didSet {
+            for tabID in Array(extensionPresentationIDs.keys) {
+                let previous = oldValue.assignedWindow(for: tabID)
+                let current = workspace.assignedWindow(for: tabID)
+                if previous != current || (current == nil && oldValue.focusedWindowID != workspace.focusedWindowID) {
+                    extensionPresentationIDs.removeValue(forKey: tabID)
+                }
+            }
+        }
+    }
+    private var extensionPresentationIDs: [UUID: NSUUID] = [:]
     private var members: [UUID: Member] = [:]
     private var frames: [UUID: BrowserWindowFrame] = [:]
     private var broadcasting = false
@@ -51,6 +62,14 @@ final class BrowserWindowGroup {
         if let live = liveStore(forTab: tabID), containsPrimary(live) { return live }
         if let id = workspace.assignedWindow(for: tabID) { return members[id]?.store }
         return focusedPrimary
+    }
+
+    /// An unloaded tab can change presenters twice before WebKit observes either move.
+    func extensionPresentationIdentity(for tabID: UUID) -> NSUUID {
+        if let identity = extensionPresentationIDs[tabID] { return identity }
+        let identity = NSUUID()
+        extensionPresentationIDs[tabID] = identity
+        return identity
     }
 
     func openPrimary(copying source: BrowserStore?, focus: Bool = true, claimSelection: Bool = true) throws -> BrowserStore {

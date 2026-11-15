@@ -5,6 +5,12 @@ import WebKit
 
 enum ExtensionWindowTestError: Error { case missingFixture, missingRuntime, pageDidNotLoad }
 
+@MainActor
+private final class OwnedExtensionMenuTarget: NSObject {
+    private(set) var selections = 0
+    @objc func choose(_ item: NSMenuItem) { selections += 1 }
+}
+
 @main
 struct ExtensionMultiWindowChecks {
     @MainActor
@@ -93,14 +99,42 @@ struct ExtensionMultiWindowChecks {
         left.contentView = pageA
         let previousAdapter = native.tabsByView[ObjectIdentifier(pageA)]
         let previousSource = previousAdapter.flatMap { NativeExtensionSource(host: native, controller: controller, context: context, tab: $0) }
+        guard let previousSource else { throw ExtensionWindowTestError.missingRuntime }
+        let target = OwnedExtensionMenuTarget()
+        let original = NSMenuItem(title: "Owned action", action: #selector(OwnedExtensionMenuTarget.choose(_:)), keyEquivalent: "")
+        original.target = target
+        var budget = 1
+        let guarded = NativeExtensionGuardedMenuItem(original, source: previousSource, expires: .now.advanced(by: .seconds(90)), depth: 0, budget: &budget)
         child.select(tabA)
         right.contentView = pageA
         native.synchronizeBrowserState()
         let moved = native.tabsByView[ObjectIdentifier(pageA)]
         check(moved != nil && moved === previousAdapter && moved?.browserWindow?.store === child,
               "Tab handoff preserves the native extension tab identity and changes its window")
-        check(previousSource != nil && previousSource?.current == false,
+        check(!previousSource.current,
               "An old window's extension action loses its document authorization on handoff")
+        root.select(tabA)
+        left.contentView = pageA
+        native.synchronizeBrowserState()
+        if let action = guarded.action { _ = NSApp.sendAction(action, to: guarded.target, from: guarded) }
+        check(!previousSource.current && !guarded.validateMenuItem(guarded) && target.selections == 0,
+              "A retained extension menu item stays revoked after its original document returns")
+        child.select(tabA)
+        right.contentView = pageA
+        native.synchronizeBrowserState()
+
+        let unloadedID = root.newTab(url: fixture.appendingPathComponent("unloaded-handoff"), activate: false)
+        native.synchronizeBrowserState()
+        let unloadedKey = NativeExtensionTabKey(storeID: root.extensionStoreID, profileID: profile, id: unloadedID, isPeek: false)
+        guard let unloaded = native.nativeTabs[unloadedKey], unloaded.web == nil,
+              let unloadedSource = NativeExtensionSource(host: native, controller: controller, context: context, tab: unloaded, requiresMountedView: false),
+              unloadedSource.current, let group = root.windowGroup else { throw ExtensionWindowTestError.missingRuntime }
+        let changedOwner = group.claimPresentation(tabID: unloadedID, in: child)
+        let returnedOwner = group.claimPresentation(tabID: unloadedID, in: root)
+        native.synchronizeBrowserState()
+        check(changedOwner && returnedOwner && !unloadedSource.current,
+              "An unloaded tab's menu source stays revoked even when both logical moves happen before synchronization")
+        root.close(unloadedID)
 
         let app = AppDelegate()
         let previousDelegate = NSApp.delegate

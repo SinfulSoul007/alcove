@@ -8,6 +8,7 @@ import BrowserCore
     weak var tab:NativeExtensionTab?,client:BrowserStore?,web:WKWebView?,window:NSWindow?
     let key:NativeExtensionTabKey,windowID:UUID,document:NSUUID?,record:BrowserExtensionRecord,epoch:UUID
     private let requiresMountedView:Bool,destination:String?
+    private let presentation:NSUUID?
     private var closed = false,closing:NSObjectProtocol?
     init?(host:NativeBrowserExtensionHost,controller:WKWebExtensionController,context:WKWebExtensionContext,tab:NativeExtensionTab,requiresMountedView:Bool = true) {
         guard let client = tab.live(context),let owner = host.owner,
@@ -23,6 +24,7 @@ import BrowserCore
         self.host = host;self.context = context;self.controller = controller;self.tab = tab
         self.client = client;self.web = web;self.window = window;self.record = record
         key = tab.key;windowID = browserWindow.key.windowID;document = web.map{client.documentIdentity(for:$0)}
+        presentation = web.map { client.presentationIdentity(for: $0) } ?? client.windowGroup?.extensionPresentationIdentity(for: tab.key.id)
         self.requiresMountedView = requiresMountedView;destination = client.tab(tab.key.id)?.url
         epoch = owner.extensionReviewEpoch(for:key.profileID)
         closing = NotificationCenter.default.addObserver(forName:NSWindow.willCloseNotification,object:window,queue:.main){ [weak self] _ in
@@ -38,8 +40,10 @@ import BrowserCore
               owner.extensionReviewEpoch(for:key.profileID) == epoch,
               owner.extensionRecords(profileID:key.profileID).first(where:{$0.id == record.id}) == record else {return false}
         if let document {
-            guard let web,client.documentIdentity(for:web) === document,(!requiresMountedView || web.window === window) else {return false}
-        } else if web != nil || requiresMountedView {return false}
+            guard let web, client.documentIdentity(for: web) === document,
+                  client.presentationIdentity(for: web) === presentation, !requiresMountedView || web.window === window else {return false}
+        } else if web != nil || requiresMountedView ||
+                    client.windowGroup?.extensionPresentationIdentity(for: key.id) !== presentation {return false}
         return requiresMountedView || client.tab(key.id)?.url == destination
     }
 }
