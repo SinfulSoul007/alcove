@@ -101,6 +101,43 @@ struct ExtensionMultiWindowChecks {
               "Tab handoff preserves the native extension tab identity and changes its window")
         check(previousSource != nil && previousSource?.current == false,
               "An old window's extension action loses its document authorization on handoff")
+
+        let app = AppDelegate()
+        let previousDelegate = NSApp.delegate
+        NSApp.delegate = app
+        app.normalOwner = owner
+        defer {
+            for window in Array(app.windows.keys) { window.close() }
+            NSApp.delegate = previousDelegate
+        }
+        root.windowGroup?.focusPrimary(child)
+        let requestA = fixture.appending(queryItems: [URLQueryItem(name: "window-create", value: "first")])
+        let requestB = fixture.appending(queryItems: [URLQueryItem(name: "window-create", value: "second")])
+        let created = try await createWindow(options, arguments: ["url": [requestA.absoluteString, requestB.absoluteString], "focused": false])
+        let newStore = app.windows.values.first
+        let windowID = created["id"] as? NSNumber
+        let newTabs = try await query(options).filter { ($0["windowId"] as? NSNumber) == windowID }
+        check(windowID != nil && newStore?.activeProfileID == profile && app.windows.count == 1 &&
+              Set(newTabs.compactMap { $0["url"] as? String }) == Set([requestA.absoluteString, requestB.absoluteString]),
+              "The real windows.create API opens both URLs in one new window under the requesting profile")
+        check(root.windowGroup?.focusedPrimary === child && child.views[tabA] === pageA,
+              "A background extension window leaves the current window and live tab alone")
+
+        _ = try await pageA.evaluateJavaScript("document.getElementById('owned-form').value = 'keep this window draft'; true")
+        let oldTabID = a.first?["id"] as? NSNumber
+        let movedWindow = try await createWindow(options, arguments: ["tabId": oldTabID ?? -1, "focused": false])
+        let movedWindowID = movedWindow["id"] as? NSNumber
+        let reported = try await query(options).first { ($0["id"] as? NSNumber) == oldTabID }
+        let retained = (try await pageA.evaluateJavaScript("document.getElementById('owned-form').value === 'keep this window draft'")) as? Bool == true
+        check(movedWindowID != nil && (reported?["windowId"] as? NSNumber) == movedWindowID && retained &&
+              app.windows.values.contains { $0.views[tabA] === pageA },
+              "windows.create with an existing tab keeps its native ID and unsaved form")
+
+        let knownWindowCount = app.windows.count
+        let blocked = try await createWindow(options, arguments: ["url": "file:///alcove-owned-fixture.html", "focused": false])
+        let privateWindow = try await createWindow(options, arguments: ["incognito": true, "focused": false])
+        check(blocked["id"] == nil && privateWindow["id"] == nil && app.windows.count == knownWindowCount,
+              "Unauthorized file and private window requests leave no new window behind")
         root.unregisterExtensionWindow(kind: .primary)
         owner.release(first.lease)
         check(native.authorized(context, profileID: profile, client: child) && !owner.isClosed,
@@ -146,5 +183,18 @@ struct ExtensionMultiWindowChecks {
             throw ExtensionWindowTestError.missingRuntime
         }
         return tabs
+    }
+
+    @MainActor
+    private static func createWindow(_ web: WKWebView, arguments: [String: Any]) async throws -> [String: Any] {
+        let body = """
+            try { return JSON.stringify(await browser.windows.create(settings)); }
+            catch (error) { return JSON.stringify({ error: String(error) }); }
+            """
+        let result = try await web.callAsyncJavaScript(body, arguments: ["settings": arguments], in: nil, contentWorld: .page)
+        guard let json = result as? String, let data = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any] else {
+            throw ExtensionWindowTestError.missingRuntime
+        }
+        return data
     }
 }

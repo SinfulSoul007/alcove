@@ -147,7 +147,33 @@ import BrowserCore
         webExtensionController(controller,openWindowsFor:context).first {($0 as? NativeExtensionWindow)?.isFocusedInClient == true}
     }
     func webExtensionController(_ controller:WKWebExtensionController,openNewWindowUsing configuration:WKWebExtension.WindowConfiguration,for context:WKWebExtensionContext,completionHandler:@escaping((any WKWebExtensionWindow)?,Error?)->Void) {
-        completionHandler(nil,ExtensionHostError.native("Creating additional normal windows through extensions is not available yet."))
+        guard let id = profileID(for: context), let owner, authorized(context, profileID: id, client: owner),
+              profiles[id]?.controller === controller else { completionHandler(nil, ExtensionHostError.stale); return }
+        guard !configuration.shouldBePrivate, !hasApprovedPrivateClient(context, profileID: id) else {
+            completionHandler(nil, ExtensionHostError.native("Open a normal window directly when private browsing is involved.")); return
+        }
+        guard configuration.windowType == .normal, let app = NSApp.delegate as? AppDelegate,
+              configuration.tabURLs.allSatisfy({ permitsNavigation($0, context: context, profileID: id) }) else {
+            completionHandler(nil, ExtensionHostError.native("The requested window type or URL is unavailable.")); return
+        }
+        var sources: [UUID] = []
+        for requested in configuration.tabs {
+            guard let tab = requested as? NativeExtensionTab, tab.host === self, nativeTabs[tab.key] === tab,
+                  !tab.key.isPeek, tab.key.profileID == id, let store = tab.live(context), !store.isPrivate,
+                  tab.browserWindow?.reference.kind == .primary, store.quickPage(tab.key.id) == nil,
+                  store.session.spaces.contains(where: { space in space.effectiveProfileID == id && space.tabs.contains { $0.id == tab.key.id } }),
+                  !sources.contains(tab.key.id) else { completionHandler(nil, ExtensionHostError.stale); return }
+            sources.append(tab.key.id)
+        }
+        do {
+            let store = try app.openExtensionWindow(for: owner, profileID: id, configuration: configuration, moving: sources)
+            synchronizeBrowserState()
+            guard let reference = store.extensionWindows[.primary],
+                  let window = nativeWindows[NativeExtensionWindowKey(storeID: store.extensionStoreID, profileID: id, windowID: reference.id)] else {
+                completionHandler(nil, ExtensionHostError.stale); return
+            }
+            completionHandler(window, nil)
+        } catch { completionHandler(nil, error) }
     }
     func webExtensionController(_ controller:WKWebExtensionController,openNewTabUsing configuration:WKWebExtension.TabConfiguration,for context:WKWebExtensionContext,completionHandler:@escaping((any WKWebExtensionTab)?,Error?)->Void) {
         guard let id = profileID(for:context),let owner,authorized(context,profileID:id,client:owner),profiles[id]?.controller === controller,permitsNavigation(configuration.url,context:context,profileID:id) else {completionHandler(nil,ExtensionHostError.stale);return}

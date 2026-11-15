@@ -4,8 +4,8 @@ import BrowserCore
 struct AppearancePanel: View {
     @ObservedObject var store: BrowserStore
     var availableHeight: Double = 640
+    let onResetSidebarWidth: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("sidebarWidth") private var sidebarWidth = 236.0
     @State private var nameDraft = ""
     @State private var editedSpaceID: UUID?
     private func loadName() { nameDraft = store.space.name; editedSpaceID = store.space.id }
@@ -72,8 +72,12 @@ struct AppearancePanel: View {
                             Toggle("Always show tab close buttons", isOn: appearanceBinding(\.alwaysShowCloseButtons))
                             Toggle("Animate the interface", isOn: appearanceBinding(\.animationsEnabled))
                             Text("Alcove also respects macOS Reduce Motion.").font(.caption).foregroundStyle(.secondary)
-                            Button("Reset sidebar width") { sidebarWidth = 236 }
-                            Button("Reset appearance") { store.appearance = AppearanceSettings(); store.setTheme(.midnight); sidebarWidth = 236 }
+                            Button("Reset sidebar width", action: onResetSidebarWidth)
+                            Button("Reset appearance") {
+                                store.appearance = AppearanceSettings()
+                                store.setTheme(.midnight)
+                                onResetSidebarWidth()
+                            }
                             Button("Replay the welcome experience") { store.appearanceVisible = false; store.onboardingVisible = true }.disabled(store.isPrivate)
                         }.frame(maxWidth: .infinity)
                     }.font(.system(size: 12))

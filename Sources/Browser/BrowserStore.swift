@@ -167,13 +167,17 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         if boostPicker?.source.web === web { cancelBoostPicker() }
         BoostRuntime.invalidate(web)
     }
-    func moveView(_ id: UUID, profile: UUID, to destination: BrowserStore) -> Bool {
+    func canMoveView(_ id: UUID, profile: UUID, to destination: BrowserStore) -> Bool {
         guard let web = views[id], viewProfileIDs[id] == profile,
               let group = windowGroup, group === destination.windowGroup,
               !isPrivate, !isShuttingDown, !destination.isShuttingDown,
               !destination.profileUnavailable(profile), destination.profileID(for: id) == profile,
               destination.metadataWriter.matchesBoostWebsiteDataStore(web, profileID: profile),
               destination.views[id] == nil else { return false }
+        return true
+    }
+    func moveView(_ id: UUID, profile: UUID, to destination: BrowserStore) -> Bool {
+        guard canMoveView(id, profile: profile, to: destination), let web = views[id] else { return false }
         let icon = siteIcons.removeValue(forKey: id)
         views.removeValue(forKey: id)
         observations.removeValue(forKey: id)

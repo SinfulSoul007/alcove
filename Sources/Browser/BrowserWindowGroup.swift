@@ -56,13 +56,14 @@ final class BrowserWindowGroup {
         return focusedPrimary
     }
 
-    func openPrimary(copying source: BrowserStore?) throws -> BrowserStore {
+    func openPrimary(copying source: BrowserStore?, focus: Bool = true, claimSelection: Bool = true) throws -> BrowserStore {
         guard let root, !root.isShuttingDown else { throw BrowserWindowOwnerError.closed }
         if let source, !isMember(source) { throw BrowserWindowOwnerError.closed }
-        let selection = try workspace.openWindow(copying: source?.windowGroupID ?? workspace.focusedWindowID)
+        let selection = try workspace.openWindow(copying: source?.windowGroupID ?? workspace.focusedWindowID,
+                                                  focus: focus, claimSelection: claimSelection)
         let store = attachPrimary(selection.id, root: root)
         publishWorkspace(workspace)
-        if let tab = store.selectedID { claimPresentation(tabID: tab, in: store) }
+        if claimSelection, let tab = store.selectedID { claimPresentation(tabID: tab, in: store) }
         root.save()
         return store
     }
@@ -146,6 +147,12 @@ final class BrowserWindowGroup {
             if previousID != id { root?.save() }
         }
         return claimed
+    }
+
+    func canClaimPresentation(tabID: UUID, in store: BrowserStore) -> Bool {
+        guard containsPrimary(store), let profile = spaceProfile(forTab: tabID), !store.profileUnavailable(profile) else { return false }
+        guard let live = liveStore(forTab: tabID), live !== store else { return true }
+        return live.canMoveView(tabID, profile: profile, to: store)
     }
 
     func revealPresenter(tabID: UUID, from source: BrowserStore) {

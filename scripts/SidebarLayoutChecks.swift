@@ -3,6 +3,7 @@ import SwiftUI
 import WebKit
 import Combine
 import BrowserCore
+import CryptoKit
 
 @MainActor final class SidebarViewportApplication: NSApplication {
     var fixtureModalWindow: NSWindow?
@@ -215,6 +216,59 @@ import BrowserCore
         grip.removeFromSuperview()
         check(!grip.accessibilityPerformIncrement() && saved() == beforeClose, "Detached divider rejects retained AX actions")
         window.contentView = nil; window.close(); store.shutdown()
+
+        defaults.set(236.0, forKey: "sidebarWidth")
+        let dataRoot = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-sidebar-windows-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: dataRoot) }
+        let key = SymmetricKey(size: .bits256)
+        let root = BrowserStore(dataRoot: dataRoot, keyProvider: { _ in key })
+        root.finishOnboarding()
+        let owner = BrowserWindowOwner(store: root)
+        let left = try owner.acquirePrimaryStore()
+        let rightMember = try owner.acquirePrimaryStore(copying: root)
+        defer { owner.release(left.lease); owner.release(rightMember.lease) }
+        func mount(_ store: BrowserStore) -> SidebarViewportWindow {
+            let host = NSHostingView(rootView: BrowserUI(store: store, sidebarDefaults: defaults)
+                .environmentObject(UpdateController(installedTag: "test")))
+            host.safeAreaRegions = []; host.sizingOptions = []
+            let window = SidebarViewportWindow(contentRect: NSRect(x: 0, y: 0, width: 1260, height: 820),
+                styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true
+            window.contentView = host
+            return window
+        }
+        let leftWindow = mount(left.store)
+        let rightWindow = mount(rightMember.store)
+        defer {
+            leftWindow.contentView = nil; leftWindow.close()
+            rightWindow.contentView = nil; rightWindow.close()
+        }
+        await settle()
+        guard let leftGrip = descendants(leftWindow.contentView!, SidebarResizeHandle.Handle.self).first,
+              let rightGrip = descendants(rightWindow.contentView!, SidebarResizeHandle.Handle.self).first else {
+            fatalError("Missing grouped window dividers")
+        }
+        check(number(leftGrip.accessibilityValue()) == 236 && number(rightGrip.accessibilityValue()) == 236,
+              "Two existing normal windows start at the saved default width")
+        leftGrip.setAccessibilityValue(320 as NSNumber)
+        await settle()
+        check(number(leftGrip.accessibilityValue()) == 320 && saved() == 320,
+              "Resizing one normal window updates its width and the default for future windows")
+        check(number(rightGrip.accessibilityValue()) == 236,
+              "Resizing one normal window leaves the other open window's sidebar in place")
+        let next = try owner.acquirePrimaryStore(copying: root)
+        let nextWindow = mount(next.store)
+        defer { nextWindow.contentView = nil; nextWindow.close(); owner.release(next.lease) }
+        await settle()
+        guard let nextGrip = descendants(nextWindow.contentView!, SidebarResizeHandle.Handle.self).first else {
+            fatalError("Missing new window divider")
+        }
+        check(number(nextGrip.accessibilityValue()) == 320, "A new normal window uses the latest saved default width")
+        let localReset = leftGrip.accessibilityCustomActions()?.first { $0.name == "Reset Sidebar Width" }
+        let didReset = localReset?.handler?() == true
+        await settle()
+        check(didReset && saved() == 236 && number(leftGrip.accessibilityValue()) == 236 &&
+              number(nextGrip.accessibilityValue()) == 320, "Reset resizes the invoking sidebar without resizing other open windows")
         if failures > 0 { exit(1) }
     }
 }

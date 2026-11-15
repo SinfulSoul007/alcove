@@ -65,16 +65,32 @@ struct WebPane: NSViewRepresentable {
 }
 
 struct BrowserUI: View {
+    private static let defaultSidebarWidth = 236.0
     @ObservedObject var store: BrowserStore
     @EnvironmentObject private var updates: UpdateController
-    @AppStorage("sidebarWidth") private var sidebarWidth = 236.0
+    @AppStorage("sidebarWidth") private var savedSidebarWidth = Self.defaultSidebarWidth
+    @State private var windowSidebarWidth: Double
     @StateObject private var reveal = SidebarRevealController()
     @StateObject private var chrome = NativeWindowChrome()
     @State private var resize = SidebarResizeState()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     init(store: BrowserStore, sidebarDefaults: UserDefaults? = nil) {
         self.store = store
-        _sidebarWidth = AppStorage(wrappedValue: 236.0, "sidebarWidth", store: sidebarDefaults)
+        _savedSidebarWidth = AppStorage(wrappedValue: Self.defaultSidebarWidth, "sidebarWidth", store: sidebarDefaults)
+        let savedWidth = (sidebarDefaults ?? .standard).object(forKey: "sidebarWidth") as? Double
+        _windowSidebarWidth = State(initialValue: savedWidth ?? Self.defaultSidebarWidth)
+    }
+    private var sidebarWidth: Double {
+        store.windowGroupID == nil ? savedSidebarWidth : windowSidebarWidth
+    }
+    private func setSidebarWidth(_ width: Double) {
+        windowSidebarWidth = width
+        savedSidebarWidth = width
+    }
+    private func resetSidebarWidth() {
+        resize.cancel()
+        setSidebarWidth(Self.defaultSidebarWidth)
+        reveal.endResize()
     }
     var sidebarInteractionBlocked: Bool {
         store.commandVisible || store.onboardingVisible || store.primaryPeekView != nil || store.presentedPanel != nil
@@ -125,12 +141,12 @@ struct BrowserUI: View {
                             reveal.beginResize()
                             resize.begin(at: SidebarSizing.width(saved: sidebarWidth, windowWidth: geometry.size.width))
                         }, onDrag: { resize.drag(by: $0, windowWidth: geometry.size.width) }, onEnd: {
-                            if let value = resize.finish() { sidebarWidth = value }
+                            if let value = resize.finish() { setSidebarWidth(value) }
                             reveal.endResize()
                         }, onCancel: {
                             resize.cancel(); reveal.endResize()
-                        }, onReset: { resize.cancel(); sidebarWidth = 236; reveal.endResize() }, onSetWidth: { value in
-                            resize.cancel(); sidebarWidth = value; reveal.endResize()
+                        }, onReset: resetSidebarWidth, onSetWidth: { value in
+                            resize.cancel(); setSidebarWidth(value); reveal.endResize()
                         }, onFocusChange: { reveal.setKeyboardFocus($0) }).frame(width: 6)
                     }
                     .offset(x: shown ? 0 : -width - 16)
@@ -174,7 +190,9 @@ struct BrowserUI: View {
                 case .links: LinkRoutingPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .boosts: BoostPanel(store: store, availableHeight: geometry.size.height - 40)
                 case .appearance:
-                    if store.canModifyLocalMetadata { AppearancePanel(store: store, availableHeight: geometry.size.height - 40) }
+                    if store.canModifyLocalMetadata {
+                        AppearancePanel(store: store, availableHeight: geometry.size.height - 40, onResetSidebarWidth: resetSidebarWidth)
+                    }
                     else { lockedAppearancePanel }
                 case .spaces: EmptyView()
                 case .profiles: ProfilesPanel(store: store, availableHeight: geometry.size.height - 40)

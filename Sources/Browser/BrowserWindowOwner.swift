@@ -40,7 +40,8 @@ enum BrowserWindowOwnerError: LocalizedError {
         guard !isClosed else { throw BrowserWindowOwnerError.closed }
         let token = UUID(); primaryLeases.insert(token);resumeArchiveIfReady(); return token
     }
-    func acquirePrimaryStore(copying source: BrowserStore? = nil) throws -> (store: BrowserStore, lease: UUID) {
+    func acquirePrimaryStore(copying source: BrowserStore? = nil, focus: Bool = true,
+                             claimSelection: Bool = true) throws -> (store: BrowserStore, lease: UUID) {
         try requireNormalWindows()
         let group: BrowserWindowGroup
         if let windowGroup { group = windowGroup }
@@ -48,7 +49,7 @@ enum BrowserWindowOwnerError: LocalizedError {
             group = try BrowserWindowGroup(root: store)
             windowGroup = group
         }
-        let member = try group.openPrimary(copying: source)
+        let member = try group.openPrimary(copying: source, focus: focus, claimSelection: claimSelection)
         let lease = try acquirePrimary()
         groupedPrimaries[lease] = member
         return (member, lease)
@@ -67,11 +68,13 @@ enum BrowserWindowOwnerError: LocalizedError {
         guard windowGroup == nil, primaryLeases == expectedLeases, let saved = store.savedWindowRestore else { return [] }
         let group = try BrowserWindowGroup(root: store, restoring: saved)
         windowGroup = group
-        return try group.attachRestoredPrimaries().map { entry in
+        let restored = try group.attachRestoredPrimaries().map { entry in
             let token = try (entry.store === store ? lease : nil) ?? acquirePrimary()
             groupedPrimaries[token] = entry.store
             return RestoredPrimaryStore(store: entry.store, lease: token, frame: entry.frame, focused: entry.focused)
         }
+        if !restored.isEmpty { store.savedWindowRestore = nil }
+        return restored
     }
     private func requireNormalWindows() throws {
         guard !isClosed, !store.isShuttingDown else { throw BrowserWindowOwnerError.closed }
@@ -122,6 +125,7 @@ enum BrowserWindowOwnerError: LocalizedError {
                   pendingExternalURLs.reduce(0, { $0 + $1.absoluteString.utf8.count }) + url.absoluteString.utf8.count <= 1048576 else { throw BrowserWindowOwnerError.queueFull }
             pendingExternalURLs.append(url); return .pending
         }
-        return try store.openExternalPage(url)
+        let presenter = windowGroup?.focusedPrimary ?? store
+        return try presenter.openExternalPage(url)
     }
 }

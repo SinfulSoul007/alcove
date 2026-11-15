@@ -82,7 +82,8 @@ public struct BrowserWindowWorkspace {
         windows.first(where: { $0.id == windowID })?.projecting(session)
     }
 
-    @discardableResult public mutating func openWindow(id: UUID = UUID(), copying sourceID: UUID? = nil) throws -> BrowserWindowSelection {
+    @discardableResult public mutating func openWindow(id: UUID = UUID(), copying sourceID: UUID? = nil,
+                                                       focus: Bool = true, claimSelection: Bool = true) throws -> BrowserWindowSelection {
         guard !windows.contains(where: { $0.id == id }) else { throw BrowserWindowWorkspaceError.duplicateWindow }
         let seed: Session
         if let sourceID {
@@ -91,10 +92,10 @@ public struct BrowserWindowWorkspace {
         } else { seed = session }
         let selection = BrowserWindowSelection(id: id, session: seed).reconciled(in: session)
         windows.append(selection)
-        focusedWindowID = id
-        fillUnassignedTabs(with: id)
-        if let selected = selection.selectedTabsBySpace[selection.spaceID] { assignments[selected] = id }
-        synchronizeFocusedSelection(recordFocus: true)
+        if focus || focusedWindowID == nil { focusedWindowID = id }
+        fillUnassignedTabs(with: focusedWindowID)
+        if claimSelection, let selected = selection.selectedTabsBySpace[selection.spaceID] { assignments[selected] = id }
+        synchronizeFocusedSelection(recordFocus: focusedWindowID == id)
         return selection
     }
 

@@ -105,6 +105,31 @@ extension BrowserStore {
         _ = view(for:tab.id,configuration:configuration);revision += 1;extensionHosting?.refresh()
         return tab.id
     }
+
+    func prepareExtensionWindowTabs(profileID: UUID, URLs: [URL], moving tabIDs: [UUID]) throws {
+        try requireQuickProfile(profileID)
+        guard let group = windowGroup, group.containsPrimary(self),
+              tabIDs.allSatisfy({ group.canClaimPresentation(tabID: $0, in: self) }) else { throw ExtensionHostError.stale }
+        var document = makeDocument()
+        let spaceIndex: Int?
+        if let first = tabIDs.first {
+            spaceIndex = document.session.spaces.firstIndex { space in
+                space.effectiveProfileID == profileID && space.tabs.contains { $0.id == first }
+            }
+        } else if activeProfileID == profileID {
+            spaceIndex = self.spaceIndex
+        } else {
+            spaceIndex = document.session.spaces.firstIndex { $0.effectiveProfileID == profileID }
+        }
+        guard let spaceIndex else { throw ProfileError.missing }
+        var tabs = URLs.map { BrowserCore.Tab(title: $0.host ?? "New Tab", url: $0.absoluteString) }
+        if tabs.isEmpty && tabIDs.isEmpty { tabs = [BrowserCore.Tab()] }
+        document.session.spaces[spaceIndex].tabs.append(contentsOf: tabs)
+        document.session.spaces[spaceIndex].selected = tabIDs.first ?? tabs.first?.id
+        document.session.activateSpace(document.session.spaces[spaceIndex].id)
+        try commitProfileDocument(document)
+        for tabID in tabIDs { group.claimPresentation(tabID: tabID, in: self) }
+    }
 }
 
 struct NativeExtensionTabKey:Hashable {let storeID:UUID,profileID:UUID,id:UUID,isPeek:Bool}

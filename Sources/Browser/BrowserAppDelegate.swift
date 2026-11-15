@@ -145,6 +145,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func metadataDidLoad(_ owner: BrowserWindowOwner) {
         guard !owner.isClosed, !owner.store.awaitingInitialMetadata else { return }
         let mayActivate = NSApp.isActive && (activeStore == nil || activeStore === owner.store)
+        let temporary = temporaryStartupOwners.remove(owner.id) != nil
+        let restoresPrimary = owner.store.savedWindowRestore != nil && owner.store.windowGroup == nil
         preparingMetadataOwners.insert(owner.id)
         owner.store.archiveInactiveQuickPages()
         // Resolve explicit New Quick Browse requests only after the actual saved
@@ -154,18 +156,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             do {_ = try owner.store.openQuickPage()}
             catch {owner.store.message=error.localizedDescription;break}
         }
+        if restoresPrimary { openPrimary(owner, activate: false) }
         let destinations = owner.drainExternalLinks()
         preparingMetadataOwners.remove(owner.id)
         syncQuickWindows(owner, orderFront: mayActivate)
         let needsPrimary = destinations.contains { if case .space = $0 { return true }; return false }
-        let temporary = temporaryStartupOwners.remove(owner.id) != nil
-        if temporary && !needsPrimary && owner.store.savedWindowRestore == nil && !owner.store.onboardingVisible && !owner.store.allQuickPages.isEmpty,
+        if temporary && !needsPrimary && !restoresPrimary && owner.store.savedWindowRestore == nil && !owner.store.onboardingVisible && !owner.store.allQuickPages.isEmpty,
            let primary = primaryOwners.first(where: { $0.value === owner })?.key,
            quickWindows.values.contains(where: { $0.windowOwner === owner }) {
             // Compact controllers hold leases before the placeholder releases its lease.
             primary.close()
             if mayActivate { quickWindows.values.first(where: { $0.windowOwner === owner })?.surface() }
-        } else if needsPrimary || preferredPrimary(of: owner) != nil || owner.store.savedWindowRestore != nil {
+        } else if needsPrimary || restoresPrimary {
+            showExternalPresenter(of: owner, activate: mayActivate)
+        } else if preferredPrimary(of: owner) != nil || owner.store.savedWindowRestore != nil {
             openPrimary(owner, activate: mayActivate)
         }
         checkAutomaticallyIfNeeded(owner.store)
@@ -253,6 +257,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
     }
+    private func showExternalPresenter(of owner: BrowserWindowOwner, activate: Bool = true) {
+        if let presenter = owner.store.windowGroup?.focusedPrimary,
+           let window = presenter.extensionWindows[.primary]?.window, primaryOwners[window] === owner {
+            if activate { surfacePrimary(window) }
+        } else { openPrimary(owner, activate: activate) }
+    }
     private func makePrimaryWindow(_ store: BrowserStore, owner: BrowserWindowOwner, lease: UUID) -> NSWindow {
         let window = ExtensionCommandWindow(contentRect: NSRect(x: 0, y: 0, width: 1260, height: 820), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.extensionStore=store;window.extensionCommandSource={[weak store] in store?.primaryPeekView ?? store?.currentView}
@@ -276,6 +286,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let screen, let adjusted = frame.constrained(to: screen.visibleFrame, minimumSize: window.minSize) {
             window.setFrame(adjusted, display: false)
         }
+    }
+    @available(macOS 15.4, *)
+    func openExtensionWindow(for writer: BrowserStore, profileID: UUID, configuration: WKWebExtension.WindowConfiguration,
+                             moving tabIDs: [UUID]) throws -> BrowserStore {
+        guard let owner = normalOwner, owner.store === writer, !owner.isClosed, !writer.isPrivate else {
+            throw ExtensionHostError.stale
+        }
+        let frame = configuration.frame
+        let dimensions = [frame.origin.x, frame.origin.y, frame.size.width, frame.size.height]
+        guard dimensions.allSatisfy({ $0.isFinite || $0.isNaN }),
+              frame.size.width.isNaN || frame.size.width > 0, frame.size.height.isNaN || frame.size.height > 0 else {
+            throw ExtensionHostError.native("The requested window frame is unavailable.")
+        }
+        try writer.requireQuickProfile(profileID)
+        let previous = normalWindow
+        let member = try owner.acquirePrimaryStore(copying: writer.windowGroup?.focusedPrimary,
+                                                   focus: configuration.shouldBeFocused, claimSelection: false)
+        do { try member.store.prepareExtensionWindowTabs(profileID: profileID, URLs: configuration.tabURLs, moving: tabIDs) }
+        catch { owner.release(member.lease); throw error }
+
+        let window = makePrimaryWindow(member.store, owner: owner, lease: member.lease)
+        let defaultFrame = window.frame
+        applyRestoredFrame(BrowserWindowFrame(x: frame.origin.x.isNaN ? defaultFrame.origin.x : frame.origin.x,
+                                              y: frame.origin.y.isNaN ? defaultFrame.origin.y : frame.origin.y,
+                                              width: frame.size.width.isNaN ? defaultFrame.width : frame.size.width,
+                                              height: frame.size.height.isNaN ? defaultFrame.height : frame.size.height), to: window)
+        if configuration.shouldBeFocused { surfacePrimary(window) }
+        else {
+            if let previous { normalWindow = previous }
+            window.orderBack(nil)
+        }
+        switch configuration.windowState {
+        case .normal: break
+        case .minimized: window.miniaturize(nil)
+        case .maximized: window.zoom(nil)
+        case .fullscreen: window.toggleFullScreen(nil)
+        @unknown default: break
+        }
+        return member.store
     }
     func checkAutomaticallyIfNeeded(_ store: BrowserStore) {
         guard !store.isPrivate, !store.onboardingVisible, store.savingEnabled, store.preferences.automaticUpdateChecks == true, !updates.checking else { return }
@@ -331,10 +380,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func application(_ application: NSApplication, open urls: [URL]) {
         let owner = ensureNormalOwner()
+        if !owner.store.awaitingInitialMetadata, owner.store.savedWindowRestore != nil, owner.store.windowGroup == nil {
+            openPrimary(owner, activate: false)
+        }
         for url in urls where QuickBrowseRouting.host(for: url) != nil {
             do {
                 switch try owner.dispatchExternal(url) {
-                case .space: openPrimary(owner)
+                case .space: showExternalPresenter(of: owner)
                 case .pending:
                     let temporary = temporaryStartupOwners.contains(owner.id) || !primaryOwners.values.contains { $0 === owner }
                     openPrimary(owner, startupPlaceholder: temporary)
