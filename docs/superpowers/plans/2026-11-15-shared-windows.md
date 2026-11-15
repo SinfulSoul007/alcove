@@ -40,8 +40,8 @@
 
 **Interfaces:** BrowserWindowGroup(root:) retains root only through existing owner; makePrimaryStore(copying:) -> BrowserStore; publishSession(_:from:), publishDocument(_:from:), flush(from:), register/unregister primary member and focused member; members weakly registered. BrowserStore initializer for a secondary group member skips normal metadata startup/lease acquisition and delegates shared writes/state to root. Save/document application uses current group snapshot and broadcasts in one guarded main-actor transaction.
 
-- [ ] Step1: Add failing owned-root/secondary tests proving one lease/key lookup/writer; independent selection/chrome; shared edits and async stale-writer refusal; root-window retirement and save-failure propagation. Include tab/Space/profile removal and Quick state while secondary survives.
-- [ ] Step2: Implement group binding and transaction routing, preserving private-store isolation and current single-store tests. Run focused group, metadata/startup/profile/Space/Quick checks without diagnostics.
+- [x] Step1: Add failing owned-root/secondary tests proving one lease/key lookup/writer; independent selection/chrome; shared edits and async stale-writer refusal; root-window retirement and save-failure propagation. Include tab/Space/profile removal and Quick state while secondary survives.
+- [x] Step2: Implement group binding and transaction routing, preserving private-store isolation and current single-store tests. Run focused group, metadata/startup/profile/Space/Quick checks without diagnostics.
 
 ### Task3: Live resource/presentation handoff and durable restoration
 

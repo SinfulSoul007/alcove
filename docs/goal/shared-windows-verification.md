@@ -1,9 +1,7 @@
-# Shared-window implementation verification — in progress
+# Shared-window verification
 
-Basec6210cc; isolated feat/shared-windows, dedicated VM. Public0.9.1 source/tag remainsc6210cc. The complete browser goal stays active.
+The dedicated Mac ran window-group-test (22), window-model-test (47), writer-test (27), startup-test (40), space-test (53), quick-store-test (30), store-test (37). All 256 assertions passed without compiler diagnostics. The previous model checkpoint also passed 34 existing core assertions.
 
-Task1 foundation: the pure BrowserWindowWorkspace model passes47 assertions, zero diagnostics, after an expected missing-model API RED run. Existing core checks pass34, zero diagnostics. Independent selections, shared data edits/reorder, focused persistence projection, logical assignment/claim, closed-window refusal, invalid/duplicate references, restoration and last-window library retention are covered. Input snapshots remain unchanged.
+The writer retains the only encrypted metadata store, key lookup and metadata lease. Window-local selections, sidebar and Find stay independent. Tab, Space, profile and preference changes appear in both projections. Persisted transactions reject an older prepared snapshot. An interrupted writer leaves the previous state visible and pauses saving for both windows. Closing a primary window preserves its surviving peers and compact pages. Reopening a compact URL surfaces its existing window.
 
-This model has no AppKit/WebKit/Keychain/file/network effects and is not wired into production BrowserStore/AppDelegate yet. It does not establish working native multi-window behavior, stale async-write protection for still-open members, single-writer integration, live WKWebView handoff, source-bound output/Boost/extension safety, encrypted window restoration, UI fidelity or full-browser completion. Tasks2–5 remain required. Logical assignments do not grant profile/extension authority.
-
-Existing sourceCI43683749729 succeeded atc6210cc with2,423 browser+2 ZIP assertions and zero diagnostics. Newv0.9.1-preview.1 is annotated at that commit; releaseCI and public download-back remain separate. New model code is a feature-branch checkpoint, not part of0.9.1.
+These checks exercise grouped stores and the owner directly. Native window and command integration remains in Task4. Task3 covers live WebKit handoff, cross-window page protection during profile operations, and persistent window restoration. Public 0.9.1 uses the previous single-window path.

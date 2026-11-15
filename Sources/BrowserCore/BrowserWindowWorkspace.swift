@@ -85,16 +85,29 @@ public struct BrowserWindowWorkspace {
     /// Callers publish from a current projection on the same serialized actor as the group.
     /// The source selection changes locally; all other windows keep valid selections.
     public mutating func apply(_ incoming: Session, from windowID: UUID) throws {
-        guard let source = windows.firstIndex(where: { $0.id == windowID }) else { throw BrowserWindowWorkspaceError.missingWindow }
+        guard windows.contains(where: { $0.id == windowID }) else { throw BrowserWindowWorkspaceError.missingWindow }
+        try replaceSession(incoming, selectingFor: windowID)
+    }
+
+    /// Service work can edit tabs while the writer's original window is closed.
+    public mutating func applySharedSession(_ incoming: Session) throws {
+        try replaceSession(incoming, selectingFor: nil)
+    }
+
+    private mutating func replaceSession(_ incoming: Session, selectingFor windowID: UUID?) throws {
         let normalized = try Self.normalized(incoming)
         let previousTabs = allTabIDs
         var selections = windows
-        selections[source] = BrowserWindowSelection(id: windowID, session: normalized)
+        if let windowID, let source = selections.firstIndex(where: { $0.id == windowID }) {
+            selections[source] = BrowserWindowSelection(id: windowID, session: normalized)
+        }
         selections = selections.map { $0.reconciled(in: normalized) }
         let retainedTabs = Set(normalized.spaces.flatMap(\.tabs).map(\.id))
         let retainedWindows = Set(selections.map(\.id))
         var nextAssignments = assignments.filter { retainedTabs.contains($0.key) && retainedWindows.contains($0.value) }
-        for id in retainedTabs.subtracting(previousTabs) { nextAssignments[id] = windowID }
+        if let owner = windowID ?? focusedWindowID {
+            for id in retainedTabs.subtracting(previousTabs) { nextAssignments[id] = owner }
+        }
         session = normalized
         windows = selections
         assignments = nextAssignments

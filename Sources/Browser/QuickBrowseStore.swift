@@ -31,7 +31,7 @@ private struct QuickArchiveMediaRequest {
 extension BrowserStore {
     func effectiveQuickPage(_ value: QuickPage) -> QuickPage {
         var page = value
-        if let interaction = quickActivityTimes[page.id], interaction > page.lastActiveAt { page.lastActiveAt = interaction }
+        if let interaction = metadataWriter.quickActivityTimes[page.id], interaction > page.lastActiveAt { page.lastActiveAt = interaction }
         return page
     }
     var allQuickPages: [QuickPage] { profileLibraries.flatMap { $0.library.quickPages ?? [] }.map(effectiveQuickPage) }
@@ -72,14 +72,16 @@ extension BrowserStore {
     @discardableResult func openQuickPage(url: URL? = nil, profileID: UUID? = nil, intendedSpaceID: UUID? = nil, configuration: WKWebViewConfiguration? = nil) throws -> UUID {
         let owner = isPrivate ? BrowserProfile.defaultID : (profileID ?? activeProfileID)
         try requireQuickProfile(owner)
+        let target = session.spaces.first(where: { $0.id == intendedSpaceID && (isPrivate || $0.effectiveProfileID == owner) })?.id
+            ?? (activeProfileID == owner ? space.id : session.spaces.first(where: { $0.effectiveProfileID == owner })?.id)
+        let writer = metadataWriter
+        if writer !== self { return try writer.openQuickPage(url: url, profileID: owner, intendedSpaceID: target, configuration: configuration) }
         if let url {
             guard QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.invalidAddress }
             if let existing = quickPages(for: owner).first(where: { $0.tab.url == url.absoluteString || $0.requestedURL == url.absoluteString }) {
                 touchQuickPage(existing.id); quickPageRequested?(existing.id); return existing.id
             }
         }
-        let target = session.spaces.first(where: { $0.id == intendedSpaceID && (isPrivate || $0.effectiveProfileID == owner) })?.id
-            ?? (activeProfileID == owner ? space.id : session.spaces.first(where: { $0.effectiveProfileID == owner })?.id)
         let page = QuickPage(tab: BrowserCore.Tab(title: url?.host ?? "New Quick Browse", url: url?.absoluteString ?? ""), intendedSpaceID: target)
         var candidate = makeDocument(); var records = candidate.library(for: owner)
         records.quickPages = (records.quickPages ?? []) + [page]; candidate.setLibrary(records, for: owner)

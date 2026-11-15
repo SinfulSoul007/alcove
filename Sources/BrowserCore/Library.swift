@@ -47,6 +47,12 @@ public struct Preferences: Codable {
     public init() {}
 }
 public struct BrowserDocument: Codable {
+    /// Identifies the live window-group snapshot used to prepare a transaction.
+    /// Excluded from disk data and the encrypted document format.
+    public var workingRevision: UUID? = nil
+    private enum CodingKeys: String, CodingKey {
+        case formatVersion, session, library, preferences, profiles, profileLibraries
+    }
     public var formatVersion: Int?
     public var session: Session
     public var library: BrowserLibrary

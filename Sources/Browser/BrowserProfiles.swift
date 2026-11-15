@@ -201,18 +201,37 @@ extension BrowserStore {
     func makeDocument() -> BrowserDocument {
         var entries = profileLibraries
         for index in entries.indices { entries[index].library.quickPages = entries[index].library.quickPages?.map(effectiveQuickPage) }
-        return BrowserDocument(session: session, library: entries.first(where: { $0.profileID == BrowserProfile.defaultID })?.library ?? BrowserLibrary(), preferences: preferences, profiles: profiles, profileLibraries: entries)
+        var document = BrowserDocument(session: session, library: entries.first(where: { $0.profileID == BrowserProfile.defaultID })?.library ?? BrowserLibrary(), preferences: preferences, profiles: profiles, profileLibraries: entries)
+        document.workingRevision = windowGroup?.revision
+        return document
     }
     func applyDocument(_ document: BrowserDocument) throws {
         var prepared = document; try prepared.repairProfiles()
-        invalidateExtensionReviewEpochs(from:profiles,to:prepared.profiles ?? [])
-        session = Self.repairedSession(prepared.session); profiles = prepared.profiles ?? [.defaultProfile]
+        prepared.session = Self.repairedSession(prepared.session)
+        if let windowGroup {
+            try windowGroup.restore(prepared, from: self)
+            return
+        }
+        installDocumentFields(prepared, projecting: prepared.session)
+        documentDidChange()
+    }
+    func installDocumentFields(_ prepared: BrowserDocument, projecting selection: Session) {
+        invalidateExtensionReviewEpochs(from: profiles, to: prepared.profiles ?? [])
+        if session != selection { session = selection }
+        profiles = prepared.profiles ?? [.defaultProfile]
         profileLibraries = prepared.profileLibraries ?? [ProfileLibrary(profileID: BrowserProfile.defaultID, library: prepared.library)]
-        preferences = prepared.preferences; reconcileSearchInputContext(); pruneQuickActivity(); quickPagesDidChange?(); refreshBoosts(); extensionHosting?.refresh(); cancelInvalidExtensionNavigations()
+        preferences = prepared.preferences
+    }
+    func documentDidChange() {
+        reconcileSearchInputContext(); pruneQuickActivity(); quickPagesDidChange?(); refreshBoosts(); extensionHosting?.refresh(); cancelInvalidExtensionNavigations()
     }
     func commitProfileDocument(_ candidate: BrowserDocument, discarding ids: [UUID] = [], resetting spaceID: UUID? = nil, beforePublish: (() -> Void)? = nil) throws {
         guard !isPrivate else { throw ProfileError.privateMode }
         guard !isShuttingDown else { throw CancellationError() }
+        if let windowGroup {
+            try windowGroup.commit(candidate, from: self, discarding: ids, resetting: spaceID, beforePublish: beforePublish)
+            return
+        }
         guard savingEnabled, let vault else { throw ProfileError.locked }
         var prepared = candidate; try prepared.repairProfiles(); prepared.session = Self.repairedSession(prepared.session)
         do { try vault.save(prepared) }
@@ -284,6 +303,8 @@ extension BrowserStore {
             return .nonPersistent()
         }
         if profile.isDefault { return .default() }
+        let writer = metadataWriter
+        if writer !== self { return writer.websiteDataStore(forProfile: id) }
         if let existing = namedDataStores[id] { return existing }
         let store = WKWebsiteDataStore(forIdentifier: id); namedDataStores[id] = store; return store
     }

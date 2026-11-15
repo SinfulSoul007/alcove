@@ -180,6 +180,11 @@ run_space_checks() {
     "$MANUAL/space-checks"
 }
 if [[ "${1:-}" == "space-test" ]]; then run_space_checks; exit; fi
+run_window_group_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/BrowserWindowGroupChecks.swift -o "$MANUAL/window-group-checks"
+    "$MANUAL/window-group-checks"
+}
+if [[ "${1:-}" == "window-group-test" ]]; then run_window_group_checks; exit; fi
 run_writer_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/WriterOwnershipChecks.swift -o "$MANUAL/writer-checks"
     "$MANUAL/writer-checks"

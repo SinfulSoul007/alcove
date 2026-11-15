@@ -18,6 +18,8 @@ enum BrowserWindowOwnerError: LocalizedError {
     let id = UUID()
     let store: BrowserStore
     private var primaryLeases: Set<UUID> = []
+    private var groupedPrimaries: [UUID: BrowserStore] = [:]
+    private var windowGroup: BrowserWindowGroup?
     private var quickLeases: [UUID: UUID] = [:]
     private var auxiliaryLeases:Set<UUID> = []
     private(set) var isClosed = false
@@ -30,6 +32,21 @@ enum BrowserWindowOwnerError: LocalizedError {
     func acquirePrimary() throws -> UUID {
         guard !isClosed else { throw BrowserWindowOwnerError.closed }
         let token = UUID(); primaryLeases.insert(token);resumeArchiveIfReady(); return token
+    }
+    func acquirePrimaryStore(copying source: BrowserStore? = nil) throws -> (store: BrowserStore, lease: UUID) {
+        guard !isClosed else { throw BrowserWindowOwnerError.closed }
+        guard !store.isPrivate else { throw ProfileError.privateMode }
+        guard store.savingEnabled, !store.awaitingInitialMetadata, store.vault != nil else { throw ProfileError.locked }
+        let group: BrowserWindowGroup
+        if let windowGroup { group = windowGroup }
+        else {
+            group = try BrowserWindowGroup(root: store)
+            windowGroup = group
+        }
+        let member = try group.openPrimary(copying: source)
+        let lease = try acquirePrimary()
+        groupedPrimaries[lease] = member
+        return (member, lease)
     }
     func acquireQuick(_ id: UUID) throws -> UUID {
         guard !isClosed else { throw BrowserWindowOwnerError.closed }
@@ -48,6 +65,7 @@ enum BrowserWindowOwnerError: LocalizedError {
     func release(_ token: UUID) {
         guard !isClosed else { return }
         var removed = primaryLeases.remove(token) != nil
+        if let member = groupedPrimaries.removeValue(forKey: token) { windowGroup?.closePrimary(member) }
         if let id = quickLeases.first(where: { $0.value == token })?.key { quickLeases.removeValue(forKey: id); removed = true }
         if auxiliaryLeases.remove(token) != nil {removed = true}
         guard removed else {return}

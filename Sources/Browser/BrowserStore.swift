@@ -9,7 +9,16 @@ enum BrowserPanel: String, Identifiable { case library, settings, appearance, up
 
 @MainActor
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
-    @Published var session = Session() { didSet { if boostPicker != nil { reconcileBoostPicker() };extensionBrowserStateChanged() } }
+    weak var windowGroup: BrowserWindowGroup?
+    var windowGroupID: UUID?
+    var metadataWriter: BrowserStore { windowGroup?.root ?? self }
+    @Published var session = Session() {
+        didSet {
+            windowGroup?.sessionDidChange(from: self)
+            if boostPicker != nil { reconcileBoostPicker() }
+            extensionBrowserStateChanged()
+        }
+    }
     @Published var commandVisible = false {
         didSet {
             if !commandVisible {
@@ -66,13 +75,23 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var activePaneID: UUID? { didSet { if boostPicker != nil { reconcileBoostPicker() };extensionBrowserStateChanged() } }
     @Published var message: String?
     @Published var revision = 0 {didSet {extensionBrowserStateChanged()}}
-    @Published var profiles: [BrowserProfile] = [.defaultProfile]
-    @Published var profileLibraries: [ProfileLibrary] = [ProfileLibrary(profileID: BrowserProfile.defaultID)]
+    @Published var profiles: [BrowserProfile] = [.defaultProfile] {
+        didSet { windowGroup?.sharedFieldDidChange(.profiles, from: self) }
+    }
+    @Published var profileLibraries: [ProfileLibrary] = [ProfileLibrary(profileID: BrowserProfile.defaultID)] {
+        didSet { windowGroup?.sharedFieldDidChange(.libraries, from: self) }
+    }
     var library: BrowserLibrary {
         get { library(for: activeProfileID) }
         set { setLibrary(newValue, for: activeProfileID) }
     }
-    @Published var preferences = Preferences() { didSet { siteSearchCatalogCache = nil; linkRuleCatalogCache = nil } }
+    @Published var preferences = Preferences() {
+        didSet {
+            siteSearchCatalogCache = nil
+            linkRuleCatalogCache = nil
+            windowGroup?.sharedFieldDidChange(.preferences, from: self)
+        }
+    }
     var siteSearchCatalogCache: SiteSearchCatalog?
     var linkRuleCatalogCache: LinkRuleCatalog?
     var libraryVisible: Bool { get { presentedPanel == .library } set { if newValue { presentedPanel = .library } else if libraryVisible { presentedPanel = nil } } }
@@ -111,11 +130,11 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var extensionManagers:[UUID:ExtensionManagerWindowController] = [:]
     var extensionPrimaryWindowRequested:(()->Void)?
     var vault: MetadataStore?
-    @Published var savingEnabled = true
-    @Published var unlocking = false
-    @Published var awaitingInitialMetadata = false
-    @Published var metadataLoadError: String?
-    @Published var profileInUse = false
+    @Published var savingEnabled = true { didSet { windowGroup?.writerStateDidChange(from: self) } }
+    @Published var unlocking = false { didSet { windowGroup?.writerStateDidChange(from: self) } }
+    @Published var awaitingInitialMetadata = false { didSet { windowGroup?.writerStateDidChange(from: self) } }
+    @Published var metadataLoadError: String? { didSet { windowGroup?.writerStateDidChange(from: self) } }
+    @Published var profileInUse = false { didSet { windowGroup?.writerStateDidChange(from: self) } }
     var metadataOwnership: MetadataOwnershipLease?
     let metadataKeyAccess: MetadataKeyAccess
     var metadataDidLoad: (() -> Void)?
@@ -138,7 +157,9 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     var viewProfileIDs: [UUID: UUID] = [:]
     var namedDataStores: [UUID: WKWebsiteDataStore] = [:]
-    var persistedProfileIDs: Set<UUID> = [BrowserProfile.defaultID]
+    var persistedProfileIDs: Set<UUID> = [BrowserProfile.defaultID] {
+        didSet { windowGroup?.writerStateDidChange(from: self) }
+    }
     var closingPages: [ClosingProfilePage] = []
     var accessOrder: [UUID] = []
     var observations: [UUID: [NSKeyValueObservation]] = [:]
@@ -154,8 +175,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var currentView: WKWebView? { focusedID.flatMap { views[$0] } }
     func focusPane(_ id: UUID) { if id == selectedID || id == splitID { activePaneID = id } }
 
-    init(isPrivate: Bool = false, dataRoot: URL? = nil, keyProvider: ((Bool) throws -> SymmetricKey)? = nil, metadataKeyAccess: MetadataKeyAccess? = nil) {
+    init(isPrivate: Bool = false, dataRoot: URL? = nil, keyProvider: ((Bool) throws -> SymmetricKey)? = nil,
+         metadataKeyAccess: MetadataKeyAccess? = nil, windowGroup: BrowserWindowGroup? = nil) {
         self.isPrivate = isPrivate
+        self.windowGroup = windowGroup
         self.metadataKeyAccess = metadataKeyAccess ?? .shared
         privateDataStore = isPrivate ? .nonPersistent() : nil
         privateUserContentController = isPrivate ? WKUserContentController() : nil
@@ -166,6 +189,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         super.init()
         guard !isPrivate else { return }
         profileOperationSubscription = ProfileDataOperations.shared.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        if windowGroup != nil { return }
         if let keyProvider {
             do { try acquireMetadataOwnership() }
             catch { metadataOwnershipFailed(error); return }
@@ -177,6 +201,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         }
     }
     func startArchiveTimer() {
+        let writer = metadataWriter
+        if writer !== self { writer.startArchiveTimer(); return }
         guard !isShuttingDown, archiveTimer?.isValid != true, !isPrivate || !allQuickPages.isEmpty else { return }
         archiveTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.archiveOldTabs(); self?.archiveInactiveQuickPages() }
@@ -199,6 +225,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func save() {
         guard !isPrivate, savingEnabled, !isShuttingDown else { return }
+        let writer = metadataWriter
+        if writer !== self { writer.save(); return }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(350))
@@ -208,7 +236,9 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func flush() {
         guard !isPrivate, savingEnabled, !isShuttingDown else { return }
-        do { if let vault { try vault.save(makeDocument()); hasSavedDocument = true } }
+        let writer = metadataWriter
+        if writer !== self { writer.flush(); return }
+        do { if let vault { try vault.save(windowGroup?.persistenceDocument() ?? makeDocument()); hasSavedDocument = true } }
         catch { savingEnabled = false; message = "Couldn’t save your data. Existing data is preserved. \(error.localizedDescription)" }
     }
     func shutdown() {

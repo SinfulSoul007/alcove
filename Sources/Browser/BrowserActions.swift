@@ -14,6 +14,8 @@ struct DownloadItem: Identifiable {
 extension BrowserStore {
     @discardableResult func unlockLocalData(keyProvider: (() throws -> SymmetricKey)? = nil, persist: @escaping (MetadataStore, BrowserDocument) throws -> Void = { try $0.save($1) }) -> Bool {
         guard !isPrivate, !savingEnabled, !unlocking, !isShuttingDown else { return false }
+        let writer = metadataWriter
+        if writer !== self { return writer.unlockLocalData(keyProvider: keyProvider, persist: persist) }
         let access = keyProvider.map { provider in MetadataKeyAccess { _, _ in try provider() } } ?? metadataKeyAccess
         if awaitingInitialMetadata { return beginInitialMetadataLoad(access: access, allowInteraction: true) }
         do { try acquireMetadataOwnership() }

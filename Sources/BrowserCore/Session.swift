@@ -57,7 +57,7 @@ public struct Space: Codable, Identifiable, Equatable {
             .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 }
-public struct Session: Codable {
+public struct Session: Codable, Equatable {
     public var spaces: [Space]
     public var selectedSpace: UUID
     public var lastUsedSpaces: [UUID: UUID]?
