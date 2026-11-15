@@ -110,11 +110,15 @@ jobs:
 
           This preview is ad hoc signed. It is NOT Developer ID signed or notarized by Apple. macOS may block it. Keep system security enabled. If blocked, build from source or wait for a notarized release. Early builds may contain bugs and unfinished features.
 
-          Open Alcove → Extensions → Browse Chrome Web Store to discover and search extensions. From a listing, use Alcove’s Review Extension button to see publisher verification, compatibility and permissions before installing into the selected profile. The previous fullscreen and Quick Browse focus fixes are included.
+          Command-N opens another normal window. Window position, selected tabs, sidebar width and collapsed state restore after Quit. Same-profile tab, Split View and Peek transfers keep the live page. Command-W closes the last local tab and its window while keeping pages presented in other windows.
+
+          File uploads, device permissions and extension actions stay tied to their original page and window. A moved tab can open a fresh request from its new window.
+
+          Open Alcove → Extensions → Browse Chrome Web Store to find extensions. Alcove’s Review Extension button opens publisher, compatibility and permission details for the selected profile. Compatible extensions can open regular browser windows, including background windows.
 
           The preview includes a skippable opening greeting, saved-tab folders and an experimental native extension manager. Full uBlock Origin is unsupported; uBlock Origin Lite is separate and has limited tested compatibility. Native extension APIs need macOS 15.4+. Private request-blocking extensions additionally need a fixed system WebKit (624.1.16 or later); affected systems keep private browsing available and refuse that extension association.
 
-          The 0.9 series uses encrypted metadata format 5. Version 0.8 uses format 4. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt. The app does not fall back to plaintext storage.
+          Alcove 0.10 upgrades encrypted metadata from format 5 to format 6 to save window layouts and selections. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt. The metadata stays encrypted.
 
           SHA256SUMS.txt contains checksums for both installers. Checksums detect changed bytes; they do not establish developer identity.
           NOTE

@@ -202,6 +202,35 @@ enum BoostInputCheckError: Error { case failed }
         quick.window?.contentView?.layoutSubtreeIfNeeded(); await Task.yield()
         quick.requestBoosts()
         check(primaryRequests == 1 && capturedProfile == qf.profile && qs.boostEditor?.profileID == qf.profile && qs.activeProfileID != qf.profile && qs.boostEditor?.source?.window === quick.window, "The real compact action captures its source before opening a primary window that selects another profile")
+        let firstPrimary = try owner.acquirePrimaryStore()
+        let focusedPrimary = try owner.acquirePrimaryStore(copying: qs)
+        defer { owner.release(focusedPrimary.lease); owner.release(firstPrimary.lease) }
+        let presenter = focusedPrimary.store
+        qs.presentedPanel = nil; qs.boostEditor = nil
+        quick.requestSettings()
+        check(presenter.settingsVisible && !qs.settingsVisible,
+              "Quick Browse opens Settings in the focused normal window")
+        presenter.settingsVisible = false; qs.settingsVisible = false
+        quick.requestBoosts()
+        check(presenter.presentedPanel == .boosts && qs.presentedPanel == nil &&
+                presenter.boostEditor?.source?.store === qs && presenter.boostEditor?.source?.web === quickWeb &&
+                presenter.boostEditor?.source?.window === quick.window && presenter.boostEditor?.profileID == qf.profile,
+              "Quick Browse presents the Boost editor in the focused window while retaining the compact source")
+        if let compactEditor = presenter.boostEditor, let compactSource = compactEditor.source {
+            compactEditor.draft.content.javascript = "window.ownedQuickBoost = true;"
+            let saved = await compactEditor.save(in: presenter)
+            var approvedWindow: NSWindow?
+            let compactPrompt = BoostJavaScriptPrompt(confirm: { window, _, _, code, reply in
+                if code == "window.ownedQuickBoost = true;" { approvedWindow = window }
+                reply(false)
+            })
+            compactSource.pageStore(for: presenter)?.requestBoostJavaScriptApproval(compactEditor.draft.id, source: compactSource, prompt: compactPrompt)
+            check(saved && qs.boostCatalog(profileID: qf.profile).entries.contains { $0.id == compactEditor.draft.id } &&
+                    approvedWindow === quick.window && compactSource.pageStore(for: store) == nil,
+                  "A secondary Boost panel saves to the compact profile and requests consent in the original window")
+        } else { check(false, "A secondary Boost panel retains its editor and compact source") }
+        presenter.presentedPanel = nil; presenter.boostEditor = nil
+        qs.presentedPanel = nil; qs.boostEditor = nil
         let quickText = NSTextView(frame: NSRect(x: 0, y: 0, width: 180, height: 50))
         quick.window?.contentView?.addSubview(quickText); quick.window?.makeFirstResponder(quickText)
         let quickSource = try BoostEditSource(store: qs, web: quickWeb)

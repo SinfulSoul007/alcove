@@ -400,7 +400,7 @@ struct SidebarTabRow: View {
             Button(tab.pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id) }.disabled(!store.canModifyLocalMetadata)
             Button("Add to Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata)
             TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id)
-            if tab.id != store.selectedID && !tab.url.isEmpty { Button("Open in Split View") { store.splitID = tab.id } }
+            if tab.id != store.selectedID && !tab.url.isEmpty { Button("Open in Split View") { store.openInSplit(tab.id) } }
             Menu("Move to Space") {
                 ForEach(store.session.spaces.filter { $0.id != store.space.id }) { s in
                     Button(store.isPrivate ? s.name : "\(s.name) · \(store.profiles.first(where: { $0.id == s.effectiveProfileID })?.name ?? "Profile")") { store.requestMoveTab(tab.id, to: s.id) }

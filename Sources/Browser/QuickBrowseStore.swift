@@ -141,7 +141,8 @@ extension BrowserStore {
         if writer !== self { return try writer.promoteQuickPage(id, to: destination, allowProfileChange: allowProfileChange) }
         guard let owner = quickProfileID(id), let page = quickPage(id) else { throw QuickBrowseError.missing }
         try requireQuickProfile(owner)
-        var candidate = makeDocument()
+        let presenter = windowGroup?.focusedPrimary ?? self
+        var candidate = presenter.makeDocument()
         var index: Int
         if let destination {
             guard let found = candidate.session.spaces.firstIndex(where: { $0.id == destination }) else { throw ProfileError.missing }
@@ -164,7 +165,6 @@ extension BrowserStore {
         }
         candidate.session.spaces[index].tabs.append(tab); candidate.session.spaces[index].selected = id
         let spaceID = candidate.session.spaces[index].id; candidate.session.activateSpace(spaceID)
-        let presenter = windowGroup?.focusedPrimary ?? self
         try presenter.commitQuickDocument(candidate, discarding: discard, beforePublish: {
             if !crossing { self.views[id]?.removeFromSuperview() }
             if crossing { presenter.closePrimaryPeek(); self.closeQuickPeek(id) }

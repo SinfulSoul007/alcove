@@ -57,6 +57,14 @@ struct BrowserWindowHandoffChecks {
               "Normal rendering can identify the existing presenter without claiming a tab")
         check(child.primaryPageView(for: movingTab) == nil && child.views[movingTab] == nil,
               "Rendering the same tab from another window creates no second WebKit view")
+        root.update(movingTab) { $0.url = "about:blank" }
+        child.openInSplit(movingTab)
+        check(child.splitID == movingTab && child.selectedID == independentTab && child.primaryPageView(for: movingTab) === source &&
+                root.views[movingTab] == nil && child.documentIdentity(for: source) === identity,
+              "Open in Split View brings over the exact live tab and keeps the existing primary pane")
+        child.splitID = nil
+        _ = group.claimPresentation(tabID: movingTab, in: root)
+        WebPane(webView: source, store: root).mount(in: originalHost)
         child.select(movingTab)
         check(child.selectedID == movingTab && group.presentation(tabID: movingTab, in: child) == .owned,
               "The ordinary tab selection action claims the page")
@@ -101,6 +109,21 @@ struct BrowserWindowHandoffChecks {
         let returned = try await hasFixture(source, token: "moving")
         check(root.views[movingTab] === source && root.documentIdentity(for: source) === identity && returned,
               "Returning the page preserves the same document and in-memory state")
+
+        let leftTab = BrowserCore.Tab(title: "Writer choice", url: "about:blank#writer")
+        let rightTab = BrowserCore.Tab(title: "Secondary choice", url: "about:blank#secondary")
+        let separateSpace = Space(name: "Separate selection", tabs: [leftTab, rightTab])
+        let primarySpace = root.space.id
+        root.session.spaces.append(separateSpace)
+        root.selectSpace(separateSpace.id); root.select(leftTab.id); root.selectSpace(primarySpace)
+        child.selectSpace(separateSpace.id); child.select(rightTab.id); child.selectSpace(primarySpace)
+        _ = group.focusPrimary(child)
+        let selectionProbe = try root.openQuickPage(url: URL(string: "http://127.0.0.1:9/quick-selection"))
+        _ = try root.promoteQuickPage(selectionProbe, to: primarySpace)
+        check(child.selectedID == selectionProbe && child.session.spaces.first { $0.id == separateSpace.id }?.selected == rightTab.id &&
+                root.session.spaces.first { $0.id == separateSpace.id }?.selected == leftTab.id,
+              "A Quick Browse expansion preserves each window's selection in an unrelated Space")
+        child.close(selectionProbe)
         owner.release(first.lease)
         let survived = try await hasFixture(source, token: "moving")
         check(child.views[movingTab] === source && child.documentIdentity(for: source) === identity && survived,

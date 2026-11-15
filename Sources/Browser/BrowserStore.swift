@@ -549,14 +549,19 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         ]
         extensionBrowserStateChanged()
     }
+    func openInSplit(_ id: UUID) {
+        guard !isShuttingDown, id != selectedID, space.tabs.contains(where: { $0.id == id && !$0.url.isEmpty }),
+              !profileUnavailable(activeProfileID) else { return }
+        if let windowGroup, !windowGroup.claimPresentation(tabID: id, in: self) { return }
+        splitID = id
+    }
     func toggleSplit() {
         if splitID != nil { splitID = nil; return }
         guard let id = space.tabs.first(where: { $0.id != selectedID && !$0.url.isEmpty })?.id else {
             message = "Open a second website, then choose Split View."
             return
         }
-        windowGroup?.claimPresentation(tabID: id, in: self)
-        splitID = id
+        openInSplit(id)
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if action.targetFrame?.isMainFrame != false {beginExtensionMainNavigation(webView)}

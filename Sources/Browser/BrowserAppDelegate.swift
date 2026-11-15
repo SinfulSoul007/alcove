@@ -250,6 +250,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     private func preferredPrimary(of owner: BrowserWindowOwner) -> NSWindow? {
         if let activeBrowserWindow, primaryOwners[activeBrowserWindow] === owner { return activeBrowserWindow }
+        if let window = owner.store.windowGroup?.focusedPrimary?.extensionWindows[.primary]?.window,
+           primaryOwners[window] === owner { return window }
         if let normalWindow, primaryOwners[normalWindow] === owner { return normalWindow }
         return primaryOwners.first(where: { $0.value === owner })?.key
     }
@@ -363,7 +365,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func applicationWillTerminate(_ notification: Notification) {
         updateTimer?.invalidate()
-        for owner in owners.values { owner.store.shutdown() }
+        for owner in Array(owners.values) { owner.shutdown() }
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
         if let paneFocusMonitor { NSEvent.removeMonitor(paneFocusMonitor) }
     }
@@ -614,6 +616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func siteSearchSettings() { primaryForActive().presentedPanel = .siteSearch }
     @objc func linkRoutingSettings() { primaryForActive().presentedPanel = .links }
     @objc func websiteBoosts() {
+        if let quick = activeQuick { quick.requestBoosts(); return }
         let web = activeStore?.presentedPanel == nil ? activeWebView : nil
         let store = primaryForActive()
         do { try store.requestBoostEditor(for: web) } catch { store.message = error.localizedDescription }

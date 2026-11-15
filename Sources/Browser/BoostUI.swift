@@ -12,7 +12,10 @@ import BrowserCore
     private var profileName: String { store.isPrivate ? "Private" : store.profiles.first(where: { $0.id == editor.profileID })?.name ?? "Unavailable profile" }
     private var canSave: Bool { store.canEditBoosts && !store.profileUnavailable(editor.profileID) }
     private var current: SiteBoost? { store.boostCatalog(profileID: editor.profileID).entries.first(where: { $0.id == editor.draft.id }) }
-    private var sourceCurrent: Bool { editor.source?.matches(store) == true && editor.source?.host == RoutingHost.normalized(editor.draft.content.host) }
+    private var sourceCurrent: Bool {
+        guard let source = editor.source, let pageStore = source.pageStore(for: store) else { return false }
+        return source.matches(pageStore) && source.host == RoutingHost.normalized(editor.draft.content.host)
+    }
     private var entries: [SiteBoost] {
         store.boostCatalog(profileID: editor.profileID).entries.filter {
             (editor.source == nil || $0.content.host == editor.source?.host) &&
@@ -198,25 +201,27 @@ import BrowserCore
     private func perform(_ action: () throws -> Void) { do { try action(); editor.error = nil } catch { editor.error = error.localizedDescription } }
     private func approve() {
         Task { @MainActor in
-            guard await editor.save(in: store), let source = editor.source else { return }
-            store.requestBoostJavaScriptApproval(editor.draft.id, source: source, onApproved: { [weak editor] in editor?.error = nil }, onError: { [weak editor] in editor?.error = $0.localizedDescription })
+            guard await editor.save(in: store), let source = editor.source, let pageStore = source.pageStore(for: store) else { return }
+            if case .quick = source.inputContext, source.matches(pageStore) { source.window?.makeKeyAndOrderFront(nil) }
+            pageStore.requestBoostJavaScriptApproval(editor.draft.id, source: source, onApproved: { [weak editor] in editor?.error = nil }, onError: { [weak editor] in editor?.error = $0.localizedDescription })
         }
     }
     private func run() {
-        guard let source = editor.source else { return }
+        guard let source = editor.source, let pageStore = source.pageStore(for: store) else { return }
         let id = editor.draft.id
-        Task { @MainActor [weak store, weak editor] in
-            do { try await store?.executeApprovedBoostOnCurrentPage(id, source: source); editor?.error = nil }
+        Task { @MainActor [weak pageStore, weak editor] in
+            do { try await pageStore?.executeApprovedBoostOnCurrentPage(id, source: source); editor?.error = nil }
             catch { editor?.error = error.localizedDescription }
         }
     }
     private func zap() {
         Task { @MainActor in
-            guard await editor.save(in: store), let source = editor.source else { return }
+            guard await editor.save(in: store), let source = editor.source, let pageStore = source.pageStore(for: store) else { return }
             perform {
                 if current?.enabled == false { try store.setBoostEnabled(editor.draft.id, profileID: editor.profileID, enabled: true) }
-                try store.startBoostPicker(editor.draft.id, source: source)
+                try pageStore.startBoostPicker(editor.draft.id, source: source)
                 store.presentedPanel = nil
+                if case .quick = source.inputContext { source.window?.makeKeyAndOrderFront(nil) }
             }
         }
     }

@@ -40,7 +40,7 @@ import BrowserCore
             onPromotePeek: { [weak self] in self?.promotePeek() },
             onRequestProfile: { [weak self] in self?.chooseProfile($0, remember: $1) },
             onManageProfiles: requestProfiles,
-            onOpenSettings: { [weak self] in self?.requestPrimary(); self?.store.settingsVisible = true },
+            onOpenSettings: { [weak self] in self?.requestSettings() },
             onClose: { [weak self] in self?.window?.performClose(nil) },
             onNewQuick: { [weak self] in self?.newQuick() },
             onOpenBoosts: { [weak self] in self?.requestBoosts() })
@@ -106,8 +106,16 @@ import BrowserCore
         else if state.isEditingAddress { state.cancelLocation(currentURL: store.quickPage(pageID)?.tab.url ?? "") }
         else if store.quickPeekView(pageID) != nil { store.closeQuickPeek(pageID) }
     }
+    func requestSettings() {
+        requestPrimary()
+        (store.windowGroup?.focusedPrimary ?? store).settingsVisible = true
+    }
     func requestBoosts() {
-        do { try store.requestBoostEditor(for: activeWebView); requestPrimary() }
+        let presenter = store.windowGroup?.focusedPrimary ?? store
+        do {
+            try presenter.requestBoostEditor(for: activeWebView, from: store, fallbackProfile: store.quickProfileID(pageID))
+            requestPrimary()
+        }
         catch { store.message = error.localizedDescription }
     }
     func refreshMediaStatus() {

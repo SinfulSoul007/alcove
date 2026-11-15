@@ -1,6 +1,7 @@
 import AppKit
 import BrowserCore
 import CryptoKit
+import WebKit
 
 @MainActor
 final class WindowCheckApplication: NSApplication {
@@ -136,11 +137,18 @@ struct BrowserMultiWindowNativeChecks {
         application.fixtureKeyWindow = originalRight
         originalDelegate.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification, object: originalRight))
         let focusedProfile = try focusedStore.createProfile(name: "Restored focused account")
-        _ = focusedStore.newTab(url: URL(string: "http://127.0.0.1:9/existing-restored-tab"))
+        let restoredTab = focusedStore.newTab(url: URL(string: "http://127.0.0.1:9/existing-restored-tab"))
+        let isolated = WKWebViewConfiguration()
+        isolated.websiteDataStore = .nonPersistent()
+        let secondaryPage = WKWebView(frame: .zero, configuration: isolated)
+        focusedStore.registerView(secondaryPage, for: restoredTab, profile: focusedProfile)
         try originalStore.setDefaultLinkDestination(.mostRecentSpace)
         let canQuit = originalDelegate.applicationShouldTerminate(application) == .terminateNow
         check(canQuit, "The production quit decision allows restored window records to be flushed")
         originalDelegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification, object: application))
+        check(originalStore.isShuttingDown && focusedStore.isShuttingDown && focusedStore.views.isEmpty &&
+                secondaryPage.navigationDelegate == nil && secondaryPage.uiDelegate == nil,
+              "Quit shuts down both window stores and releases secondary WebKit delegates")
         application.fixtureKeyWindow = nil
         originalLeft.close(); originalRight.close()
 

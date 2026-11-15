@@ -22,7 +22,10 @@ import BrowserCore
     var isDirty: Bool { original.map { draft.content != $0.content } ?? (newIntent || draft.content != initialContent) }
     private func requireOwner(_ store: BrowserStore) throws {
         guard owner === store, !store.isShuttingDown else { throw CancellationError() }
-        if let source { guard source.store === store, source.profileID == profileID, RoutingHost.normalized(draft.content.host) == source.host else { throw BoostError.stale } }
+        if let source {
+            guard source.pageStore(for: store) != nil, source.profileID == profileID,
+                  RoutingHost.normalized(draft.content.host) == source.host else { throw BoostError.stale }
+        }
     }
     @discardableResult func save(in store: BrowserStore) async -> Bool {
         guard !isSaving else { return false }
@@ -135,8 +138,13 @@ enum BoostLookPreset: String, CaseIterable, Identifiable {
 }
 
 extension BrowserStore {
-    func requestBoostEditor(for web: WKWebView? = nil) throws {
+    func requestBoostEditor(for web: WKWebView? = nil, from pageStore: BrowserStore? = nil, fallbackProfile: UUID? = nil) throws {
         guard !isShuttingDown else { throw CancellationError() }
+        let origin = pageStore ?? self
+        if origin !== self {
+            guard !origin.isShuttingDown, origin === metadataWriter, windowGroup?.containsPrimary(self) == true,
+                  web.map({ origin.quickContext(for: $0) != nil }) ?? true else { throw BoostError.stale }
+        }
         if let editor = boostEditor, editor.isDirty || presentedPanel == .boosts {
             presentedPanel = .boosts
             if web != nil { editor.error = "Finish or cancel this draft before opening Boosts for another page." }
@@ -144,10 +152,10 @@ extension BrowserStore {
         }
         let profile: UUID, source: BoostEditSource?
         if let web {
-            guard let owner = profileID(for: web) else { throw BoostError.stale }
+            guard let owner = origin.profileID(for: web) else { throw BoostError.stale }
             profile = owner
-            source = web.url.flatMap(WebOrigin.init) == nil ? nil : try BoostEditSource(store: self, web: web)
-        } else { profile = activeProfileID; source = nil }
+            source = web.url.flatMap(WebOrigin.init) == nil ? nil : try BoostEditSource(store: origin, web: web)
+        } else { profile = fallbackProfile ?? activeProfileID; source = nil }
         let entries = boostCatalog(profileID: profile).entries
         let initial = source.map { s in entries.first(where: { $0.enabled && $0.content.host == s.host }) ?? entries.first(where: { $0.content.host == s.host }) } ?? entries.first
         boostEditor = BoostEditor(store: self, profileID: profile, source: source, initial: initial)

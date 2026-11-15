@@ -6,9 +6,7 @@ A native, open-source WebKit browser for Mac, inspired by Arc’s sidebar, Space
 
 ## Download
 
-Latest preview: [Download 0.9.1 DMG](https://github.com/SinfulSoul007/alcove/releases/download/v0.9.1-preview.1/Alcove-0.9.1-universal-unsigned-preview.dmg) · [ZIP](https://github.com/SinfulSoul007/alcove/releases/download/v0.9.1-preview.1/Alcove-0.9.1-universal-unsigned-preview.zip).
-
-Download the universal DMG or ZIP from [GitHub Releases](https://github.com/SinfulSoul007/alcove/releases). The app is self-contained: you do **not** need Xcode or developer tools to use a download. Open the DMG and drag **Alcove.app** to Applications, or unzip it and move the app there.
+Download the current universal DMG or ZIP from [GitHub Releases](https://github.com/SinfulSoul007/alcove/releases). Open the DMG and drag **Alcove.app** to Applications, or unzip it and move the app there. The download includes everything the app needs.
 
 **The preview is ad hoc signed, not Developer ID signed or notarized by Apple.** Gatekeeper may warn or block it. Do not disable Gatekeeper or other system protections to run it. If macOS blocks this preview, build from source or wait for a notarized release. Published SHA-256 checksums identify the release files; they are not an independent security certification.
 
@@ -26,6 +24,7 @@ Download the universal DMG or ZIP from [GitHub Releases](https://github.com/Sinf
 - Favorites, Pinned and Today scroll separately, keeping saved pages visible while you browse daily tabs. Bookmarking also pins the original page without reloading it.
 - Create empty folders from the Pinned header, File menu or command bar. Move tabs into folders using their context menu or drag-and-drop; rename folders or remove them while keeping their tabs pinned. Folder definitions survive relaunch.
 - Drag tabs between sections and into folders. Pinned tabs keep their title and saved home URL when closed. ⌘W closes the focused page (or Peek/panel first), then closes an empty window while leaving Alcove running.
+- Multiple normal windows share tabs and profiles. Each window has its own selected Space, selected tab and sidebar layout. Opening a shared tab in another window moves its live page.
 - Split view with actions targeted to the clicked pane.
 - Keyboard-driven command bar with tab switching, Pin/Favorite commands and no empty tab created on cancellation.
 - Shift-click Peek previews in their originating main or compact window, with close and open-in-Space controls.
@@ -53,7 +52,7 @@ Use **File → New Quick Browse** (Option-Command-N), or open a web link from an
 
 The compact window has its own address/find fields, profile selector and **Open in Space** menu. A same-profile handoff keeps the actual live website, including forms, scroll and back/forward history. A different profile requires reload consent and never copies cookies. Profile choices can be remembered for an exact hostname; subdomains do not inherit them. A paused remembered profile blocks the link until recovery instead of using another account. Forget choices or opt out of compact external windows in Settings.
 
-Quick pages stay independent when their intended Space changes or disappears. Closing the main window stops its native pages and primary Peek while keeping its saved tabs and the same browser store alive for remaining compact windows. Peeks in separate windows preserve their own live state. Command-N reopens the main window; closing the last window disposes its store, and Alcove stays in the menu bar until Quit. There is still only one normal primary window at a time.
+Quick pages stay independent when their intended Space changes or disappears. Command-N opens another normal window. Each normal window remembers its position, size, selected tabs and sidebar layout on Quit. Same-profile Peek and Quick Browse handoffs preserve the live document. Closing the last window leaves Alcove running, ready to reopen from the Dock or File menu.
 
 Quick pages and their archive are encrypted with their owning profile’s metadata. The default inactivity archive is six hours. Focused/loading pages, active playback/capture and open native sheets are kept; unknown media state is retained for a later check. Archiving closes live state and can discard unsaved forms. Choose **Off** to keep pages open. Use **Library → Archive → Quick Browse** to reopen in a compact window or directly in a matching-profile Space. Private quick records and preferences remain in memory only.
 
@@ -131,6 +130,8 @@ The earlier sidebar checkpoint has [historical verification notes](docs/releases
 
 The 0.9 preview upgrades metadata to format 5 for extension identities and permissions. Public 0.8 downloads use format 4 and cannot read format 5. Keep a backup and quit Alcove before replacing its bundle. This source also adds a skippable opening greeting before setup; turning interface animations off or using Reduce Motion bypasses it.
 
+Alcove 0.10 upgrades the encrypted metadata to format 6 to save window layouts and selections. Quit Alcove and keep a backup before installing the new preview. Earlier versions refuse newer metadata and preserve the saved file.
+
 The extension manager is available from **Alcove → Extensions…**, Settings, the command bar, the sidebar and Quick Browse. Choose **Browse Chrome Web Store** to search the official storefront. Open an extension listing and select **Review Extension** in Alcove’s toolbar. You can also review a store link or ID, extension folder, ZIP or CRX3. Reviews show the code version, source, supported API/site access and unavailable capabilities. Enable/disable, permission editing, options, explicit package updates and removal use the selected profile. Private windows cannot edit the catalog or grants. Their explicit reload controls can attach an already-open approved profile or detach its extensions after consent; private access is off by default and only spanning extensions can be approved for it. Permission and installation changes remain bound to their initiating browser window and reviewed profile.
 
 Chrome extension compatibility varies with WebKit and macOS. Full **uBlock Origin is unsupported**; the separate **uBlock Origin Lite** package has passed a real request-blocking check on macOS 26, and its manager installation, popup, dashboard, permission editing, relaunch and removal have been exercised in the development VM. Its declared `offscreen` and `userScripts` APIs are unavailable in this engine; this is not complete vendor compatibility certification. Native extension APIs require macOS 15.4+. On older engines, normal profiles reuse their own registered content controller to apply blocking rules. Request-blocking extensions cannot be approved or attached privately below system WebKit 624.1.16; the manager explains that macOS needs updating and keeps existing private pages intact. Basic private browsing and private access for other supported spanning extensions remain available. This compatibility boundary addresses a confirmed upstream WebKit bug; it is not a claim that every Chrome API works. If an enabled extension cannot start, visible recovery controls keep the existing page mounted. Retry preserves safe navigation requests; forms, frames and downloads must be submitted again from their page. On macOS 14, expected extensions cannot be silently bypassed: Continue Without is an explicit session-only choice.
@@ -182,7 +183,7 @@ This runs core/store/profile/window-lifecycle/real-website/appearance/update che
 
 ## Still needed before a stable release
 
-Broader website/login/media/download compatibility testing; accessibility and keyboard polish; permission revocation UI; authenticated update signing; password-manager integration; independent security review; performance/energy benchmarks; phishing/malware protection strategy; full bookmark import/export, broader profile lifecycle testing and multiple normal windows. WebKit does not automatically make Chrome extensions compatible.
+Broader website/login/media/download compatibility testing, accessibility and keyboard polish, permission revocation UI, authenticated update signing, password-manager integration, independent security review, performance and energy benchmarks, phishing and malware protection, full bookmark import/export, and broader Chrome extension and profile lifecycle testing.
 
 Arc-inspired next steps include more gesture/animation fidelity, automatic site-search discovery, live routing/gesture fidelity, Boosts and Easels/capture. Quick Browse supplies the Little Arc-style external-link workflow. Favorites, drag organization and Shift-click Peek are implemented; full Arc parity is not claimed. Encrypted sync and assisted workflows remain unimplemented parts of the broader browser goal. No Safari-equivalent speed or complete-security claim is made.
 

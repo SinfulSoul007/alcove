@@ -104,7 +104,20 @@ enum BrowserWindowOwnerError: LocalizedError {
         guard removed else {return}
         if primaryLeases.isEmpty && quickLeases.isEmpty && !auxiliaryLeases.isEmpty {store.archiveTimer?.invalidate();store.archiveTimer = nil}
         guard leaseCount == 0 else { return }
-        isClosed = true; pendingExternalURLs = []; store.shutdown(); onLastWindow()
+        shutdown()
+    }
+    func shutdown() {
+        guard !isClosed else { return }
+        isClosed = true
+        pendingExternalURLs = []
+        // Flush with all the open window records intact before releasing their runtimes.
+        store.shutdown()
+        for member in groupedPrimaries.values where member !== store { member.shutdown() }
+        groupedPrimaries.removeAll()
+        primaryLeases.removeAll()
+        quickLeases.removeAll()
+        auxiliaryLeases.removeAll()
+        onLastWindow()
     }
     func drainExternalLinks() -> [ExternalLinkDestination] {
         guard !isClosed, !store.awaitingInitialMetadata, store.savingEnabled else { return [] }

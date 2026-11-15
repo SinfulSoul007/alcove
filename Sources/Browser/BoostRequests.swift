@@ -11,6 +11,7 @@ import BrowserCore
     let host: String
     let url: URL
     let documentID: NSUUID
+    private let presentationID: NSUUID
     let inputContext: SearchInputContext
     private var closed = false
     private var closing: NSObjectProtocol?
@@ -23,7 +24,9 @@ import BrowserCore
               let context = store.searchInputContext(quickID: store.quickContext(for: web)?.id) else { throw BoostError.stale }
         self.store = store; self.web = web; self.window = window
         profileID = profile; host = origin.host; self.url = url
-        documentID = store.documentIdentity(for: web); inputContext = context
+        documentID = store.documentIdentity(for: web)
+        presentationID = store.presentationIdentity(for: web)
+        inputContext = context
         closing = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -33,10 +36,18 @@ import BrowserCore
         }
     }
     deinit { if let closing { NotificationCenter.default.removeObserver(closing) } }
+    func pageStore(for presenter: BrowserStore) -> BrowserStore? {
+        guard let store, !store.isShuttingDown, !presenter.isShuttingDown else { return nil }
+        if store === presenter { return store }
+        guard case .quick = inputContext, presenter.metadataWriter === store,
+              presenter.windowGroup?.containsPrimary(presenter) == true else { return nil }
+        return store
+    }
     func matches(_ owner: BrowserStore) -> Bool {
         guard store === owner, !closed, !owner.isShuttingDown, let web, let window,
               web.window === window, web.navigationDelegate === owner, !owner.profileUnavailable(profileID),
               owner.profileID(for: web) == profileID, owner.documentIdentity(for: web) === documentID,
+              owner.presentationIdentity(for: web) === presentationID,
               owner.matchesBoostWebsiteDataStore(web, profileID: profileID),
               web.url == url, web.url.flatMap(WebOrigin.init)?.host == host,
               owner.matchesSearchInputContext(inputContext) else { return false }
