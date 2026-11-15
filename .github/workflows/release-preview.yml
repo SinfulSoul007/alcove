@@ -110,9 +110,11 @@ jobs:
 
           This preview is ad hoc signed. It is NOT Developer ID signed or notarized by Apple. macOS may block it. Keep system security enabled. If blocked, build from source or wait for a notarized release. Early builds may contain bugs and unfinished features.
 
-          This preview adds a skippable opening greeting, saved-tab folders and an experimental native extension manager. Full uBlock Origin is unsupported; uBlock Origin Lite is separate and has limited tested compatibility. Native extension APIs need macOS 15.4+. Private request-blocking extensions additionally need a fixed system WebKit (624.1.16 or later); affected systems keep private browsing available and refuse that extension association.
+          This patch keeps navigation controls visible in native fullscreen and repairs initial/repeated Quick Browse address focus, URL selection and the shared Find editor. Focus and fullscreen changes preserve the mounted page and its unsaved form state.
 
-          Developing 0.9 data uses encrypted metadata format 5, which 0.8 cannot read. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt. The app does not fall back to plaintext storage.
+          The preview includes a skippable opening greeting, saved-tab folders and an experimental native extension manager. Full uBlock Origin is unsupported; uBlock Origin Lite is separate and has limited tested compatibility. Native extension APIs need macOS 15.4+. Private request-blocking extensions additionally need a fixed system WebKit (624.1.16 or later); affected systems keep private browsing available and refuse that extension association.
+
+          Versions 0.9 and 0.9.1 use encrypted metadata format 5, which 0.8 cannot read. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt. The app does not fall back to plaintext storage.
 
           SHA256SUMS.txt contains checksums for both installers. Checksums detect changed bytes; they do not establish developer identity.
           NOTE

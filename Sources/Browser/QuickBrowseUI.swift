@@ -580,8 +580,12 @@ struct QuickBrowseInput: NSViewRepresentable {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.pendingFocus, self.isEnabled, let window = self.window, window.isKeyWindow else { return }
                 self.pendingFocus = false
-                window.makeFirstResponder(self)
-                if self.selectAllWhenFocused { self.selectText(nil) }
+                // Reentering the control's selectText can end editing and
+                // cancel address mode. Select within its existing editor.
+                if self.currentEditor().map({ window.firstResponder === $0 }) != true {
+                    guard window.makeFirstResponder(self) else { return }
+                }
+                if self.selectAllWhenFocused { self.currentEditor()?.selectAll(nil) }
             }
         }
     }

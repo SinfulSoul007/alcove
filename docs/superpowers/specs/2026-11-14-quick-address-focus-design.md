@@ -1,0 +1,9 @@
+# Quick Browse native address focus
+
+Explicit CmdL, File/Open Location, the blank-page address button and initial empty-window presentation must focus the native address editor. Repeated requests must select its current displayed URL without ending editing, and no focus action may reload or replace the website. Find uses the same input component and must retain nonempty-query selection. A background request waits for its own key window; closing that window must not focus another window's field.
+
+Actual public0.9 and native-source probes reproduce the defect: makeFirstResponder followed by NSTextField.selectText reenters the field editor, emits end-editing and triggers the address's legitimate onEndEditing cancellation. A single selectText alone helps initial focus but still cancels repeated requests. An owned experiment that keeps an already-current editor and selects directly through NSText preserves initial, repeated and post-blur focus. Production code is unchanged pending a real-controller failing regression.
+
+Use the existing QuickBrowseInput.Field: avoid responder reassignment when its editor is already first responder; when needed makeFirstResponder once, then select through the resulting editor. Preserve existing pending/key-window/enabled/weak-callback guards and editing/menu/IME contracts. Alternatives (suppress every end-edit callback or add retry timers) hide legitimate blur or introduce focus stealing; no such change is needed by the evidence.
+
+Constraints: macOS14.0 minimum; public AppKit/SwiftUI only; preserve data protection, six entitlements, profile/website ownership, release identity and the published0.9 assets. Do not modify the completed fullscreen plan or call this full browser/Arc completion. This repair gets a source-based actual Quick controller regression, required focused/full gates, one fresh review and live public-style keyboard verification before publication.

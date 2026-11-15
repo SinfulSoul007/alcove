@@ -278,6 +278,12 @@ if [[ "${1:-}" == "chrome-test" ]]; then
     "$MANUAL/chrome-checks"
     exit
 fi
+# Explicit GUI mode; never enter native windows during the default CI suite.
+if [[ "${1:-}" == "quick-focus-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseFocusChecks.swift -o "$MANUAL/quick-focus-checks"
+    "$MANUAL/quick-focus-checks"
+    exit
+fi
 if [[ "${1:-}" == "quick-native-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseNativeChecks.swift -o "$MANUAL/quick-native-checks"
     "$MANUAL/quick-native-checks"
