@@ -503,17 +503,26 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             check(normal.views[websiteID] === website && formKept == true,"Extension-page disposal preserves the ordinary website view, unsaved form and cookie")
             nativeCleanupSafe = true
         }
-        func retainedPageExercise(clearing:Bool = false) async throws {
+        func retainedPageExercise(clearing:Bool = false, grouped:Bool = false) async throws {
             nativeCleanupSafe = false
-            let normal = BrowserStore(dataRoot:root.appendingPathComponent(clearing ? "retained-clear-view" : "retained-options-view"),keyProvider:{_ in key});defer {normal.shutdown()}
+            let caseName = grouped ? "retained-secondary-view" : (clearing ? "retained-clear-view" : "retained-options-view")
+            let normal = BrowserStore(dataRoot:root.appendingPathComponent(caseName),keyProvider:{_ in key});defer {normal.shutdown()}
             let profile = try normal.createProfile(name:"Owned retained options"),controllerID = normal.profiles.first(where:{$0.id == profile})!.extensionControllerID!
             try owned.register(profile);try controllers.register(controllerID)
+            let owner = BrowserWindowOwner(store: normal)
+            let primary = try grouped ? owner.acquirePrimaryStore() : nil
+            let secondary = try grouped ? owner.acquirePrimaryStore(copying: normal) : nil
+            defer {
+                if let secondary { owner.release(secondary.lease) }
+                if let primary { owner.release(primary.lease) }
+            }
+            let presenter = secondary?.store ?? normal
             let window = NSWindow(contentRect:NSRect(x:0,y:0,width:600,height:400),styleMask:[.titled,.closable],backing:.buffered,defer:false)
-            window.isReleasedWhenClosed = false;normal.registerExtensionWindow(window,kind:.primary)
-            defer {normal.unregisterExtensionWindow(kind:.primary);window.contentView = nil;window.close()}
+            window.isReleasedWhenClosed = false;presenter.registerExtensionWindow(window,kind:.primary)
+            defer {presenter.unregisterExtensionWindow(kind:.primary);window.contentView = nil;window.close()}
             let package = try ExtensionPackage.prepare(at:root.appendingPathComponent("source"),stagingRoot:root.appendingPathComponent("retained-staging")),approval = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting","declarativeNetRequest"],enable:true),id = try await normal.installExtension(package,approval:approval)
-            let tab = try await normal.openExtensionOptions(id,profileID:profile)
-            var retained:WKWebView? = normal.views[tab]
+            let tab = try await presenter.openExtensionOptions(id,profileID:profile)
+            var retained:WKWebView? = presenter.views[tab]
             window.contentView = retained
             try await wait{(try? await retained?.evaluateJavaScript("window.ownedErasureReady === true")) as? Bool == true}
             _ = try await js(retained!,"localStorage.setItem('owned-retained-document','keep until released');return true;")
@@ -527,6 +536,20 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
                 check(refused && !ExtensionErasureJobs.holds(controllerID) && kept == true && normal.profiles.first(where:{$0.id == profile})?.isPendingClear == true && normal.profiles.first(where:{$0.id == profile})?.extensionControllerID == controllerID,"An actual retained extension document keeps profile clearing pending in its original namespace before erasure starts")
             } else {
                 check(refused && !ExtensionErasureJobs.holds(controllerID) && kept == true && normal.extensionRecords(profileID:profile).first?.pendingRemoval == true,"An actual retained options view leaves removal pending before any native erasure starts")
+            }
+            if let secondary {
+                check(refused && presenter.views[tab] == nil && normal.tab(tab) == nil,
+                      "Uninstall finds the actual extension page in a secondary normal window")
+                presenter.unregisterExtensionWindow(kind: .primary)
+                window.contentView = nil; window.close()
+                owner.release(secondary.lease)
+                check(presenter.isShuttingDown && normal.closingPages.contains { $0.webView === retained },
+                      "Closing the secondary window transfers its retained erasure barrier to the writer")
+                var stillBlocked = false
+                do { try await normal.finishRemoveExtension(id, profileID: profile) }
+                catch ProfileError.pagesClosing { stillBlocked = true }
+                check(stillBlocked && normal.extensionRecords(profileID: profile).first?.pendingRemoval == true,
+                      "The writer still refuses erasure while the closed secondary window's document is retained")
             }
             window.contentView = nil;retained = nil
             try await wait{original.webView == nil}
@@ -574,7 +597,7 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             await inspector.removeData(ofTypes:types,from:remaining)
             nativeCleanupSafe = true
         }
-        do {try await exercise();try await staticBlockingExercise();try await privateBlockingExercise();try await lifetimeExercise(cancelWaiter:true);try await lifetimeExercise(cancelWaiter:false);try await lifetimeExercise(cancelWaiter:false,failFinalSave:true);try await damagedPackageExercise(missing:false);try await damagedPackageExercise(missing:true);try await profileClearExercise();try await profileDeleteExercise();try await retiredNamespaceExercise(removing:false);try await retiredNamespaceExercise(removing:true);try await openPagesExercise();try await retainedPageExercise();try await retainedPageExercise(clearing:true)} catch {check(false,"Owned erasure fixture failed: "+String(describing:error))}
+        do {try await exercise();try await staticBlockingExercise();try await privateBlockingExercise();try await lifetimeExercise(cancelWaiter:true);try await lifetimeExercise(cancelWaiter:false);try await lifetimeExercise(cancelWaiter:false,failFinalSave:true);try await damagedPackageExercise(missing:false);try await damagedPackageExercise(missing:true);try await profileClearExercise();try await profileDeleteExercise();try await retiredNamespaceExercise(removing:false);try await retiredNamespaceExercise(removing:true);try await openPagesExercise();try await retainedPageExercise();try await retainedPageExercise(clearing:true);try await retainedPageExercise(grouped:true)} catch {check(false,"Owned erasure fixture failed: "+String(describing:error))}
         if nativeCleanupSafe {check(await controllers.cleanup(),"Erasure fixtures clear only their journaled native storage")}
         else {print("RECOVERY_REQUIRED",root.path)}
         check(await owned.cleanup(),"Erasure fixtures remove only their owned named website stores")

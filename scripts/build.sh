@@ -275,6 +275,11 @@ if [[ "${1:-}" == "page-output-website-test" ]]; then
     "$MANUAL/page-output-website-checks"
     exit
 fi
+run_website_prompt_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/WebsitePromptChecks.swift -o "$MANUAL/website-prompt-checks"
+    "$MANUAL/website-prompt-checks"
+}
+if [[ "${1:-}" == "website-prompt-test" ]]; then run_website_prompt_checks; exit; fi
 if [[ "${1:-}" == "page-output-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/PageOutputChecks.swift -o "$MANUAL/page-output-checks"
     "$MANUAL/page-output-checks"
@@ -371,6 +376,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_window_group_checks
     run_multi_window_native_checks
     run_window_handoff_checks
+    run_website_prompt_checks
     run_writer_checks
     run_startup_checks
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostInputChecks.swift -o "$MANUAL/boosts-input-checks"

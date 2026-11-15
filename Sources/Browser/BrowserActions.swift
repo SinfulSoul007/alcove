@@ -211,26 +211,54 @@ extension BrowserStore {
         if (error as NSError).code != NSURLErrorCancelled { message = error.localizedDescription }; revision += 1
     }
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
-        let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = parameters.allowsDirectories; panel.allowsMultipleSelection = parameters.allowsMultipleSelection
-        panel.begin { result in completionHandler(result == .OK ? panel.urls : nil) }
+        guard frame.webView === webView else { completionHandler(nil); return }
+        requestWebsiteFiles(from: webView, present: { window, finish in
+            let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = parameters.allowsDirectories; panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            panel.beginSheetModal(for: window) { result in finish(result == .OK ? panel.urls : nil) }
+        }, completion: completionHandler)
     }
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
-        // Resolve the actual foreground page, including compact windows and their Peek.
-        guard isFocusedWebsite(webView), webView.window?.attachedSheet == nil,
+        guard frame.webView === webView, webView.url?.scheme == "https",
               origin.protocol == "https", origin.host == webView.url?.host,
               (origin.port == 0 ? 443 : origin.port) == (webView.url?.port ?? 443),
               frame.securityOrigin.host == origin.host, frame.securityOrigin.protocol == origin.protocol,
               frame.securityOrigin.port == origin.port else { decisionHandler(.deny); return }
         let resource = type == .camera ? "camera" : (type == .microphone ? "microphone" : "camera and microphone")
         let originLabel = "https://" + origin.host + (origin.port == 0 || origin.port == 443 ? "" : ":\(origin.port)")
-        let alert = NSAlert(); alert.messageText = "Allow \(originLabel) to use your \(resource)?"
-        alert.informativeText = "Only allow access if you trust this website. macOS also controls Alcove’s device access. This choice applies to this request."
-        alert.addButton(withTitle: "Don’t Allow"); alert.addButton(withTitle: "Allow Once")
-        guard let window = webView.window else { decisionHandler(.deny); return }
-        let requestedURL = webView.url
-        alert.beginSheetModal(for: window) { [weak self, weak webView] result in
-            let stillCurrent = webView.map { self?.isFocusedWebsite($0) == true && $0.url == requestedURL } ?? false
-            decisionHandler(result == .alertSecondButtonReturn && stillCurrent ? .grant : .deny)
+        requestWebsiteMedia(from: webView, present: { window, finish in
+            let alert = NSAlert(); alert.messageText = "Allow \(originLabel) to use your \(resource)?"
+            alert.informativeText = "Only allow access if you trust this website. macOS also controls Alcove’s device access. This choice applies to this request."
+            alert.addButton(withTitle: "Don’t Allow"); alert.addButton(withTitle: "Allow Once")
+            alert.beginSheetModal(for: window) { finish($0 == .alertSecondButtonReturn) }
+        }, completion: decisionHandler)
+    }
+    func requestWebsiteFiles(from webView: WKWebView, present: (NSWindow, @escaping ([URL]?) -> Void) -> Void,
+                             completion: @escaping ([URL]?) -> Void) {
+        requestWebsitePrompt(from: webView, denied: nil, present: present, completion: completion)
+    }
+    func requestWebsiteMedia(from webView: WKWebView, present: (NSWindow, @escaping (Bool) -> Void) -> Void,
+                             completion: @escaping (WKPermissionDecision) -> Void) {
+        requestWebsitePrompt(from: webView, denied: .deny, present: { window, finish in
+            present(window) { finish($0 ? .grant : .deny) }
+        }, completion: completion)
+    }
+    private func requestWebsitePrompt<Value>(from web: WKWebView, denied: Value,
+                                              present: (NSWindow, @escaping (Value) -> Void) -> Void,
+                                              completion: @escaping (Value) -> Void) {
+        guard isFocusedWebsite(web), let window = web.window, window.attachedSheet == nil,
+              let url = web.url, let profile = profileID(for: web) else { completion(denied); return }
+        let document = documentIdentity(for: web)
+        let presentation = presentationIdentity(for: web)
+        var finished = false
+        present(window) { [weak self, weak web, weak window] result in
+            guard !finished else { return }
+            finished = true
+            // A sheet may finish before AppKit returns key status to its original window.
+            guard let self, let web, let window, web.window === window, web.url == url,
+                  self.profileID(for: web) == profile, self.isVisibleWebsite(web),
+                  self.documentIdentity(for: web) === document,
+                  self.presentationIdentity(for: web) === presentation else { completion(denied); return }
+            completion(result)
         }
     }
 }
