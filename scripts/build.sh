@@ -11,6 +11,11 @@ MANUAL="$PWD/.build/manual/$ARCH"
 FLAGS=(-sdk "$SDK" -module-cache-path "$PWD/.build/cache" -target "$ARCH-apple-macosx14.0")
 mkdir -p "$MANUAL" "$OUT/Contents/MacOS"
 xcrun swiftc "${FLAGS[@]}" -emit-module -emit-library -enable-testing -module-name BrowserCore Sources/BrowserCore/*.swift -o "$MANUAL/libBrowserCore.dylib" -emit-module-path "$MANUAL/BrowserCore.swiftmodule"
+if [[ "${1:-}" == "window-model-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/BrowserWindowWorkspaceChecks.swift -o "$MANUAL/window-workspace-checks"
+    "$MANUAL/window-workspace-checks"
+    exit
+fi
 STORE_SOURCES=()
 for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
 SIDEBAR_SOURCES=()

@@ -1,0 +1,39 @@
+# Shared browser windows and live tab handoff
+
+The user wants a complete Mac browser matching Arc's useful behavior and visual experience. Normal windows currently share neither independent selections nor an actual New Window action: CmdN resurfaces one main window. This project adds multiple real normal windows sharing one library and one live instance of each tab. It does not reduce the remaining full-browser scope.
+
+## Behavior and references
+
+[Arc's command actions](https://start.arc.net/command-bar-actions) distinguish New Window (shared Spaces/tabs) from Blank Window. Its [November30,2023/v1.19.1 release notes](https://resources.arc.net/hc/en-us/articles/20498377604887-Arc-for-macOS-2023-Release-Notes) explicitly describe Tab Handoff retaining form, scroll and video state with one loaded tab instance across windows.
+
+- CmdN creates another normal browser window. Each window independently selects a Space, tab and split/focused pane, and owns its sidebar reveal, command bar, Find, sheets and Peek. Shared tab/folder/Favorite/Space/profile/theme/library edits appear in all normal windows.
+- Different tabs remain usable in different windows. Explicitly selecting the same tab in another window transfers the exact WKWebView; it does not navigate, reload, duplicate the document or copy cookies. The old presenter shows a themed placeholder: “This tab is open in another window” and “Bring it here”, plus a “Go to window” action. Rendering a placeholder must never automatically steal it back.
+- A new window initially copies the active normal window's selection and claims its current tab. Split panes are window-local; a second pane can be handed off independently. Ordinary navigation, Back/Forward, Find, output and extension actions target the invoking window's actual document. Intentional navigation can replace a document as today; handoff alone cannot.
+- Close Tab retains the implemented tab/archive/pin behavior and updates the shared library. An empty active window closes without quitting the app. Close Window closes only that window. Closing a presenter gives a still-selected tab back to a surviving window when possible, otherwise retains it in the shared page pool until normal suspension/last-primary teardown rules apply. Closing the last normal window must preserve surviving Quick/private windows and the metadata writer's lifetime rules.
+- Restore saved normal-window selections and their logical tab assignments after restart. Closing a window removes its restore record. Old single-window documents migrate without losing tabs, profiles or Quick state. Private windows remain temporary and separate from normal metadata.
+
+## Constraints
+
+- macOS14.0 minimum; public Swift/AppKit/SwiftUI/WebKit APIs; unchanged six entitlements, Keychain protection and named profile stores. No copied Arc assets/private data.
+- One normal metadata ownership lease and coalesced writer. A second primary cannot open a second independent writable BrowserStore at the same root. Never fall back to plaintext.
+- Public0.9.1 remains pinned to c6210cc. Development uses the existing isolated VM worktree on feat/shared-windows; canonical main and its release verification stay independent. Do not overwrite published tags/assets.
+- New window metadata belongs in the next feature preview0.10.0/build18 and a deliberate migration gate (format6);0.9.1 remains format5. Preserve an old document fixture and explicit downgrade notes.
+- Page source/document/profile/window validation, pending permission/output/Boost cancellation, extension approval/grants/private isolation and whole-owner shutdown remain mandatory. Moving a page invalidates old window-specific UI tickets without treating the same document as a new navigation.
+
+## Chosen architecture — implementation decisions
+
+Use a main-actor window group coordinating window-local BrowserStore lenses over one authoritative session/library and writer. Keep existing UI types and window-local fields; shared metadata updates are synchronously reconciled and broadcast with a reentrancy guard, preserving each lens's selection. A pure BrowserWindowWorkspace model holds canonical session data, per-window selections, focused-window identity and logical tab-to-window assignments. Selection projection changes only selection fields; URL/title/folder/order/profile data remains shared. The canonical legacy selection follows the focused window for backward/default restoration.
+
+This is the agent's choice under the user's standing autonomous authorization. Reusing one unmodified store would couple every window's controls. Independent full stores with independent vaults would race saves and reload pages. A wholesale rewrite of every UI component into a new facade is unnecessary; coordinating the existing stores preserves source-bound behavior and limits UI churn.
+
+The group has one persistent root store and weak member registration. Secondary stores skip metadata-key lookup/lease acquisition; saving, loading/failure state, profile operations and shared services delegate to the group/root. Writes from either window use the current shared snapshot. Multi-field document application runs as one broadcast transaction; no stale captured snapshot may replace a later window edit.
+
+Live pages have one registered resource owner plus a separate presentation claim. Handoff removes old observations/delegates without discard/stop/load, transfers document identity and icon/runtime bindings, rebinds to the receiving store and mounts the same native view. A hidden pool/root can own an unpresented page. Global tab removal/profile clearing and shutdown visit every member/pool exactly once. Archive and suspension protect all actually displayed normal/split pages, not just the root selection. Closing a single window never calls whole-group shutdown.
+
+The extension runtime stays one normal controller/background per profile, with explicit normal clients in addition to the existing separately authorized private clients. A logical tab has one stable extension tab identity and one assigned native extension window; shared sidebar copies are not enumerated as duplicate extension tabs. Handoff emits a tab move and rebinds the existing adapter. Normal-client registration never grants private access or bypasses package/profile/lease checks. Active commands and window creation use explicit target windows.
+
+Persist only bounded, validated normal-window selection/assignment/geometry records inside encrypted metadata. Validate references after tab/Space/profile mutation; reject ambiguous duplicate identities at the core model boundary and repair untrusted persisted records before binding the model. Existing profiles/tabs remain recoverable if window records are unusable. Clamp restored frames to a visible screen. Sidebar width/motion preferences retain existing behavior; local reveal/resize transactions cannot affect another window.
+
+## Proof required
+
+Core tests must exercise independent selections with shared edits, focused persistence projection, tab moves/removal, stale/closed window requests, duplicate identities and restore repair. Real WebKit tests must transfer a post-load unsaved form plus a per-request document token, scroll and media state in both directions, with no navigation, one live instance, separate tab usability and old-host detachment. Actual native delegate tests must cover two windows, CmdN/close/reopen, source-bound output/Boost/extension requests and profile/private cleanup. A real VM build must be exercised through the UI for window-local focus, resizing/sidebar/Find, handoff placeholders, fullscreen and retained forms. The full suite, optimized ARM/Intel/universal/package gates, one fresh final review, exact-source CI and public download-back remain required. Narrow model tests do not establish a working multi-window browser or full Arc parity.
