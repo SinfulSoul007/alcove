@@ -37,7 +37,12 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var commandError: String?
     var commandOpensNewTab = false
     private(set) var commandFocusRequest = 0
-    @Published var sidebarVisible = true
+    @Published var sidebarVisible = true {
+        didSet { if oldValue != sidebarVisible { windowGroup?.sidebarLayoutDidChange(in: self) } }
+    }
+    @Published var windowSidebarWidth: Double? {
+        didSet { if oldValue != windowSidebarWidth { windowGroup?.sidebarLayoutDidChange(in: self) } }
+    }
     @Published var presentedPanel: BrowserPanel?
     @Published var boostPicker: BoostPickerSession?
     @Published var boostEditor: BoostEditor?

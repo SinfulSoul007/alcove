@@ -31,9 +31,6 @@ final class BrowserWindowGroup {
                                                windows: saved?.records.map(\.selection) ?? [],
                                                focusedWindowID: saved?.focusedWindowID,
                                                assignments: saved?.assignments ?? [:])
-        for record in saved?.records ?? [] {
-            if let frame = record.frame, frame.isValid { frames[record.selection.id] = frame }
-        }
         self.root = root
         root.windowGroup = self
     }
@@ -68,16 +65,20 @@ final class BrowserWindowGroup {
         return store
     }
 
-    func attachRestoredPrimaries() -> [(store: BrowserStore, frame: BrowserWindowFrame?, focused: Bool)] {
+    func attachRestoredPrimaries(using saved: BrowserWindowRestoreState) -> [(store: BrowserStore, frame: BrowserWindowFrame?, focused: Bool)] {
         guard let root, members.isEmpty, !root.isShuttingDown else { return [] }
+        let byID = Dictionary(uniqueKeysWithValues: saved.records.map { ($0.selection.id, $0) })
         let restored = workspace.windows.map { window in
-            (store: attachPrimary(window.id, root: root), frame: frames[window.id], focused: window.id == workspace.focusedWindowID)
+            let record = byID[window.id]
+            if let frame = record?.frame, frame.isValid { frames[window.id] = frame }
+            let store = attachPrimary(window.id, root: root, restoring: record)
+            return (store: store, frame: frames[window.id], focused: window.id == workspace.focusedWindowID)
         }
         publishWorkspace(workspace)
         return restored
     }
 
-    private func attachPrimary(_ id: UUID, root: BrowserStore) -> BrowserStore {
+    private func attachPrimary(_ id: UUID, root: BrowserStore, restoring record: BrowserWindowRestoreRecord? = nil) -> BrowserStore {
         let store: BrowserStore
         if root.windowGroupID == nil { store = root }
         else {
@@ -85,6 +86,8 @@ final class BrowserWindowGroup {
                                  metadataKeyAccess: root.metadataKeyAccess, windowGroup: self)
         }
         store.windowGroupID = id
+        store.windowSidebarWidth = record?.sidebarWidth
+        store.sidebarVisible = record?.sidebarVisible ?? true
         members[id] = Member(store: store)
         if store !== root {
             broadcasting = true
@@ -222,11 +225,20 @@ final class BrowserWindowGroup {
         root?.save()
     }
 
+    func sidebarLayoutDidChange(in store: BrowserStore) {
+        guard containsPrimary(store) else { return }
+        root?.save()
+    }
+
     func restoreState() -> BrowserWindowRestoreState? { restoreState(for: workspace) }
 
     private func restoreState(for workspace: BrowserWindowWorkspace) -> BrowserWindowRestoreState? {
         guard !workspace.windows.isEmpty else { return nil }
-        let records = workspace.windows.map { BrowserWindowRestoreRecord(selection: $0, frame: frames[$0.id]) }
+        let records = workspace.windows.map { selection in
+            let store = members[selection.id]?.store
+            return BrowserWindowRestoreRecord(selection: selection, frame: frames[selection.id],
+                                              sidebarWidth: store?.windowSidebarWidth, sidebarVisible: store?.sidebarVisible)
+        }
         return BrowserWindowRestoreState(records: records, focusedWindowID: workspace.focusedWindowID,
                                          assignments: workspace.assignments)
     }

@@ -65,31 +65,31 @@ struct WebPane: NSViewRepresentable {
 }
 
 struct BrowserUI: View {
-    private static let defaultSidebarWidth = 236.0
     @ObservedObject var store: BrowserStore
     @EnvironmentObject private var updates: UpdateController
-    @AppStorage("sidebarWidth") private var savedSidebarWidth = Self.defaultSidebarWidth
-    @State private var windowSidebarWidth: Double
+    @AppStorage("sidebarWidth") private var savedSidebarWidth = SidebarSizing.defaultWidth
+    private let initialSidebarWidth: Double
     @StateObject private var reveal = SidebarRevealController()
     @StateObject private var chrome = NativeWindowChrome()
     @State private var resize = SidebarResizeState()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     init(store: BrowserStore, sidebarDefaults: UserDefaults? = nil) {
         self.store = store
-        _savedSidebarWidth = AppStorage(wrappedValue: Self.defaultSidebarWidth, "sidebarWidth", store: sidebarDefaults)
+        _savedSidebarWidth = AppStorage(wrappedValue: SidebarSizing.defaultWidth, "sidebarWidth", store: sidebarDefaults)
         let savedWidth = (sidebarDefaults ?? .standard).object(forKey: "sidebarWidth") as? Double
-        _windowSidebarWidth = State(initialValue: savedWidth ?? Self.defaultSidebarWidth)
+        initialSidebarWidth = SidebarSizing.validSavedWidth(savedWidth) ?? SidebarSizing.defaultWidth
     }
     private var sidebarWidth: Double {
-        store.windowGroupID == nil ? savedSidebarWidth : windowSidebarWidth
+        if store.windowGroupID == nil { return savedSidebarWidth }
+        return store.windowSidebarWidth ?? initialSidebarWidth
     }
     private func setSidebarWidth(_ width: Double) {
-        windowSidebarWidth = width
+        if store.windowGroupID != nil { store.windowSidebarWidth = width }
         savedSidebarWidth = width
     }
     private func resetSidebarWidth() {
         resize.cancel()
-        setSidebarWidth(Self.defaultSidebarWidth)
+        setSidebarWidth(SidebarSizing.defaultWidth)
         reveal.endResize()
     }
     var sidebarInteractionBlocked: Bool {
@@ -180,6 +180,9 @@ struct BrowserUI: View {
             .animation(motion, value: store.commandVisible)
             .animation(motion, value: store.primaryPeekView != nil)
             .onAppear { reveal.setEnabled(floatingAllowed) }
+            .onChange(of: store.windowGroupID, initial: true) { _, windowID in
+                if windowID != nil, store.windowSidebarWidth == nil { store.windowSidebarWidth = initialSidebarWidth }
+            }
             .onChange(of: floatingAllowed) { _, value in reveal.setEnabled(value) }
             .onChange(of: store.sidebarVisible) { _, _ in resize.cancel(); reveal.endResize() }
             .sheet(item: sheetPanel) { panel in

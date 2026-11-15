@@ -68,7 +68,7 @@ enum BrowserWindowOwnerError: LocalizedError {
         guard windowGroup == nil, primaryLeases == expectedLeases, let saved = store.savedWindowRestore else { return [] }
         let group = try BrowserWindowGroup(root: store, restoring: saved)
         windowGroup = group
-        let restored = try group.attachRestoredPrimaries().map { entry in
+        let restored = try group.attachRestoredPrimaries(using: saved).map { entry in
             let token = try (entry.store === store ? lease : nil) ?? acquirePrimary()
             groupedPrimaries[token] = entry.store
             return RestoredPrimaryStore(store: entry.store, lease: token, frame: entry.frame, focused: entry.focused)

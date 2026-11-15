@@ -269,6 +269,30 @@ import CryptoKit
         await settle()
         check(didReset && saved() == 236 && number(leftGrip.accessibilityValue()) == 236 &&
               number(nextGrip.accessibilityValue()) == 320, "Reset resizes the invoking sidebar without resizing other open windows")
+
+        leftGrip.setAccessibilityValue(268 as NSNumber)
+        rightMember.store.sidebarVisible = false
+        let originalIDs = [left.store, rightMember.store, next.store].compactMap(\.windowGroupID)
+        root.shutdown()
+        defaults.set(296.0, forKey: "sidebarWidth")
+        let reopenedRoot = BrowserStore(dataRoot: dataRoot, keyProvider: { _ in key })
+        let reopenedOwner = BrowserWindowOwner(store: reopenedRoot)
+        let restored = try reopenedOwner.restorePrimaryStores()
+        let reopenedWindows = restored.map { mount($0.store) }
+        defer {
+            for window in reopenedWindows { window.contentView = nil; window.close() }
+            for entry in restored { reopenedOwner.release(entry.lease) }
+        }
+        await settle()
+        let restoredWidths = reopenedWindows.map { window in
+            number(descendants(window.contentView!, SidebarResizeHandle.Handle.self).first?.accessibilityValue())
+        }
+        check(originalIDs.count == 3 && restored.map(\.store.windowGroupID) == originalIDs.map(Optional.some),
+              "The same three normal windows come back from the encrypted workspace")
+        check(restoredWidths == [268, 236, 320] && saved() == 296,
+              "Relaunch restores both resized and untouched sidebar widths without changing the default")
+        check(restored.map(\.store.sidebarVisible) == [true, false, true],
+              "Relaunch keeps a collapsed sidebar local to its original window")
         if failures > 0 { exit(1) }
     }
 }

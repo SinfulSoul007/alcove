@@ -2,8 +2,17 @@ import Foundation
 
 public enum SidebarSection { case favorites, pinned, today }
 public enum SidebarSizing {
+    public static let defaultWidth = 236.0
+    private static let widthRange = 196.0...360.0
+
+    public static func validSavedWidth(_ saved: Double?) -> Double? {
+        guard let saved, widthRange.contains(saved) else { return nil }
+        return saved
+    }
+
     public static func width(saved: Double, windowWidth: Double) -> Double {
-        min(max(196, saved), min(360, max(196, windowWidth * 0.45)))
+        let minimum = widthRange.lowerBound
+        return min(max(minimum, saved), min(widthRange.upperBound, max(minimum, windowWidth * 0.45)))
     }
 }
 extension Session {

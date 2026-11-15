@@ -31,10 +31,25 @@ public struct BrowserWindowFrame: Codable, Equatable {
 public struct BrowserWindowRestoreRecord: Codable, Equatable {
     public let selection: BrowserWindowSelection
     public let frame: BrowserWindowFrame?
+    public let sidebarWidth: Double?
+    public let sidebarVisible: Bool?
 
-    public init(selection: BrowserWindowSelection, frame: BrowserWindowFrame? = nil) {
+    public init(selection: BrowserWindowSelection, frame: BrowserWindowFrame? = nil,
+                sidebarWidth: Double? = nil, sidebarVisible: Bool? = nil) {
         self.selection = selection
         self.frame = frame
+        self.sidebarWidth = SidebarSizing.validSavedWidth(sidebarWidth)
+        self.sidebarVisible = sidebarVisible
+    }
+
+    private enum CodingKeys: String, CodingKey { case selection, frame, sidebarWidth, sidebarVisible }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(selection: try values.decode(BrowserWindowSelection.self, forKey: .selection),
+                  frame: try values.decodeIfPresent(BrowserWindowFrame.self, forKey: .frame),
+                  sidebarWidth: try? values.decodeIfPresent(Double.self, forKey: .sidebarWidth),
+                  sidebarVisible: try? values.decodeIfPresent(Bool.self, forKey: .sidebarVisible))
     }
 }
 
@@ -68,19 +83,23 @@ public struct BrowserWindowRestoreState: Codable, Equatable {
 
     func repaired(for session: Session) -> Self? {
         guard !session.spaces.isEmpty, session.spaces.allSatisfy({ !$0.tabs.isEmpty }) else { return nil }
-        var frames: [UUID: BrowserWindowFrame] = [:]
-        var seen = Set<UUID>()
+        var uniqueRecords: [UUID: BrowserWindowRestoreRecord] = [:]
         var selections: [BrowserWindowSelection] = []
         for record in records {
             let id = record.selection.id
-            guard seen.insert(id).inserted else { continue }
+            guard uniqueRecords[id] == nil else { continue }
             if selections.count == Self.maximumRestoredWindows { break }
+            uniqueRecords[id] = record
             selections.append(record.selection)
-            if let frame = record.frame, frame.isValid { frames[id] = frame }
         }
         guard !selections.isEmpty, let model = try? BrowserWindowWorkspace(session: session, windows: selections,
                                                                           focusedWindowID: focusedWindowID, assignments: assignments) else { return nil }
-        let records = model.windows.map { BrowserWindowRestoreRecord(selection: $0, frame: frames[$0.id]) }
+        let records = model.windows.map { selection in
+            let original = uniqueRecords[selection.id]
+            let frame = original?.frame.flatMap { $0.isValid ? $0 : nil }
+            return BrowserWindowRestoreRecord(selection: selection, frame: frame,
+                                              sidebarWidth: original?.sidebarWidth, sidebarVisible: original?.sidebarVisible)
+        }
         return Self(records: records, focusedWindowID: model.focusedWindowID, assignments: model.assignments)
     }
 }

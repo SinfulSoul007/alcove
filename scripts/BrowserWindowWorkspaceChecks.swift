@@ -146,7 +146,8 @@ import CryptoKit
               "A non-finite or non-positive stored frame requests the default window position")
 
         let firstRecord = BrowserWindowRestoreRecord(selection: bad, frame: invalidFrame)
-        let secondRecord = BrowserWindowRestoreRecord(selection: BrowserWindowSelection(id: b, session: original), frame: outside)
+        let secondRecord = BrowserWindowRestoreRecord(selection: BrowserWindowSelection(id: b, session: original), frame: outside,
+                                                      sidebarWidth: 308, sidebarVisible: false)
         let staleTab = UUID()
         migrated.windowRestore = BrowserWindowRestoreState(records: [firstRecord, secondRecord, secondRecord],
                                                             focusedWindowID: b, assignments: [first: b, staleTab: b])
@@ -161,6 +162,9 @@ import CryptoKit
               "Bad selection references and geometry repair without discarding the window")
         check(windows.assignments[first] == b && windows.assignments[staleTab] == nil && windows.records[1].frame == outside,
               "A valid assignment and geometry survive encryption while a nonexistent tab assignment is removed")
+        check(windows.records[0].sidebarWidth == nil && windows.records[0].sidebarVisible == nil &&
+              windows.records[1].sidebarWidth == 308 && windows.records[1].sidebarVisible == false,
+              "Older records default their sidebar layout and new records preserve width and visibility through encryption")
         let canonicalEncoder = JSONEncoder()
         canonicalEncoder.outputFormatting = [.sortedKeys]
         let canonical = try canonicalEncoder.encode(windows)
@@ -172,6 +176,19 @@ import CryptoKit
 
         let encoded = try JSONEncoder().encode(migrated)
         var malformed = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+        var restoreObject = malformed["windowRestore"] as! [String: Any]
+        var records = restoreObject["records"] as! [[String: Any]]
+        records[0]["sidebarWidth"] = "wide"
+        records[1]["sidebarWidth"] = 99999
+        records[1]["sidebarVisible"] = "closed"
+        restoreObject["records"] = records
+        malformed["windowRestore"] = restoreObject
+        var repairedLayout = try JSONDecoder().decode(BrowserDocument.self, from: JSONSerialization.data(withJSONObject: malformed))
+        try repairedLayout.repairProfiles()
+        check(repairedLayout.windowRestore?.records.count == 2 && repairedLayout.windowRestore?.focusedWindowID == b &&
+              repairedLayout.windowRestore?.records.allSatisfy { $0.sidebarWidth == nil && $0.sidebarVisible == nil } == true &&
+              repairedLayout.windowRestore?.records[1].frame == outside,
+              "Malformed sidebar options fall back to default without dropping saved windows or geometry")
         malformed["windowRestore"] = 47
         var recovered = try JSONDecoder().decode(BrowserDocument.self, from: JSONSerialization.data(withJSONObject: malformed))
         try recovered.repairProfiles()
