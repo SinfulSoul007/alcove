@@ -1,5 +1,26 @@
 import Foundation
 
+public enum ExtensionMarketplace {
+    public static let home = URL(string: "https://chromewebstore.google.com/")!
+
+    public static func allows(_ url: URL) -> Bool {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+        return parts.scheme?.lowercased() == "https"
+            && parts.host?.lowercased() == home.host
+            && parts.user == nil && parts.password == nil
+            && (parts.port == nil || parts.port == 443)
+    }
+
+    public static func listing(at url: URL) -> ExtensionStoreLocation? {
+        guard allows(url), var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        parts.query = nil
+        parts.fragment = nil
+        parts.port = nil
+        guard let canonical = parts.url?.absoluteString else { return nil }
+        return try? ExtensionStoreLocation(canonical)
+    }
+}
+
 public enum ExtensionStoreError:LocalizedError {
     case invalidLocation,invalidVersion,invalidMetadata
     public var errorDescription:String? {

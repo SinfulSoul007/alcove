@@ -14,6 +14,8 @@ import BrowserCore
     @Published var sites=Set<String>()
     @Published var allowPrivate=false
     @Published var privateProfileID:UUID?
+    @Published private(set) var marketplace: ExtensionMarketplaceBrowser?
+    @Published var showsMarketplace = false
     @Published private var revision=0
     private var subscription:AnyCancellable?,normalSubscription:AnyCancellable?,task:Task<Void,Never>?,picker:NSOpenPanel?
     private weak var privateOwner:BrowserWindowOwner?
@@ -59,7 +61,28 @@ import BrowserCore
         operationID=UUID();task?.cancel();task=nil;picker?.cancel(nil);picker=nil
         session.cancelReview();busy=false
     }
-    func close() {closed=true;cancel();session.close();subscription=nil;normalSubscription=nil;privateOwner=nil}
+    func close() {closed=true;cancel();session.close();marketplace?.webView.stopLoading();marketplace=nil;subscription=nil;normalSubscription=nil;privateOwner=nil}
+    func browseMarketplace() {
+        guard !closed, !busy, session.canManage else { return }
+        if marketplace == nil {
+            marketplace = ExtensionMarketplaceBrowser()
+            if let window, let screen = window.screen {
+                let visible = screen.visibleFrame.insetBy(dx: 16, dy: 12)
+                var frame = window.frame
+                let width = min(1120, visible.width)
+                if frame.width < width {
+                    frame.origin.x = min(max(frame.midX - width / 2, visible.minX), visible.maxX - width)
+                    frame.size.width = width
+                    window.setFrame(frame, display: true, animate: false)
+                }
+            }
+        }
+        showsMarketplace = true
+    }
+    func reviewMarketplaceListing(_ listing: ExtensionStoreLocation) {
+        guard !closed, !busy, showsMarketplace, session.canManage, marketplace?.listing == listing else { return }
+        reviewStore(location: listing)
+    }
     func openNormalWindow() {
         window?.performClose(nil)
         (NSApp.delegate as? AppDelegate)?.openMain()
@@ -95,8 +118,8 @@ import BrowserCore
         sites=Set(grants?.hostPatterns ?? manifest.hostPermissions)
         allowPrivate=grants?.allowPrivate==true && manifest.incognito=="spanning"
     }
-    func reviewStore(replacing:BrowserExtensionRecord?=nil) {
-        let input=replacing?.storeID ?? storeInput
+    func reviewStore(replacing:BrowserExtensionRecord?=nil, location: ExtensionStoreLocation? = nil) {
+        let input=replacing?.storeID ?? location?.id ?? storeInput
         run {[weak self] in
             guard let self else {return}
             let review=try await self.session.reviewWebStore(input,replacing:replacing?.id)
@@ -131,7 +154,10 @@ import BrowserCore
         let permissions=Array(self.permissions),sites=Array(self.sites),allowPrivate=self.allowPrivate
         run {[weak self] in
             guard let self else {return}
-            if let install {_ = try await self.session.approve(install,permissions:permissions,hostPatterns:sites,allowPrivate:allowPrivate)}
+            if let install {
+                _ = try await self.session.approve(install,permissions:permissions,hostPatterns:sites,allowPrivate:allowPrivate)
+                self.showsMarketplace = false
+            }
             else if let existing {try await self.session.savePermissions(existing,permissions:permissions,hostPatterns:sites,allowPrivate:allowPrivate)}
             else {throw ExtensionActionError.stale}
             self.notice=install==nil ? "Permissions saved.":"Extension installed."
@@ -241,10 +267,11 @@ private struct ExtensionManagerView:View {
     private var unsupported:[String] {session.currentReview?.unsupportedPermissions ?? session.currentPermissions?.unsupportedPermissions ?? []}
     private var diagnostics:[String] {session.currentReview?.diagnostics ?? session.currentPermissions?.diagnostics ?? []}
     private var reviewing:Bool {manifest != nil}
+    private var browsing: Bool { model.showsMarketplace && !reviewing && session.canManage }
     var body:some View {
         VStack(spacing:0) {
             HStack {
-                Label(reviewing ? "Review Extension":"Extensions",systemImage:"puzzlepiece.extension").font(.title2.weight(.semibold))
+                Label(reviewing ? "Review Extension" : (browsing ? "Chrome Web Store" : "Extensions"), systemImage: "puzzlepiece.extension").font(.title2.weight(.semibold))
                 Spacer()
                 if model.busy {ProgressView().controlSize(.small);Button("Cancel",action:model.cancel)}
                 else {Button(reviewing ? "Cancel Review":"Done") {if reviewing {model.cancel()} else {model.window?.performClose(nil)}}}
@@ -256,33 +283,46 @@ private struct ExtensionManagerView:View {
                 if model.store?.isPrivate==true {Text("Private window").foregroundStyle(.secondary)}
             }.padding(.horizontal,20).padding(.bottom,16)
             Divider()
-            ScrollView {
-                VStack(alignment:.leading,spacing:20) {
-                    if let error=model.error {Label(error,systemImage:"exclamationmark.triangle").foregroundStyle(.red).textSelection(.enabled)}
-                    if let notice=model.notice {Text(notice).foregroundStyle(.secondary).textSelection(.enabled)}
-                    if model.store?.isPrivate==true {
-                        Text("Install and change extensions in a normal window. Only extensions explicitly approved for private browsing can run here. Private access shares the extension’s settings and approved permissions with its normal profile.")
-                        if model.store?.extensionHosting != nil {
-                            Text("This private session currently uses extensions.").font(.headline)
-                            Button("Reload Private Pages Without Extensions…"){model.reloadPrivate(withExtensions:false)}
-                        }
-                        if model.privateProfiles.isEmpty {
-                            Text("No open, unlocked normal profile has enabled extensions approved for private browsing.").foregroundStyle(.secondary)
-                        } else {
-                            Picker("Extensions from",selection:$model.privateProfileID) {
-                                ForEach(model.privateProfiles) {profile in Text(profile.name).tag(Optional(profile.id))}
+            if browsing, let marketplace = model.marketplace {
+                if let error = model.error {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red).padding(12)
+                }
+                ExtensionMarketplaceView(
+                    browser: marketplace,
+                    busy: model.busy,
+                    openInstalled: { model.showsMarketplace = false },
+                    review: model.reviewMarketplaceListing
+                )
+            } else {
+                ScrollView {
+                    VStack(alignment:.leading,spacing:20) {
+                        if let error=model.error {Label(error,systemImage:"exclamationmark.triangle").foregroundStyle(.red).textSelection(.enabled)}
+                        if let notice=model.notice {Text(notice).foregroundStyle(.secondary).textSelection(.enabled)}
+                        if model.store?.isPrivate==true {
+                            Text("Install and change extensions in a normal window. Only extensions explicitly approved for private browsing can run here. Private access shares the extension’s settings and approved permissions with its normal profile.")
+                            if model.store?.extensionHosting != nil {
+                                Text("This private session currently uses extensions.").font(.headline)
+                                Button("Reload Private Pages Without Extensions…"){model.reloadPrivate(withExtensions:false)}
                             }
-                            Button("Reload Private Pages With These Extensions…"){model.reloadPrivate(withExtensions:true)}.disabled(model.privateAccessIssue != nil)
-                            if let issue=model.privateAccessIssue {Text(issue).font(.caption).foregroundStyle(.secondary)}
-                            Text("You will confirm before reloading. Unsaved forms and page state can be lost; the private website store remains temporary.").font(.caption).foregroundStyle(.secondary)
-                        }
-                        Button("Open Normal Browser Window",action:model.openNormalWindow)
-                    } else if #available(macOS 15.4,*) {
-                        if !session.canManage {Text("Unlock this profile and finish any data operation before managing extensions.")}
-                        else if let manifest {review(manifest)}
-                        else {catalog}
-                    } else {Text("Native extensions require macOS 15.4 or later. You can continue browsing on this version of macOS.")}
-                }.padding(20).frame(maxWidth:.infinity,alignment:.leading)
+                            if model.privateProfiles.isEmpty {
+                                Text("No open, unlocked normal profile has enabled extensions approved for private browsing.").foregroundStyle(.secondary)
+                            } else {
+                                Picker("Extensions from",selection:$model.privateProfileID) {
+                                    ForEach(model.privateProfiles) {profile in Text(profile.name).tag(Optional(profile.id))}
+                                }
+                                Button("Reload Private Pages With These Extensions…"){model.reloadPrivate(withExtensions:true)}.disabled(model.privateAccessIssue != nil)
+                                if let issue=model.privateAccessIssue {Text(issue).font(.caption).foregroundStyle(.secondary)}
+                                Text("You will confirm before reloading. Unsaved forms and page state can be lost; the private website store remains temporary.").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Button("Open Normal Browser Window",action:model.openNormalWindow)
+                        } else if #available(macOS 15.4,*) {
+                            if !session.canManage {Text("Unlock this profile and finish any data operation before managing extensions.")}
+                            else if let manifest {review(manifest)}
+                            else {catalog}
+                        } else {Text("Native extensions require macOS 15.4 or later. You can continue browsing on this version of macOS.")}
+                    }.padding(20).frame(maxWidth:.infinity,alignment:.leading)
+                }
             }
             if reviewing {
                 Divider()
@@ -300,7 +340,10 @@ private struct ExtensionManagerView:View {
     private var catalog:some View {
         VStack(alignment:.leading,spacing:16) {
             Text("Add an extension").font(.headline)
-            Text("Alcove uses WebKit’s extension engine. Chrome packages can use APIs it does not support; compatibility varies. Every installation requires a permission review.").foregroundStyle(.secondary)
+            Button(action: model.browseMarketplace) {
+                Label("Browse Chrome Web Store", systemImage: "storefront")
+            }.buttonStyle(.borderedProminent)
+            Text("Review compatibility and permissions before installing an extension.").foregroundStyle(.secondary)
             HStack {
                 TextField("Chrome Web Store link or extension ID",text:$model.storeInput).textFieldStyle(.roundedBorder).accessibilityLabel("Chrome Web Store link or extension ID")
                 Button("Review Link"){model.reviewStore()}.disabled(model.storeInput.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)

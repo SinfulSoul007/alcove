@@ -1,0 +1,15 @@
+# Chrome Web Store marketplace
+
+The extension manager opens the official storefront in a temporary WebKit session. Search for an extension, open its listing, and use Alcove’s **Review Extension** button. The selected profile receives the existing publisher verification and permissions review before installation. Back, Forward and Home are available during browsing. Cancelling review returns to the same listing.
+
+The storefront web view has its own nonpersistent website data store and no extension controller or native message bridge. The navigation delegate validates the HTTPS main-frame origin for requests and responses and declines popups and downloads. The native action revalidates the current listing and passes only its canonical ID to the existing signed package transport. The normal profile, source window and reviewed permissions determine the installation.
+
+- The extension core suite passed 242 checks in the VM, including 17 discovery, exact-origin and listing cases. The initial run failed at the missing marketplace API. The final UI suite passed 48 manager checks and the optimized ARM64 build passed strict signature verification.
+- An isolated candidate searched the real store, reviewed publisher-verified uBlock Origin Lite 2026.1110.1816, installed it and removed it. The review reported unavailable `offscreen` and `userScripts` APIs.
+- The widened candidate searched for Dark Reader 4.9.135 and showed publisher verification and the unavailable `fontSettings` API. Cancelling returned to the same listing. Reopening review and approving installed Dark Reader and its content script darkened the test page. Removal completed in the isolated profile. The storefront retains Google’s Chrome banner and can scroll horizontally at constrained widths.
+- Independent review found no Critical or Important issues. The automated marketplace checks cover URL policy and listing identity. Live cancellation was verified. Automated navigation failure/recovery and review cancellation coverage remain a follow-up.
+- Source at the 0.9.2 preview version awaits the exact GitHub universal package build. Public release and download verification follow it.
+
+Marketplace discovery and engine compatibility have separate acceptance criteria. Chrome removed Manifest V2 packages from its Web Store. Full uBlock Origin’s Chromium manifest uses Manifest V2 and blocking `webRequest`, which Apple’s WebExtension runtime lacks. The store install path and the observed Lite/Dark Reader workflows do not verify general Chrome compatibility. Coordinating extension tab and window APIs with shared native windows is part of the continuing window work. Private split runtimes and additional engine APIs remain open.
+
+[Chrome Manifest V2 timeline](https://developer.chrome.com/docs/extensions/develop/migrate/mv2-deprecation-timeline) · [uBlock Origin Chromium manifest](https://github.com/gorhill/uBlock/blob/master/platform/chromium/manifest.json) · [Apple WebExtension compatibility guide](https://developer.apple.com/documentation/safariservices/assessing-your-safari-web-extension-s-browser-compatibility)

@@ -3,6 +3,19 @@ import BrowserCore
 
 func runExtensionStoreLocationChecks(_ check:(Bool,String)->Void) throws {
     let id = String(repeating:"a",count:32)
+    let official = "https://chromewebstore.google.com"
+    let listing = official + "/detail/owned-fixture/" + id
+    check(ExtensionMarketplace.home.absoluteString == official + "/", "Marketplace opens the official Chrome Web Store")
+    for path in ["/", "/search/ad%20blocker", "/category/extensions", "/collection/featured", "/detail/" + id, "/detail/owned-fixture/" + id + "?hl=en"] {
+        check(ExtensionMarketplace.allows(URL(string: official + path)!), "Marketplace allows official discovery and listing pages")
+    }
+    for address in ["http://chromewebstore.google.com/", "https://chromewebstore.google.com.example.org/", "https://chrome.google.com/webstore/", "https://user@chromewebstore.google.com/", official + ":8443/", "file:///tmp/catalog.html", "about:blank"] {
+        let url = URL(string: address)!
+        check(!ExtensionMarketplace.allows(url) && ExtensionMarketplace.listing(at: url) == nil, "Marketplace cannot use an unrelated document as an install source")
+    }
+    check(ExtensionMarketplace.listing(at: URL(string: listing + "?utm_source=test#overview")!)?.id == id, "A listing passes only its canonical extension identity to review")
+    check(ExtensionMarketplace.listing(at: URL(string: official + "/search/" + id)!) == nil, "A marketplace search result does not select an extension")
+    check(ExtensionMarketplace.listing(at: URL(string: listing + "/extra")!) == nil, "A malformed listing cannot select an extension")
     for input in [id," \n"+id+"\t","https://chromewebstore.google.com/detail/"+id,"https://chromewebstore.google.com/detail/owned-fixture/"+id+"?hl=en&utm_source=fixture","https://chrome.google.com/webstore/detail/owned-fixture/"+id] {
         let location = try ExtensionStoreLocation(input)
         check(location.id == id && location.url.absoluteString == "https://chromewebstore.google.com/detail/"+id,"A supported Web Store ID/link resolves only its canonical extension identity")
