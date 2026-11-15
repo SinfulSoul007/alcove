@@ -76,10 +76,12 @@ extension BrowserStore {
     }
     @discardableResult func openExtensionOptions(_ id:UUID,profileID:UUID) async throws -> UUID {
         try await prepareExtensions(profileID:profileID)
+        try Task.checkCancellation()
         guard let host = extensionHosting, let url = host.optionsURL(id,profileID:profileID) else {throw ExtensionHostError.native("This extension has no available options page.")}
         if isPrivate {throw ExtensionHostError.unsupportedPrivatePage}
         if extensionWindows[.primary]?.window == nil {extensionPrimaryWindowRequested?()}
-        return try createExtensionTab(url:url,profileID:profileID,activate:true)
+        let target = extensionWindows[.primary]?.window != nil ? self : (windowGroup?.focusedPrimary ?? self)
+        return try target.createExtensionTab(url:url,profileID:profileID,activate:true)
     }
     @discardableResult func createExtensionTab(url:URL?,profileID:UUID,activate:Bool,pinned:Bool = false,index:Int? = nil) throws -> UUID {
         try requireQuickProfile(profileID)
@@ -118,7 +120,10 @@ struct NativeExtensionTabState:Equatable {
     func live(_ context:WKWebExtensionContext) -> BrowserStore? {
         guard let store,host?.authorized(context,profileID:key.profileID,client:store) == true else {return nil}
         if key.isPeek {guard store.peekPages.values.contains(where:{$0.id == key.id && $0.web === web}) else {return nil}}
-        else {guard store.profileID(for:key.id) == (store.isPrivate ? BrowserProfile.defaultID : key.profileID) else {return nil}}
+        else {
+            guard store.profileID(for:key.id) == (store.isPrivate ? BrowserProfile.defaultID : key.profileID) else {return nil}
+            if let group = store.windowGroup, store.quickPage(key.id) == nil, group.extensionPresenter(for: key.id) !== store { return nil }
+        }
         return store
     }
     func actualView(_ context:WKWebExtensionContext) throws -> WKWebView {

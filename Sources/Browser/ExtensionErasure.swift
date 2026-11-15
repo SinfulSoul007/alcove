@@ -26,21 +26,36 @@ extension BrowserStore {
     }
     private func disposeExtensionPages(_ identifier:String,profileID:UUID) async throws {
         func owns(_ url:URL?) -> Bool {url?.scheme?.lowercased() == "webkit-extension" && url?.host == identifier}
-        func owns(_ web:WKWebView) -> Bool {owns(web.url) || extensionPopupOwners.object(forKey:web).map{String($0)} == identifier}
-        let liveIDs = Set(views.filter{viewProfileIDs[$0.key] == profileID && owns($0.value)}.keys)
-        let peekContexts = peekPages.filter{$0.value.profileID == profileID && owns($0.value.web)}.map(\.key)
-        let pages = (liveIDs.compactMap{views[$0]}+peekContexts.compactMap{peekPages[$0]?.web}).map{ClosingProfilePage($0,profileID:profileID)} + closingPages.filter{$0.profileID == profileID && ($0.extensionIdentifier == identifier || $0.webView.map{owns($0)} == true)}
-        var candidate = makeDocument(),ids = liveIDs
+        var liveIDs = Set<UUID>(), ownedIDs = Set<UUID>()
+        var previews: [(BrowserStore, PeekContext)] = []
+        var pages: [ClosingProfilePage] = []
+        for member in pageStores {
+            func ownsWeb(_ web: WKWebView) -> Bool {
+                owns(web.url) || member.extensionPopupOwners.object(forKey: web).map { String($0) } == identifier
+            }
+            liveIDs.formUnion(member.views.keys)
+            for (id, web) in member.views where member.viewProfileIDs[id] == profileID && ownsWeb(web) {
+                ownedIDs.insert(id)
+                pages.append(ClosingProfilePage(web, profileID: profileID))
+            }
+            for (context, page) in member.peekPages where page.profileID == profileID && ownsWeb(page.web) {
+                previews.append((member, context))
+                pages.append(ClosingProfilePage(page.web, profileID: profileID))
+            }
+            pages += member.closingPages.filter { $0.profileID == profileID &&
+                ($0.extensionIdentifier == identifier || $0.webView.map { ownsWeb($0) } == true) }
+        }
+        var candidate = makeDocument(),ids = ownedIDs
         for space in candidate.session.spaces where isPrivate || space.effectiveProfileID == profileID {
-            for tab in space.tabs where ids.contains(tab.id) || (views[tab.id] == nil && owns(URL(string:tab.url))) {ids.insert(tab.id);candidate.session.close(tab.id,in:space.id)}
+            for tab in space.tabs where ids.contains(tab.id) || (!liveIDs.contains(tab.id) && owns(URL(string:tab.url))) {ids.insert(tab.id);candidate.session.close(tab.id,in:space.id)}
         }
         var library = candidate.library(for:profileID)
-        for tab in library.favoriteTabs ?? [] where ids.contains(tab.id) || (views[tab.id] == nil && owns(URL(string:tab.url))) {ids.insert(tab.id)}
-        for page in library.quickPages ?? [] where ids.contains(page.id) || (views[page.id] == nil && owns(URL(string:page.tab.url))) {ids.insert(page.id)}
+        for tab in library.favoriteTabs ?? [] where ids.contains(tab.id) || (!liveIDs.contains(tab.id) && owns(URL(string:tab.url))) {ids.insert(tab.id)}
+        for page in library.quickPages ?? [] where ids.contains(page.id) || (!liveIDs.contains(page.id) && owns(URL(string:page.tab.url))) {ids.insert(page.id)}
         library.favoriteTabs?.removeAll{ids.contains($0.id)};library.quickPages?.removeAll{ids.contains($0.id)}
         candidate.setLibrary(library,for:profileID)
         if !ids.isEmpty {try commitQuickDocument(candidate,discarding:Array(ids))}
-        for context in peekContexts {closePeek(in:context)}
+        for (member, context) in previews { member.closePeek(in: context) }
         revision += 1
         // WebKit ignores navigation from an unloaded extension document. Releasing
         // its actual WKWebView is the public boundary that destroys that document;
@@ -58,9 +73,11 @@ extension BrowserStore {
         for attachment in extensionPrivateAttachments.values where attachment.profileID == profileID {result.insert(attachment.controllerID)}
         if #available(macOS 15.4,*) {
             func append(_ web:WKWebView) {if let id = web.configuration.webExtensionController?.configuration.identifier {result.insert(id)}}
-            for (id,web) in views where viewProfileIDs[id] == profileID {append(web)}
-            for page in peekPages.values where page.profileID == profileID {append(page.web)}
-            for page in closingPages where page.profileID == profileID {if let web = page.webView {append(web)}}
+            for member in pageStores {
+                for (id,web) in member.views where member.viewProfileIDs[id] == profileID {append(web)}
+                for page in member.peekPages.values where page.profileID == profileID {append(page.web)}
+                for page in member.closingPages where page.profileID == profileID {if let web = page.webView {append(web)}}
+            }
             if let host = extensionHosting as? NativeBrowserExtensionHost,let runtime = host.profiles[profileID] {result.insert(runtime.controllerID)}
             for attachment in extensionPrivateAttachments.values where attachment.profileID == profileID {
                 guard let client = attachment.attached else {continue}

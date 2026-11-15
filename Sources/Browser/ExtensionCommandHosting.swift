@@ -11,20 +11,31 @@ struct BrowserExtensionMenuGroup:Identifiable {let id:UUID,label:String,items:[N
 extension BrowserStore {
     func extensionCommandSummaries(for web:WKWebView) -> [BrowserExtensionCommandSummary] {
         guard let profile = profileID(for:web),!profileUnavailable(profile) else {return []}
+        if #available(macOS 15.4, *), let native = extensionHosting as? NativeBrowserExtensionHost {
+            return native.commandSummaries(for: web, profileID: profile, client: self)
+        }
         return extensionHosting?.commandSummaries(for:web,profileID:profile) ?? []
     }
     func performExtensionCommand(_ id:UUID,command:String,from web:WKWebView,anchor:NSView) throws {
         guard !isShuttingDown,let profile = profileID(for:web),!profileUnavailable(profile),let host = ensureExtensionHost() else {throw ExtensionHostError.stale}
-        try host.performCommand(id,command:command,from:web,profileID:profile,anchor:anchor)
+        if #available(macOS 15.4, *), let native = host as? NativeBrowserExtensionHost {
+            try native.performCommand(id, command: command, from: web, profileID: profile, client: self, anchor: anchor)
+        } else { try host.performCommand(id,command:command,from:web,profileID:profile,anchor:anchor) }
     }
     func performExtensionCommand(for event:NSEvent,from web:WKWebView,anchor:NSView) throws -> Bool {
         guard !isShuttingDown,let profile = profileID(for:web),!profileUnavailable(profile),let host = extensionHosting else {return false}
+        if #available(macOS 15.4, *), let native = host as? NativeBrowserExtensionHost {
+            return try native.performCommand(for: event, from: web, profileID: profile, client: self, anchor: anchor)
+        }
         return try host.performCommand(for:event,from:web,profileID:profile,anchor:anchor)
     }
     func extensionContextMenuGroups(for target:BrowserExtensionTabTarget) -> [BrowserExtensionMenuGroup] {
         let profile:UUID?
         switch target {case .tab(let id):profile = profileID(for:id);case .view(let web):profile = profileID(for:web)}
         guard let profile,!isShuttingDown,!profileUnavailable(profile) else {return []}
+        if #available(macOS 15.4, *), let native = extensionHosting as? NativeBrowserExtensionHost {
+            return native.contextMenuGroups(for: target, profileID: profile, client: self)
+        }
         return extensionHosting?.contextMenuGroups(for:target,profileID:profile) ?? []
     }
 }

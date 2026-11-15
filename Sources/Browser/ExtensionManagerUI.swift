@@ -144,10 +144,11 @@ import BrowserCore
         catch {notice="Your changes were saved. Extensions need attention: "+error.localizedDescription}
     }
     func setEnabled(_ record:BrowserExtensionRecord,_ value:Bool) {
-        guard let store,session.canManage else {return}
+        guard session.canManage else {return}
         if value && record.grants==nil {reviewPermissions(record);return}
-        run {[weak self,weak store] in
-            guard let self,let store else {return}
+        run {[weak self] in
+            guard let self else {return}
+            let store = try self.session.managementStore()
             try store.setExtensionEnabled(record.id,profileID:self.session.profileID,enabled:value)
             await self.activate()
         }
@@ -162,7 +163,8 @@ import BrowserCore
     }
     func remove(_ record:BrowserExtensionRecord) {
         run {[weak self] in
-            guard let self,let store=self.store else {return}
+            guard let self else {return}
+            let store = try self.session.managementStore()
             if record.pendingRemoval != true {try store.beginRemoveExtension(record.id,profileID:self.session.profileID)}
             _ = try await store.finishRemoveExtension(record.id,profileID:self.session.profileID)
             self.notice="Extension and its saved data removed."

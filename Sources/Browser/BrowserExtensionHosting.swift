@@ -64,6 +64,8 @@ extension BrowserStore {
     func ensureExtensionHost() -> (any BrowserExtensionHosting)? {
         guard !isShuttingDown else {return nil}
         if let extensionHosting {return extensionHosting}
+        let writer = metadataWriter
+        if writer !== self { return writer.ensureExtensionHost() }
         guard !isPrivate, !awaitingInitialMetadata, vault != nil else {return nil}
         if #available(macOS 15.4,*) {
             let host = NativeBrowserExtensionHost(owner:self); extensionHosting = host; return host

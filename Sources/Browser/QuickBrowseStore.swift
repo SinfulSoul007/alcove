@@ -136,6 +136,9 @@ extension BrowserStore {
         if focusedQuickPageID == id { focusedQuickPageID = nil }
     }
     @discardableResult func promoteQuickPage(_ id: UUID, to destination: UUID? = nil, allowProfileChange: Bool = false) throws -> UUID {
+        guard !isShuttingDown else { throw CancellationError() }
+        let writer = metadataWriter
+        if writer !== self { return try writer.promoteQuickPage(id, to: destination, allowProfileChange: allowProfileChange) }
         guard let owner = quickProfileID(id), let page = quickPage(id) else { throw QuickBrowseError.missing }
         try requireQuickProfile(owner)
         var candidate = makeDocument()
@@ -161,12 +164,14 @@ extension BrowserStore {
         }
         candidate.session.spaces[index].tabs.append(tab); candidate.session.spaces[index].selected = id
         let spaceID = candidate.session.spaces[index].id; candidate.session.activateSpace(spaceID)
-        try commitQuickDocument(candidate, discarding: discard, beforePublish: {
+        let presenter = windowGroup?.focusedPrimary ?? self
+        try presenter.commitQuickDocument(candidate, discarding: discard, beforePublish: {
             if !crossing { self.views[id]?.removeFromSuperview() }
-            if crossing { self.closePrimaryPeek(); self.closeQuickPeek(id) }
-            else { self.adoptQuickPeek(id, into: spaceID) }
-            self.splitID = nil; self.activePaneID = nil
+            if crossing { presenter.closePrimaryPeek(); self.closeQuickPeek(id) }
+            else { self.adoptQuickPeek(id, into: spaceID, in: presenter) }
+            presenter.splitID = nil; presenter.activePaneID = nil
         })
+        if presenter !== self { windowGroup?.claimPresentation(tabID: id, in: presenter) }
         if focusedQuickPageID == id { focusedQuickPageID = nil }
         return spaceID
     }

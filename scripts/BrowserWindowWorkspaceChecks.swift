@@ -1,5 +1,7 @@
 import Foundation
 import BrowserCore
+import CoreGraphics
+import CryptoKit
 
 @main enum BrowserWindowWorkspaceChecks {
     static func main() throws {
@@ -121,6 +123,60 @@ import BrowserCore
         let blankWindow = try emptyWorkspace.openWindow(id: UUID())
         check(emptyWorkspace.session(for: blankWindow.id)?.spaces.first?.tabs.count == 1, "An empty session repairs to the existing usable blank-tab behavior")
         check(original.spaces[0].tabs[0].title == "First" && original.spaces.count == 2 && original.spaces[0].tabs[1].folder == nil, "Window projections and edits never mutate the caller's original value")
+
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-window-restore-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let storage = MetadataStore(url: temp.appendingPathComponent("session.sealed"), key: SymmetricKey(size: .bits256))
+        var legacy = BrowserDocument(session: original)
+        legacy.formatVersion = 5
+        legacy.preferences.archiveAfterDays = 3
+        try storage.save(legacy)
+        var migrated = try storage.load(BrowserDocument.self)!
+        try migrated.repairProfiles()
+        check(migrated.formatVersion == 6 && migrated.windowRestore == nil && migrated.session == original && migrated.preferences.archiveAfterDays == 3,
+              "An encrypted format-5 document migrates to format 6 with its tabs and preferences intact")
+
+        let bounds = CGRect(x: -1400, y: 24, width: 1400, height: 850)
+        let outside = BrowserWindowFrame(x: -10_000, y: 10_000, width: 4000, height: 600)
+        let clipped = outside.constrained(to: bounds)
+        check(clipped.map { bounds.contains($0) && $0.width <= bounds.width } == true,
+              "A stored window outside the current display is fully contained on the selected display")
+        let invalidFrame = BrowserWindowFrame(x: .infinity, y: 0, width: 500, height: -1)
+        check(invalidFrame.constrained(to: bounds) == nil,
+              "A non-finite or non-positive stored frame requests the default window position")
+
+        let firstRecord = BrowserWindowRestoreRecord(selection: bad, frame: invalidFrame)
+        let secondRecord = BrowserWindowRestoreRecord(selection: BrowserWindowSelection(id: b, session: original), frame: outside)
+        let staleTab = UUID()
+        migrated.windowRestore = BrowserWindowRestoreState(records: [firstRecord, secondRecord, secondRecord],
+                                                            focusedWindowID: b, assignments: [first: b, staleTab: b])
+        try migrated.repairProfiles()
+        try storage.save(migrated)
+        let encrypted = try Data(contentsOf: storage.url)
+        let restoredDocument = try storage.load(BrowserDocument.self)!
+        let windows = restoredDocument.windowRestore!
+        check(windows.records.map(\.selection.id) == [bad.id, b] && windows.focusedWindowID == b,
+              "Encrypted restoration keeps valid window order and focus and drops duplicate window IDs")
+        check(windows.records[0].selection.spaceID == personal && windows.records[0].selection.selectedTabsBySpace[personal] == first && windows.records[0].frame == nil,
+              "Bad selection references and geometry repair without discarding the window")
+        check(windows.assignments[first] == b && windows.assignments[staleTab] == nil && windows.records[1].frame == outside,
+              "A valid assignment and geometry survive encryption while a nonexistent tab assignment is removed")
+        let canonicalEncoder = JSONEncoder()
+        canonicalEncoder.outputFormatting = [.sortedKeys]
+        let canonical = try canonicalEncoder.encode(windows)
+        let canonicallyRestored = try JSONDecoder().decode(BrowserWindowRestoreState.self, from: canonical)
+        let reencoded = try canonicalEncoder.encode(canonicallyRestored)
+        check(canonical == reencoded, "Window selections and assignments have stable canonical serialization after relaunch")
+        check(encrypted.range(of: Data("https://first.invalid/".utf8)) == nil && restoredDocument.session.spaces.flatMap(\.tabs).count == 3,
+              "Window restoration data uses the existing encrypted vault and leaves the tab library intact")
+
+        let encoded = try JSONEncoder().encode(migrated)
+        var malformed = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+        malformed["windowRestore"] = 47
+        var recovered = try JSONDecoder().decode(BrowserDocument.self, from: JSONSerialization.data(withJSONObject: malformed))
+        try recovered.repairProfiles()
+        check(recovered.windowRestore == nil && recovered.session.spaces.flatMap(\.tabs).count == 3,
+              "An unreadable window block falls back to one default window while the tab library remains recoverable")
 
         print("Window workspace checks: \(checks) assertions, \(failures) failures")
         if failures > 0 { exit(1) }

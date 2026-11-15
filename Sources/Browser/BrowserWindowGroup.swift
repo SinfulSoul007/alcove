@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import BrowserCore
 
 enum BrowserWindowGroupError: LocalizedError {
@@ -23,55 +23,172 @@ final class BrowserWindowGroup {
     private(set) var revision = UUID()
     private var workspace: BrowserWindowWorkspace
     private var members: [UUID: Member] = [:]
+    private var frames: [UUID: BrowserWindowFrame] = [:]
     private var broadcasting = false
 
-    init(root: BrowserStore) throws {
-        workspace = try BrowserWindowWorkspace(session: root.session)
+    init(root: BrowserStore, restoring saved: BrowserWindowRestoreState? = nil) throws {
+        workspace = try BrowserWindowWorkspace(session: root.session,
+                                               windows: saved?.records.map(\.selection) ?? [],
+                                               focusedWindowID: saved?.focusedWindowID,
+                                               assignments: saved?.assignments ?? [:])
+        for record in saved?.records ?? [] {
+            if let frame = record.frame, frame.isValid { frames[record.selection.id] = frame }
+        }
         self.root = root
         root.windowGroup = self
     }
 
-    private var stores: [BrowserStore] {
+    var stores: [BrowserStore] {
         guard let root else { return [] }
         return [root] + members.values.compactMap(\.store).filter { $0 !== root }
+    }
+    var focusedPrimary: BrowserStore? {
+        workspace.focusedWindowID.flatMap { members[$0]?.store }
+    }
+    func containsPrimary(_ store: BrowserStore) -> Bool {
+        guard let id = store.windowGroupID, !store.isShuttingDown else { return false }
+        return members[id]?.store === store
+    }
+
+    func extensionPresenter(for tabID: UUID) -> BrowserStore? {
+        if let live = liveStore(forTab: tabID), containsPrimary(live) { return live }
+        if let id = workspace.assignedWindow(for: tabID) { return members[id]?.store }
+        return focusedPrimary
     }
 
     func openPrimary(copying source: BrowserStore?) throws -> BrowserStore {
         guard let root, !root.isShuttingDown else { throw BrowserWindowOwnerError.closed }
         if let source, !isMember(source) { throw BrowserWindowOwnerError.closed }
+        let selection = try workspace.openWindow(copying: source?.windowGroupID ?? workspace.focusedWindowID)
+        let store = attachPrimary(selection.id, root: root)
+        publishWorkspace(workspace)
+        if let tab = store.selectedID { claimPresentation(tabID: tab, in: store) }
+        root.save()
+        return store
+    }
+
+    func attachRestoredPrimaries() -> [(store: BrowserStore, frame: BrowserWindowFrame?, focused: Bool)] {
+        guard let root, members.isEmpty, !root.isShuttingDown else { return [] }
+        let restored = workspace.windows.map { window in
+            (store: attachPrimary(window.id, root: root), frame: frames[window.id], focused: window.id == workspace.focusedWindowID)
+        }
+        publishWorkspace(workspace)
+        return restored
+    }
+
+    private func attachPrimary(_ id: UUID, root: BrowserStore) -> BrowserStore {
         let store: BrowserStore
         if root.windowGroupID == nil { store = root }
         else {
             store = BrowserStore(dataRoot: root.sessionURL.deletingLastPathComponent(),
                                  metadataKeyAccess: root.metadataKeyAccess, windowGroup: self)
         }
-        let selection = try workspace.openWindow(copying: source?.windowGroupID ?? workspace.focusedWindowID)
-        store.windowGroupID = selection.id
-        members[selection.id] = Member(store: store)
+        store.windowGroupID = id
+        members[id] = Member(store: store)
         if store !== root {
             broadcasting = true
             store.profiles = root.profiles
             store.profileLibraries = root.profileLibraries
             store.preferences = root.preferences
             copyWriterState(from: root, to: store)
+            store.extensionStates = root.extensionStates
+            store.extensionDiagnostics = root.extensionDiagnostics
             broadcasting = false
         }
-        publishWorkspace(workspace)
         return store
     }
 
     func closePrimary(_ store: BrowserStore) {
         guard let id = store.windowGroupID, members[id]?.store === store else { return }
         members.removeValue(forKey: id)
+        frames.removeValue(forKey: id)
         store.windowGroupID = nil
         workspace.closeWindow(id)
+        handOffPages(from: store)
         if store === root {
             store.closePrimaryWindowPages()
         } else {
             store.windowGroup = nil
             store.shutdown()
+            if let root {
+                root.closingPages.removeAll { $0.webView == nil }
+                root.closingPages.append(contentsOf: store.closingPages.filter { $0.webView != nil })
+            }
         }
         publishWorkspace(workspace)
+        root?.save()
+    }
+
+    func presentation(tabID: UUID, in store: BrowserStore) -> BrowserTabPresentation {
+        guard let id = store.windowGroupID, isMember(store),
+              let profile = spaceProfile(forTab: tabID), !store.profileUnavailable(profile) else { return .unavailable }
+        let presenter: UUID?
+        if let live = liveStore(forTab: tabID) {
+            guard let id = live.windowGroupID else { return .pooled }
+            presenter = id
+        } else { presenter = workspace.assignedWindow(for: tabID) }
+        if let presenter, presenter != id { return .elsewhere(windowID: presenter) }
+        return .owned
+    }
+
+    @discardableResult
+    func claimPresentation(tabID: UUID, in store: BrowserStore) -> Bool {
+        guard let id = store.windowGroupID, isMember(store),
+              let profile = spaceProfile(forTab: tabID), !store.profileUnavailable(profile) else { return false }
+        let live = liveStore(forTab: tabID)
+        let previousID = live?.windowGroupID ?? workspace.assignedWindow(for: tabID)
+        if let previous = live, previous !== store {
+            guard previous.moveView(tabID, profile: profile, to: store) else { return false }
+        }
+        let claimed = workspace.claim(tabID, for: id)
+        if claimed && (previousID != id || live == nil) {
+            for member in stores { member.revision += 1 }
+            if previousID != id { root?.save() }
+        }
+        return claimed
+    }
+
+    func revealPresenter(tabID: UUID, from source: BrowserStore) {
+        guard case .elsewhere(let id) = presentation(tabID: tabID, in: source) else { return }
+        guard let window = members[id]?.store?.extensionWindows[.primary]?.window else { return }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    var protectedPaneIDs: Set<UUID> {
+        Set(stores.filter { $0.windowGroupID != nil }.flatMap { [$0.selectedID, $0.splitID].compactMap { $0 } })
+    }
+
+    func discardPage(_ id: UUID) {
+        for store in stores {
+            if store.splitID == id { store.splitID = nil }
+            if store.activePaneID == id { store.activePaneID = nil }
+            if store.views[id] != nil {
+                store.discardView(id)
+                store.revision += 1
+            }
+        }
+    }
+
+    private func liveStore(forTab tabID: UUID) -> BrowserStore? {
+        stores.first(where: { $0.views[tabID] != nil })
+    }
+
+    private func spaceProfile(forTab tabID: UUID) -> UUID? {
+        workspace.session.spaces.first(where: { $0.tabs.contains(where: { $0.id == tabID }) })?.effectiveProfileID
+    }
+
+    private func handOffPages(from closing: BrowserStore) {
+        let survivors = workspace.windows.compactMap { members[$0.id]?.store }
+        for tabID in Array(closing.views.keys) {
+            guard let profile = spaceProfile(forTab: tabID), !closing.profileUnavailable(profile) else { continue }
+            let destination = survivors.first { $0.selectedID == tabID || $0.splitID == tabID }
+                ?? survivors.first { $0.windowGroupID == workspace.focusedWindowID }
+            if let destination, let id = destination.windowGroupID,
+               closing.moveView(tabID, profile: profile, to: destination) {
+                workspace.claim(tabID, for: id)
+            }
+        }
     }
 
     @discardableResult
@@ -90,6 +207,21 @@ final class BrowserWindowGroup {
         var document = root.makeDocument()
         document.session = workspace.session
         return document
+    }
+
+    func recordFrame(_ frame: BrowserWindowFrame, for store: BrowserStore) {
+        guard frame.isValid, let id = store.windowGroupID, members[id]?.store === store, frames[id] != frame else { return }
+        frames[id] = frame
+        root?.save()
+    }
+
+    func restoreState() -> BrowserWindowRestoreState? { restoreState(for: workspace) }
+
+    private func restoreState(for workspace: BrowserWindowWorkspace) -> BrowserWindowRestoreState? {
+        guard !workspace.windows.isEmpty else { return nil }
+        let records = workspace.windows.map { BrowserWindowRestoreRecord(selection: $0, frame: frames[$0.id]) }
+        return BrowserWindowRestoreState(records: records, focusedWindowID: workspace.focusedWindowID,
+                                         assignments: workspace.assignments)
     }
 
     func sessionDidChange(from source: BrowserStore) {
@@ -125,6 +257,14 @@ final class BrowserWindowGroup {
         for store in stores where store !== source { copyWriterState(from: source, to: store) }
     }
 
+    func extensionStatusDidChange(from source: BrowserStore) {
+        guard source === root else { return }
+        for store in stores where store !== source {
+            if store.extensionStates != source.extensionStates { store.extensionStates = source.extensionStates }
+            if store.extensionDiagnostics != source.extensionDiagnostics { store.extensionDiagnostics = source.extensionDiagnostics }
+        }
+    }
+
     func restore(_ document: BrowserDocument, from source: BrowserStore) throws {
         guard source === root, !source.isShuttingDown else { throw CancellationError() }
         let next = try replacingSession(document.session, from: source)
@@ -143,6 +283,7 @@ final class BrowserWindowGroup {
         let next = try replacingSession(prepared.session, from: source)
         var diskDocument = prepared
         diskDocument.session = next.session
+        diskDocument.windowRestore = restoreState(for: next)
         do { try vault.save(diskDocument) }
         catch {
             root.savingEnabled = false

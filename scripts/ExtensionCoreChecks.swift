@@ -22,7 +22,7 @@ import BrowserCore
         try document.repairProfiles()
         func encoded(_ document:BrowserDocument) throws -> [String:Any] { try JSONSerialization.jsonObject(with:JSONEncoder().encode(document)) as! [String:Any] }
         let repaired = try encoded(document)
-        check(document.formatVersion == 5,"Extension metadata advances format4 to5 so older readers reject a lossy downgrade")
+        check(document.formatVersion == BrowserDocument.currentFormatVersion,"Extension metadata advances format 4 to the current format so older readers reject a lossy downgrade")
         let profiles = repaired["profiles"] as? [[String:Any]]
         check(profiles?.first?["extensionControllerID"] as? String == controllerID,"The profile's durable extension storage identity survives repair")
         let libraries = repaired["profileLibraries"] as? [[String:Any]]
@@ -179,7 +179,7 @@ import BrowserCore
         var invalidIdentity = typed; invalidIdentity.storeID = "../../not-an-extension-id"
         check(invalidIdentity.runtimeIdentifier == typed.runtimeIdentifier,"An invalid external identity cannot become a native extension origin")
         check(typed.runtimeIdentifier.count == 32 && typed.runtimeIdentifier.utf8.allSatisfy({97...112 ~= $0}),"Unsigned runtime identities use the stable extension-ID alphabet")
-        object["formatVersion"] = 6
+        object["formatVersion"] = BrowserDocument.currentFormatVersion + 1
         var future = try JSONDecoder().decode(BrowserDocument.self,from:JSONSerialization.data(withJSONObject:object))
         var rejected = false
         do { try future.repairProfiles() } catch { rejected = true }

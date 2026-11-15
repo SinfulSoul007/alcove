@@ -47,11 +47,12 @@ public struct Preferences: Codable {
     public init() {}
 }
 public struct BrowserDocument: Codable {
+    public static let currentFormatVersion = 6
     /// Identifies the live window-group snapshot used to prepare a transaction.
     /// Excluded from disk data and the encrypted document format.
     public var workingRevision: UUID? = nil
     private enum CodingKeys: String, CodingKey {
-        case formatVersion, session, library, preferences, profiles, profileLibraries
+        case formatVersion, session, library, preferences, profiles, profileLibraries, windowRestore
     }
     public var formatVersion: Int?
     public var session: Session
@@ -59,7 +60,21 @@ public struct BrowserDocument: Codable {
     public var preferences: Preferences
     public var profiles: [BrowserProfile]?
     public var profileLibraries: [ProfileLibrary]?
+    public var windowRestore: BrowserWindowRestoreState?
     public init(session: Session = Session(), library: BrowserLibrary = BrowserLibrary(), preferences: Preferences = Preferences(), profiles: [BrowserProfile]? = nil, profileLibraries: [ProfileLibrary]? = nil) {
-        formatVersion = 5; self.session = session; self.library = library; self.preferences = preferences; self.profiles = profiles; self.profileLibraries = profileLibraries
+        formatVersion = Self.currentFormatVersion
+        self.session = session; self.library = library; self.preferences = preferences; self.profiles = profiles; self.profileLibraries = profileLibraries
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        formatVersion = try values.decodeIfPresent(Int.self, forKey: .formatVersion)
+        session = try values.decode(Session.self, forKey: .session)
+        library = try values.decode(BrowserLibrary.self, forKey: .library)
+        preferences = try values.decode(Preferences.self, forKey: .preferences)
+        profiles = try values.decodeIfPresent([BrowserProfile].self, forKey: .profiles)
+        profileLibraries = try values.decodeIfPresent([ProfileLibrary].self, forKey: .profileLibraries)
+        // Window geometry and selection can be discarded independently of the protected library.
+        windowRestore = try? values.decodeIfPresent(BrowserWindowRestoreState.self, forKey: .windowRestore)
     }
 }

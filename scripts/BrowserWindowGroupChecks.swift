@@ -115,6 +115,51 @@ struct BrowserWindowGroupChecks {
         owner.release(observer.lease)
         owner.release(quickLease)
         check(owner.isClosed && root.isShuttingDown && root.metadataOwnership == nil, "The last lease releases the sole writer and completes shutdown")
+
+        let layoutURL = rootURL.appendingPathExtension("layout")
+        defer { try? FileManager.default.removeItem(at: layoutURL) }
+        let savedRoot = BrowserStore(dataRoot: layoutURL, keyProvider: { _ in key })
+        let savedOwner = BrowserWindowOwner(store: savedRoot)
+        let savedFirst = try savedOwner.acquirePrimaryStore()
+        let savedSecond = try savedOwner.acquirePrimaryStore(copying: savedRoot)
+        let leftTab = savedRoot.newTab()
+        let rightTab = savedSecond.store.newTab()
+        let leftFrame = BrowserWindowFrame(x: 51, y: 48, width: 810, height: 620)
+        let rightFrame = BrowserWindowFrame(x: 901, y: 48, width: 820, height: 630)
+        let layoutGroup = savedRoot.windowGroup!
+        layoutGroup.recordFrame(leftFrame, for: savedRoot)
+        layoutGroup.recordFrame(rightFrame, for: savedSecond.store)
+        layoutGroup.focusPrimary(savedSecond.store)
+        try savedRoot.renameSpace(savedRoot.space.id, name: "Persist both windows")
+        let layoutSaved = try savedRoot.vault?.load(BrowserDocument.self)?.windowRestore
+        check(layoutSaved?.records.count == 2 && layoutSaved?.focusedWindowID == savedSecond.store.windowGroupID,
+              "Durable shared edits include the identities of both current windows")
+        savedRoot.shutdown()
+        savedOwner.release(savedFirst.lease)
+        savedOwner.release(savedSecond.lease)
+
+        let newRoot = BrowserStore(dataRoot: layoutURL, keyProvider: { _ in key })
+        let newOwner = BrowserWindowOwner(store: newRoot)
+        let opened = try newOwner.restorePrimaryStores()
+        defer {
+            for entry in opened { newOwner.release(entry.lease) }
+            if !newRoot.isShuttingDown { newRoot.shutdown() }
+        }
+        let left = opened.first { $0.store.selectedID == leftTab }
+        let right = opened.first { $0.store.selectedID == rightTab }
+        check(opened.count == 2 && left?.frame == leftFrame && right?.frame == rightFrame && right?.focused == true,
+              "Relaunch reconstructs two independent window stores with their saved frames and focus")
+        if let left, let right {
+            let reopened = newRoot.windowGroup!
+            check(reopened.presentation(tabID: rightTab, in: right.store) == .owned &&
+                reopened.presentation(tabID: rightTab, in: left.store) == .elsewhere(windowID: right.store.windowGroupID!),
+                "Relaunch restores the saved tab assignment")
+            newOwner.release(left.lease)
+            right.store.flush()
+            let remaining = try newRoot.vault?.load(BrowserDocument.self)?.windowRestore
+            check(remaining?.records.map(\.selection.id) == [right.store.windowGroupID!] && right.store.tab(leftTab) != nil,
+                  "Closing a window removes its restore record and preserves the shared tabs")
+        }
         print("Window group checks: \(passed) passed, \(failed) failed")
         if failed > 0 { exit(1) }
     }

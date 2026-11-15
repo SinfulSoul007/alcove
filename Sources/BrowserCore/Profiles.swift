@@ -51,8 +51,10 @@ extension BrowserDocument {
     }
     /// Repair metadata without moving an existing valid profile to another cookie store.
     public mutating func repairProfiles() throws {
-        guard formatVersion == nil || formatVersion == 1 || formatVersion == 2 || formatVersion == 3 || formatVersion == 4 || formatVersion == 5 else { throw MetadataFormatError.unsupportedVersion }
-        formatVersion = 5
+        let version = formatVersion ?? 1
+        guard (1...Self.currentFormatVersion).contains(version) else { throw MetadataFormatError.unsupportedVersion }
+        if version < 6 { windowRestore = nil }
+        formatVersion = Self.currentFormatVersion
         let replacementForZero = UUID()
         func valid(_ id: UUID) -> UUID { id == BrowserProfile.zeroID ? replacementForZero : id }
         var registry = profiles ?? []
@@ -169,6 +171,7 @@ extension BrowserDocument {
         }
         protectDeletedSpaceRoutes()
         library = self.library(for: BrowserProfile.defaultID)
+        windowRestore = windowRestore?.repaired(for: session)
     }
 }
 

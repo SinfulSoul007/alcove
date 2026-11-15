@@ -10,6 +10,9 @@ import BrowserCore
               runtime.epoch == owner.extensionReviewEpoch(for:profileID),let entry = runtime.contexts.first(where:{$0.value === context}),
               let record = owner.extensionRecords(profileID:profileID).first(where:{$0.id == entry.key}),record.enabled,record.pendingRemoval != true,record.grants != nil else {return false}
         if client === owner {return true}
+        if !client.isPrivate {
+            return owner.windowGroup?.containsPrimary(client) == true && client.extensionHosting === self
+        }
         return isAssociated(client,profileID:profileID) && record.grants?.allowPrivate == true && context.hasAccessToPrivateData
     }
     func isAssociated(_ client:BrowserStore,profileID:UUID) -> Bool {
@@ -49,9 +52,15 @@ import BrowserCore
         guard let owner,!owner.isShuttingDown else {return}
         privateClients = privateClients.filter {$0.value.attached != nil}
         let locations = Dictionary(uniqueKeysWithValues:nativeTabs.values.map{(ObjectIdentifier($0),($0.browserWindow,$0.browserWindow?.tabKeys.firstIndex(of:$0.key) ?? 0))})
+        let normalClients = owner.pageStores
+        let normalTabs = nativeTabs.values.reduce(into: [NativeExtensionTabKey: NativeExtensionTab]()) { result, tab in
+            guard tab.store?.isPrivate == false else { return }
+            let key = NativeExtensionTabKey(storeID: owner.extensionStoreID, profileID: tab.key.profileID, id: tab.key.id, isPeek: tab.key.isPeek)
+            result[key] = tab
+        }
         var wantedWindows = Set<NativeExtensionWindowKey>(),wantedTabs = Set<NativeExtensionTabKey>()
         for (profileID,runtime) in profiles where !owner.profileUnavailable(profileID) {
-            let clients = [owner] + privateClients.values.filter {$0.profileID == profileID}.compactMap(\.current)
+            let clients = normalClients + privateClients.values.filter {$0.profileID == profileID}.compactMap(\.current)
             for client in clients {
                 let localProfileID = client.isPrivate ? BrowserProfile.defaultID : profileID
                 for reference in client.extensionWindows.values where reference.window != nil {
@@ -69,6 +78,7 @@ import BrowserCore
                     case .primary:
                         var seen = Set<UUID>()
                         for tab in client.session.spaces.filter({$0.effectiveProfileID == localProfileID}).flatMap(\.tabs) + client.favorites(for:localProfileID) where seen.insert(tab.id).inserted {
+                            if let group = client.windowGroup, group.extensionPresenter(for: tab.id) !== client { continue }
                             append(tab.id,false,client.views[tab.id],tab.title,tab.url,tab.pinned)
                         }
                         if let peek = client.peekPages[.primary],peek.profileID == localProfileID {append(peek.id,true,peek.web,peek.web.title ?? "Peek",peek.web.url?.absoluteString ?? peek.requestedURL?.absoluteString ?? "",false)}
@@ -80,13 +90,18 @@ import BrowserCore
                     if newWindow {runtime.controller.didOpenWindow(window)}
                     for (index,page) in pages.enumerated() {
                         let key = NativeExtensionTabKey(storeID:client.extensionStoreID,profileID:profileID,id:page.0,isPeek:page.1)
-                        let inherited = page.2.flatMap {tabsByView[ObjectIdentifier($0)]}.flatMap {$0.key.profileID == profileID && $0.key.storeID == client.extensionStoreID && $0.web === page.2 ? $0 : nil}
+                        let stableKey = NativeExtensionTabKey(storeID: owner.extensionStoreID, profileID: profileID, id: page.0, isPeek: page.1)
+                        let moved = client.isPrivate ? nil : normalTabs[stableKey]
+                        let previousView = page.2.flatMap { tabsByView[ObjectIdentifier($0)] }
+                        let inherited = moved ?? previousView.flatMap {
+                            $0.key.profileID == profileID && $0.key.storeID == client.extensionStoreID && $0.web === page.2 ? $0 : nil
+                        }
                         let tab = nativeTabs[key] ?? inherited ?? NativeExtensionTab(host:self,store:client,key:key,state:page.3,web:page.2)
                         let existed = nativeTabs[key] != nil || inherited != nil
                         let oldWindow = locations[ObjectIdentifier(tab)]?.0,oldIndex = locations[ObjectIdentifier(tab)]?.1 ?? 0,oldState = tab.state
                         if tab.key != key {nativeTabs.removeValue(forKey:tab.key)}
                         if let previous = tab.web,previous !== page.2 {tabsByView.removeValue(forKey:ObjectIdentifier(previous))}
-                        tab.key = key;tab.state = page.3;tab.web = page.2;tab.browserWindow = window
+                        tab.key = key;tab.state = page.3;tab.store = client;tab.web = page.2;tab.browserWindow = window
                         nativeTabs[key] = tab;if let web = page.2 {tabsByView[ObjectIdentifier(web)] = tab}
                         tabKeys.append(key);wantedTabs.insert(key)
                         window.tabKeys = tabKeys
@@ -142,7 +157,8 @@ import BrowserCore
             guard !hasApprovedPrivateClient(context,profileID:id) else {
                 completionHandler(nil,ExtensionHostError.native("Choose an explicit target window while private browsing is open."));return
             }
-            target = nativeWindows.values.first(where:{$0.key.profileID == id && $0.reference.kind == .primary && $0.store === owner})
+            let preferred = owner.windowGroup?.focusedPrimary ?? owner
+            target = nativeWindows.values.first(where:{$0.key.profileID == id && $0.reference.kind == .primary && $0.store === preferred})
         }
         guard let target,let client = target.store,target.key.profileID == id,target.live(context) != nil,target.reference.kind == .primary,
               !configuration.shouldBeMuted,!configuration.shouldReaderModeBeActive else {completionHandler(nil,ExtensionHostError.native("This tab configuration is unavailable in the target browser window."));return}

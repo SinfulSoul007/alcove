@@ -4,10 +4,20 @@ import BrowserCore
 
 final class EdgeToEdgeWebHost: NSView {
     private var recovery:ExtensionRecoveryBanner?
+    private weak var recoveryWebView: WKWebView?
     func setRecovery(store:BrowserStore,webView:WKWebView) {
         let banner=recovery ?? ExtensionRecoveryBanner(container:self);recovery=banner
+        recoveryWebView = webView
         if banner.superview !== self {addSubview(banner)}
         banner.bind(store:store,webView:webView);layoutRecovery()
+    }
+    func removeContent(_ webView: WKWebView) {
+        if webView.superview === self { webView.removeFromSuperview() }
+        if recoveryWebView === webView {
+            recovery?.removeFromSuperview()
+            recovery = nil
+            recoveryWebView = nil
+        }
     }
     func layoutRecovery() {
         guard let recovery,!recovery.isHidden else {return}
@@ -37,11 +47,21 @@ struct WebPane: NSViewRepresentable {
     var store:BrowserStore?=nil
     func makeNSView(context: Context) -> EdgeToEdgeWebHost {
         let host = EdgeToEdgeWebHost()
-        host.setContent(webView)
-        if let store {host.setRecovery(store:store,webView:webView)}
+        mount(in: host)
         return host
     }
-    func updateNSView(_ nsView: EdgeToEdgeWebHost, context: Context) {nsView.setContent(webView);if let store {nsView.setRecovery(store:store,webView:webView)}}
+    func updateNSView(_ nsView: EdgeToEdgeWebHost, context: Context) { mount(in: nsView) }
+
+    func mount(in host: EdgeToEdgeWebHost) {
+        if let store {
+            guard !store.isShuttingDown, webView.navigationDelegate === store, store.profileID(for: webView) != nil else {
+                host.removeContent(webView)
+                return
+            }
+            host.setContent(webView)
+            host.setRecovery(store: store, webView: webView)
+        } else { host.setContent(webView) }
+    }
 }
 
 struct BrowserUI: View {
@@ -290,10 +310,27 @@ struct BrowserUI: View {
     }
     private func row(_ tab: BrowserCore.Tab) -> some View { SidebarTabRow(tab: tab, store: store, theme: theme, appearance: appearance, motion: motion) }
     @ViewBuilder private func pane(_ id: UUID?) -> some View {
+        let presentation = id.flatMap { store.windowGroup?.presentation(tabID: $0, in: store) }
         if let id, let profile = store.profileID(for: id), store.profileUnavailable(profile) {
-            VStack(spacing: 12) { if store.clearingProfileID == profile { ProgressView(); Text("Clearing this profile’s website data…") } else { Text("This profile is unavailable. Unlock local data or finish its pending operation.") } }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 12) { if store.metadataWriter.clearingProfileID == profile { ProgressView(); Text("Clearing this profile’s website data…") } else { Text("This profile is unavailable. Unlock local data or finish its pending operation.") } }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        else if let id, let tab = store.tab(id), !tab.url.isEmpty { WebPane(webView: store.view(for: id),store:store).id(id).frame(minWidth: 160) }
+        else if let id, let group = store.windowGroup,
+                let presentation, presentation.canBringHere {
+            VStack(spacing: 14) {
+                Text(presentation == .pooled ? "This tab is open in the background" : "This tab is open in another window").font(.headline)
+                HStack {
+                    Button("Bring Tab Here") { group.claimPresentation(tabID: id, in: store) }
+                    if case .elsewhere = presentation {
+                        Button("Go to Window") { group.revealPresenter(tabID: id, from: store) }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        else if let id, let tab = store.tab(id), !tab.url.isEmpty,
+                let webView = store.primaryPageView(for: id) {
+            WebPane(webView: webView, store: store).id(id).frame(minWidth: 160)
+        }
         else {
             VStack(spacing: 10) {
                 Spacer()

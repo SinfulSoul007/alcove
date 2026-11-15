@@ -19,6 +19,22 @@ public struct BrowserWindowSelection: Codable, Equatable, Identifiable {
         }
     }
 
+    private enum CodingKeys: String, CodingKey { case id, spaceID, selectedTabsBySpace }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        spaceID = try values.decode(UUID.self, forKey: .spaceID)
+        selectedTabsBySpace = try values.decodeWindowUUIDMap(forKey: .selectedTabsBySpace)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(spaceID, forKey: .spaceID)
+        try values.encodeWindowUUIDMap(selectedTabsBySpace, forKey: .selectedTabsBySpace)
+    }
+
     fileprivate func reconciled(in session: Session) -> Self {
         var result = self
         if !session.spaces.contains(where: { $0.id == spaceID }) { result.spaceID = session.selectedSpace }

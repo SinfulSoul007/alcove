@@ -88,10 +88,18 @@ extension BrowserStore {
             }
         }
     }
-    func adoptQuickPeek(_ id: UUID, into spaceID: UUID) {
-        closePrimaryPeek()
+    func adoptQuickPeek(_ id: UUID, into spaceID: UUID, in destination: BrowserStore) {
+        destination.closePrimaryPeek()
         guard let page = peekPages.removeValue(forKey: .quick(id)) else { return }
-        page.spaceID = spaceID; page.web.removeFromSuperview(); peekPages[.primary] = page
+        page.spaceID = spaceID
+        if destination === self { page.web.removeFromSuperview() }
+        else {
+            page.observations = []
+            transferDocumentBindings(for: page.web, to: destination)
+            destination.installPeek(page)
+            extensionHosting?.sourceDocumentChanged(page.web)
+        }
+        destination.peekPages[.primary] = page
     }
     func expandPeek(in context: PeekContext) {
         requestExpandPeek(in: context)

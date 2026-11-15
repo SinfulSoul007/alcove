@@ -2,6 +2,13 @@ import Foundation
 import BrowserCore
 
 enum ExternalLinkDestination: Equatable { case quick(UUID), space(UUID), pending }
+
+@MainActor struct RestoredPrimaryStore {
+    let store: BrowserStore
+    let lease: UUID
+    let frame: BrowserWindowFrame?
+    let focused: Bool
+}
 enum BrowserWindowOwnerError: LocalizedError {
     case closed, privateDispatch, queueFull
     var errorDescription: String? {
@@ -34,9 +41,7 @@ enum BrowserWindowOwnerError: LocalizedError {
         let token = UUID(); primaryLeases.insert(token);resumeArchiveIfReady(); return token
     }
     func acquirePrimaryStore(copying source: BrowserStore? = nil) throws -> (store: BrowserStore, lease: UUID) {
-        guard !isClosed else { throw BrowserWindowOwnerError.closed }
-        guard !store.isPrivate else { throw ProfileError.privateMode }
-        guard store.savingEnabled, !store.awaitingInitialMetadata, store.vault != nil else { throw ProfileError.locked }
+        try requireNormalWindows()
         let group: BrowserWindowGroup
         if let windowGroup { group = windowGroup }
         else {
@@ -47,6 +52,31 @@ enum BrowserWindowOwnerError: LocalizedError {
         let lease = try acquirePrimary()
         groupedPrimaries[lease] = member
         return (member, lease)
+    }
+    func adoptPrimaryLease(_ lease: UUID) throws {
+        try requireNormalWindows()
+        guard windowGroup == nil, primaryLeases == [lease] else { return }
+        let group = try BrowserWindowGroup(root: store)
+        let root = try group.openPrimary(copying: nil)
+        windowGroup = group
+        groupedPrimaries[lease] = root
+    }
+    func restorePrimaryStores(reusing lease: UUID? = nil) throws -> [RestoredPrimaryStore] {
+        try requireNormalWindows()
+        let expectedLeases = Set(lease.map { [$0] } ?? [])
+        guard windowGroup == nil, primaryLeases == expectedLeases, let saved = store.savedWindowRestore else { return [] }
+        let group = try BrowserWindowGroup(root: store, restoring: saved)
+        windowGroup = group
+        return try group.attachRestoredPrimaries().map { entry in
+            let token = try (entry.store === store ? lease : nil) ?? acquirePrimary()
+            groupedPrimaries[token] = entry.store
+            return RestoredPrimaryStore(store: entry.store, lease: token, frame: entry.frame, focused: entry.focused)
+        }
+    }
+    private func requireNormalWindows() throws {
+        guard !isClosed, !store.isShuttingDown else { throw BrowserWindowOwnerError.closed }
+        guard !store.isPrivate else { throw ProfileError.privateMode }
+        guard store.savingEnabled, !store.awaitingInitialMetadata, store.vault != nil else { throw ProfileError.locked }
     }
     func acquireQuick(_ id: UUID) throws -> UUID {
         guard !isClosed else { throw BrowserWindowOwnerError.closed }

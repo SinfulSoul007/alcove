@@ -8,11 +8,16 @@ struct BrowserExtensionActionSummary:Identifiable {
 extension BrowserStore {
     func extensionActionSummaries(for web:WKWebView) -> [BrowserExtensionActionSummary] {
         guard let profile = profileID(for:web),!profileUnavailable(profile) else {return []}
+        if #available(macOS 15.4, *), let native = extensionHosting as? NativeBrowserExtensionHost {
+            return native.actionSummaries(for: web, profileID: profile, client: self)
+        }
         return extensionHosting?.actionSummaries(for:web,profileID:profile) ?? []
     }
     func performExtensionAction(_ id:UUID,from web:WKWebView,anchor:NSView) throws {
         guard !isShuttingDown,let profile = profileID(for:web),!profileUnavailable(profile),let host = ensureExtensionHost() else {throw ExtensionHostError.stale}
-        try host.performAction(id,from:web,profileID:profile,anchor:anchor)
+        if #available(macOS 15.4, *), let native = host as? NativeBrowserExtensionHost {
+            try native.performAction(id, from: web, profileID: profile, client: self, anchor: anchor)
+        } else { try host.performAction(id,from:web,profileID:profile,anchor:anchor) }
     }
 }
 

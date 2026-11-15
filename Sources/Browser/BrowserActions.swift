@@ -76,6 +76,7 @@ extension BrowserStore {
                         candidate.setLibrary(value, for: entry.profileID)
                     }
                     if hasSavedDocument { candidate.preferences = pending.preferences }
+                    if windowGroup != nil { candidate.windowRestore = pending.windowRestore }
                     if candidate.preferences.onboardingCompleted == nil { candidate.preferences.onboardingCompleted = true }
                 }
                 try candidate.repairProfiles(); candidate.session = Self.repairedSession(candidate.session)
@@ -133,12 +134,13 @@ extension BrowserStore {
         let cutoff = Date().addingTimeInterval(-Double(preferences.archiveAfterDays) * 86400)
         var protected = Set(session.spaces.compactMap(\.selected))
         if let splitID { protected.insert(splitID) }
+        if let windowGroup { protected.formUnion(windowGroup.protectedPaneIDs) }
         var profileBeforeArchive: [UUID: UUID] = [:]
         for space in session.spaces { for tab in space.tabs { profileBeforeArchive[tab.id] = space.effectiveProfileID } }
         let archived = session.archiveInactive(before: cutoff, excluding: protected)
         for tab in archived {
             let owner = viewProfileIDs[tab.id] ?? profileBeforeArchive[tab.id] ?? BrowserProfile.defaultID
-            mutateLibrary(for: owner) { $0.archive.insert(tab, at: 0) }; discardView(tab.id)
+            mutateLibrary(for: owner) { $0.archive.insert(tab, at: 0) }; discardSharedView(tab.id)
         }
         save()
     }

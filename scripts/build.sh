@@ -117,6 +117,7 @@ run_extension_runtime_checks() {
     local extension_check_name="${1:-runtime}" extension_check_source="scripts/ExtensionRuntimeChecks.swift"
     if [[ "$extension_check_name" == "navigation" ]]; then extension_check_source="scripts/ExtensionNavigationChecks.swift"; fi
     if [[ "$extension_check_name" == "adapter" ]]; then extension_check_source="scripts/ExtensionAdapterChecks.swift"; fi
+    if [[ "$extension_check_name" == "multi-window" ]]; then extension_check_source="scripts/ExtensionMultiWindowChecks.swift"; fi
     if [[ "$extension_check_name" == "private" ]]; then extension_check_source="scripts/ExtensionPrivateChecks.swift"; fi
     if [[ "$extension_check_name" == "permission" ]]; then extension_check_source="scripts/ExtensionPermissionChecks.swift"; fi
     if [[ "$extension_check_name" == "action" ]]; then extension_check_source="scripts/ExtensionActionChecks.swift"; fi
@@ -141,6 +142,7 @@ run_extension_runtime_checks() {
 if [[ "${1:-}" == "extension-runtime-test" ]]; then run_extension_runtime_checks; exit; fi
 if [[ "${1:-}" == "extension-navigation-test" ]]; then run_extension_runtime_checks navigation; exit; fi
 if [[ "${1:-}" == "extension-adapter-test" ]]; then run_extension_runtime_checks adapter; exit; fi
+if [[ "${1:-}" == "extension-multi-window-test" ]]; then run_extension_runtime_checks multi-window; exit; fi
 if [[ "${1:-}" == "extension-private-test" ]]; then run_extension_runtime_checks private; exit; fi
 if [[ "${1:-}" == "extension-permission-test" ]]; then run_extension_runtime_checks permission; exit; fi
 if [[ "${1:-}" == "extension-action-test" ]]; then run_extension_runtime_checks action; exit; fi
@@ -185,6 +187,16 @@ run_window_group_checks() {
     "$MANUAL/window-group-checks"
 }
 if [[ "${1:-}" == "window-group-test" ]]; then run_window_group_checks; exit; fi
+if [[ "${1:-}" == "multi-window-native-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/BrowserMultiWindowNativeChecks.swift -o "$MANUAL/multi-window-native-checks"
+    "$MANUAL/multi-window-native-checks"
+    exit
+fi
+if [[ "${1:-}" == "window-handoff-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/BrowserWindowHandoffChecks.swift scripts/OwnedWebsiteStores.swift -o "$MANUAL/window-handoff-checks"
+    "$MANUAL/window-handoff-checks"
+    exit
+fi
 run_writer_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/WriterOwnershipChecks.swift -o "$MANUAL/writer-checks"
     "$MANUAL/writer-checks"

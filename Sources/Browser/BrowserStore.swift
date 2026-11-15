@@ -11,6 +11,7 @@ enum BrowserPanel: String, Identifiable { case library, settings, appearance, up
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     weak var windowGroup: BrowserWindowGroup?
     var windowGroupID: UUID?
+    var savedWindowRestore: BrowserWindowRestoreState?
     var metadataWriter: BrowserStore { windowGroup?.root ?? self }
     @Published var session = Session() {
         didSet {
@@ -117,11 +118,22 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var extensionInstallationInProgress = false
     var extensionPublication:Task<InstalledExtensionPackage,Error>?
     var extensionMaintenance:Task<Int,Error>?
-    var extensionHosting:(any BrowserExtensionHosting)? {
-        didSet {if oldValue !== extensionHosting {oldValue?.shutdown()}}
+    private var ownedExtensionHosting: (any BrowserExtensionHosting)? {
+        didSet { if oldValue !== ownedExtensionHosting { oldValue?.shutdown() } }
     }
-    @Published var extensionStates:[UUID:ExtensionProfileState] = [:]
-    @Published var extensionDiagnostics:[UUID:[UUID:[String]]] = [:]
+    var extensionHosting: (any BrowserExtensionHosting)? {
+        get {
+            if let writer = windowGroup?.root, writer !== self, !isShuttingDown { return writer.ownedExtensionHosting }
+            return ownedExtensionHosting
+        }
+        set { ownedExtensionHosting = newValue }
+    }
+    @Published var extensionStates: [UUID: ExtensionProfileState] = [:] {
+        didSet { windowGroup?.extensionStatusDidChange(from: self) }
+    }
+    @Published var extensionDiagnostics: [UUID: [UUID: [String]]] = [:] {
+        didSet { windowGroup?.extensionStatusDidChange(from: self) }
+    }
     var extensionNavigationTickets:[UUID:ExtensionNavigationTicket] = [:]
     @Published var extensionNavigationProblem:ExtensionNavigationProblem?
     let extensionStoreID = UUID()
@@ -154,6 +166,46 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         extensionHosting?.sourceDocumentChanged(web)
         if boostPicker?.source.web === web { cancelBoostPicker() }
         BoostRuntime.invalidate(web)
+    }
+    func moveView(_ id: UUID, profile: UUID, to destination: BrowserStore) -> Bool {
+        guard let web = views[id], viewProfileIDs[id] == profile,
+              let group = windowGroup, group === destination.windowGroup,
+              !isPrivate, !isShuttingDown, !destination.isShuttingDown,
+              !destination.profileUnavailable(profile), destination.profileID(for: id) == profile,
+              destination.metadataWriter.matchesBoostWebsiteDataStore(web, profileID: profile),
+              destination.views[id] == nil else { return false }
+        let icon = siteIcons.removeValue(forKey: id)
+        views.removeValue(forKey: id)
+        observations.removeValue(forKey: id)
+        viewProfileIDs.removeValue(forKey: id)
+        accessOrder.removeAll { $0 == id }
+        transferDocumentBindings(for: web, to: destination)
+        if let icon { destination.siteIcons[id] = icon }
+        destination.registerView(web, for: id, profile: profile)
+        extensionHosting?.sourceDocumentChanged(web)
+        revision += 1
+        destination.revision += 1
+        return true
+    }
+    func transferDocumentBindings(for web: WKWebView, to destination: BrowserStore) {
+        let identity = documentIdentity(for: web)
+        let extensionOrigin = extensionOriginPopups.contains(web)
+        let popupOwner = extensionPopupOwners.object(forKey: web)
+        documentIDs.removeObject(forKey: web)
+        extensionOriginPopups.remove(web)
+        extensionPopupOwners.removeObject(forKey: web)
+        cancelExtensionNavigations(for: web)
+        cancelInvalidExtensionNavigations()
+        reconcilePrivateExtensionReopen()
+        if boostPicker?.source.web === web { cancelBoostPicker() }
+        for job in Array(boostApprovalJobs.values) where job.request.source.web === web {
+            finishBoostApproval(job, cancelled: true)
+        }
+        if let host = web.superview as? EdgeToEdgeWebHost { host.removeContent(web) }
+        else { web.removeFromSuperview() }
+        destination.documentIDs.setObject(identity, forKey: web)
+        if extensionOrigin { destination.extensionOriginPopups.add(web) }
+        if let popupOwner { destination.extensionPopupOwners.setObject(popupOwner, forKey: web) }
     }
     var viewProfileIDs: [UUID: UUID] = [:]
     var namedDataStores: [UUID: WKWebsiteDataStore] = [:]
@@ -257,6 +309,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func select(_ id: UUID) {
         guard session.spaces[spaceIndex].tabs.contains(where: { $0.id == id }) else { return }
         if focusedID != id { dismissCommand() }
+        windowGroup?.claimPresentation(tabID: id, in: self)
         session.spaces[spaceIndex].selected = id; activePaneID = nil
         accessOrder.removeAll { $0 == id }; accessOrder.append(id)
         update(id) { $0.lastAccessed = Date() }
@@ -291,12 +344,12 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func close(_ id: UUID) {
         if quickPage(id) != nil { do { try closeQuickPage(id) } catch { message = error.localizedDescription }; return }
         if !session.spaces.contains(where: { $0.tabs.contains(where: { $0.id == id }) }), let favorite = tab(id), favorite.favorite == true {
-            update(id) { $0.url = $0.homeURL ?? $0.url; $0.title = $0.pinnedTitle ?? $0.title }; discardView(id); return
+            update(id) { $0.url = $0.homeURL ?? $0.url; $0.title = $0.pinnedTitle ?? $0.title }; discardSharedView(id); return
         }
         guard let owner = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) })?.id else { return }
         if let tab = tab(id), tab.pinned {
             update(id) { $0.url = $0.homeURL ?? $0.url; $0.title = $0.pinnedTitle ?? $0.title }
-            discardView(id)
+            discardSharedView(id)
             if activePaneID == id { activePaneID = nil }
         if splitID == id { splitID = nil }
             if let s = session.spaces.firstIndex(where: { $0.id == owner }), session.spaces[s].selected == id {
@@ -311,7 +364,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         }
         if activePaneID == id { activePaneID = nil }
         if splitID == id { splitID = nil }
-        discardView(id)
+        discardSharedView(id)
         session.close(id, in: owner)
         if splitID == selectedID { splitID = nil }
         save()
@@ -383,12 +436,18 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             guard !profileUnavailable(activeProfileID), !isShuttingDown else { throw ProfileError.pending }
             let url = try resolveSearchInput(input, selection: editing ? commandSiteSearch : nil)
             let peek = editing && !new ? primaryPeekView : nil
-            if !new,let target = peek ?? currentView,extensionOriginPopups.contains(target) {throw ExtensionHostError.unsupportedWebsitePopup}
-            commandVisible = false
-            if let peek { peek.load(URLRequest(url: url)); return }
+            if let peek {
+                guard !extensionOriginPopups.contains(peek) else { throw ExtensionHostError.unsupportedWebsitePopup }
+                commandVisible = false
+                peek.load(URLRequest(url: url))
+                return
+            }
             if editing && new { closePrimaryPeek() }
             let reusableBlank = selectedTab?.url.isEmpty == true && (currentView.map{!extensionOriginPopups.contains($0)} ?? true)
             let id = new && !reusableBlank ? newTab() : (focusedID ?? newTab())
+            if let windowGroup, !windowGroup.claimPresentation(tabID: id, in: self) { throw SearchInputError.contextChanged }
+            if !new, let web = views[id], extensionOriginPopups.contains(web) { throw ExtensionHostError.unsupportedWebsitePopup }
+            commandVisible = false
             update(id) { $0.url = url.absoluteString; $0.title = url.host ?? "Page" }
             view(for: id).load(URLRequest(url: url))
         } catch {
@@ -475,8 +534,12 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func toggleSplit() {
         if splitID != nil { splitID = nil; return }
-        splitID = space.tabs.first(where: { $0.id != selectedID && !$0.url.isEmpty })?.id
-        if splitID == nil { message = "Open a second website, then choose Split View." }
+        guard let id = space.tabs.first(where: { $0.id != selectedID && !$0.url.isEmpty })?.id else {
+            message = "Open a second website, then choose Split View."
+            return
+        }
+        windowGroup?.claimPresentation(tabID: id, in: self)
+        splitID = id
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if action.targetFrame?.isMainFrame != false {beginExtensionMainNavigation(webView)}

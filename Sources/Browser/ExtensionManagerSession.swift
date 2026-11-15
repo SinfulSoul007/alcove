@@ -54,7 +54,7 @@ import BrowserCore
     var canManage:Bool {
         guard let store,!closed,!store.isPrivate,!store.isShuttingDown,
               source.window != nil,store.extensionWindows[source.kind] === source,
-              store.savingEnabled,store.vault != nil,!store.profileUnavailable(profileID),
+              store.savingEnabled,store.metadataWriter.vault != nil,!store.profileUnavailable(profileID),
               store.profiles.contains(where:{$0.id==profileID && $0.extensionControllerID != nil}) else {return false}
         if #available(macOS 15.4,*) {return true};return false
     }
@@ -76,12 +76,12 @@ import BrowserCore
         currentReview?.discard();currentReview=nil;currentPermissions=nil
     }
     func close() {guard !closed else {return};closed=true;cancelReview()}
-    private func owner() throws -> BrowserStore {
+    func managementStore() throws -> BrowserStore {
         guard !closed,let store,!store.isShuttingDown,source.window != nil,store.extensionWindows[source.kind] === source else {throw ExtensionHostError.closed}
         guard !store.isPrivate else {throw ProfileError.privateMode}
         guard #available(macOS 15.4,*) else {throw ExtensionHostError.unavailable}
         guard canManage else {throw ProfileError.locked}
-        return store
+        return store.metadataWriter
     }
     func reviewFile(_ url:URL,replacing:UUID?=nil) async throws -> ExtensionInstallPreview {
         try await review(replacing:replacing){root in
@@ -94,7 +94,7 @@ import BrowserCore
         return try await review(replacing:replacing){root in try await ExtensionStoreDownload.fetch(id:id,stagingRoot:root,transport:transport)}
     }
     private func review(replacing:UUID?,prepare:@escaping @Sendable (URL) async throws -> PreparedExtensionPackage) async throws -> ExtensionInstallPreview {
-        let owner=try owner();cancelReview()
+        let owner=try managementStore();cancelReview()
         let generation=self.generation,profileID=self.profileID
         guard let controller=owner.profiles.first(where:{$0.id==profileID})?.extensionControllerID else {throw ExtensionActionError.stale}
         let epoch=owner.extensionReviewEpoch(for:profileID),previous=replacing.flatMap {id in owner.extensionRecords(profileID:profileID).first(where:{$0.id==id})}
@@ -127,14 +127,14 @@ import BrowserCore
         }
     }
     private func validate(generation:UUID,profileID:UUID,controller:UUID,epoch:UUID,previous:BrowserExtensionRecord?) throws {
-        try Task.checkCancellation();let store=try owner()
+        try Task.checkCancellation();let store=try managementStore()
         guard self.generation==generation,self.profileID==profileID,
               store.profiles.first(where:{$0.id==profileID})?.extensionControllerID==controller,
               store.extensionReviewEpoch(for:profileID)==epoch else {throw ExtensionActionError.stale}
         if let previous {guard store.extensionRecords(profileID:profileID).first(where:{$0.id==previous.id})==previous else {throw ExtensionActionError.stale}}
     }
     @discardableResult func approve(_ review:ExtensionInstallPreview,permissions:[String],hostPatterns:[String],allowPrivate:Bool,enable:Bool=true) async throws -> UUID {
-        let store=try owner()
+        let store=try managementStore()
         guard currentReview === review,!review.consumed else {throw ExtensionActionError.stale}
         try validate(generation:review.generation,profileID:review.profileID,controller:review.controllerID,epoch:review.epoch,previous:review.previous)
         // Invalid choices can be corrected without consuming the valid review.
@@ -150,7 +150,7 @@ import BrowserCore
         return try await withTaskCancellationHandler(operation:{try await task.value},onCancel:{task.cancel()})
     }
     func reviewInstalled(_ id:UUID) async throws -> ExtensionPermissionPreview {
-        let store=try owner();cancelReview()
+        let store=try managementStore();cancelReview()
         let generation=self.generation,profileID=self.profileID,epoch=store.extensionReviewEpoch(for:profileID)
         guard let record=store.extensionRecords(profileID:profileID).first(where:{$0.id==id}),record.pendingRemoval != true,
               let controller=store.profiles.first(where:{$0.id==profileID})?.extensionControllerID else {throw ExtensionActionError.missing}
@@ -167,7 +167,7 @@ import BrowserCore
         currentPermissions=preview;return preview
     }
     func savePermissions(_ review:ExtensionPermissionPreview,permissions:[String],hostPatterns:[String],allowPrivate:Bool) async throws {
-        let store=try owner()
+        let store=try managementStore()
         guard currentPermissions === review,!review.consumed else {throw ExtensionActionError.stale}
         try validate(generation:review.generation,profileID:review.profileID,controller:review.controllerID,epoch:review.epoch,previous:review.record)
         guard Set(permissions).isSubset(of:Set(review.supportedPermissions)) else {throw ExtensionActionError.invalidApproval}

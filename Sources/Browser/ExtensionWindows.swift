@@ -20,7 +20,11 @@ extension BrowserStore {
         if extensionWindows[kind]?.window !== window {extensionWindows[kind] = ExtensionBrowserWindow(window,kind:kind){ [weak self] in self?.extensionBrowserStateChanged() }}
         ensureExtensionHost()?.refresh()
     }
-    func unregisterExtensionWindow(kind:ExtensionWindowKind) {extensionWindows.removeValue(forKey:kind);extensionHosting?.refresh()}
+    func unregisterExtensionWindow(kind:ExtensionWindowKind) {
+        extensionWindows.removeValue(forKey:kind)
+        if windowGroup != nil { extensionHosting?.browserStateChanged() }
+        else { extensionHosting?.refresh() }
+    }
     func extensionBrowserStateChanged() {extensionHosting?.browserStateChanged()}
 }
 

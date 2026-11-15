@@ -47,6 +47,13 @@ extension BrowserStore {
         }
     }) async throws {
         guard !isPrivate else { throw ProfileError.privateMode }
+        guard !isShuttingDown else { throw CancellationError() }
+        let writer = metadataWriter
+        if writer !== self {
+            try await writer.deleteProfile(id, removeStore: removeStore)
+            if !isShuttingDown { message = writer.message }
+            return
+        }
         guard deletingProfileID == nil, !clearingData else { throw ProfileError.busy }
         guard id != BrowserProfile.defaultID else { throw ProfileError.defaultProfile }
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw ProfileError.missing }
@@ -65,18 +72,17 @@ extension BrowserStore {
         for page in records.quickPages ?? [] { if let archived = archivedQuickTab(page) { records.archive.insert(archived, at: 0) } }
         records.quickPages = []; candidate.setLibrary(records, for: id)
         try commitProfileDocument(candidate)
-        closePeeks(forProfile: id)
-        for tabID in Array(views.keys) where viewProfileIDs[tabID] == id { discardView(tabID) }
+        closeProfilePages(id)
         var erasureDataStore:WKWebsiteDataStore? = extensionNamespaces.isEmpty ? nil : (namedDataStores[id] ?? WKWebsiteDataStore(forIdentifier:id))
         namedDataStores.removeValue(forKey: id)
         do {
             let clock = ContinuousClock(); let deadline = clock.now.advanced(by: .seconds(5))
-            while closingPages.contains(where: { $0.profileID == id && $0.webView != nil }) {
+            while pageStores.contains(where: { store in store.closingPages.contains { $0.profileID == id && $0.webView != nil } }) {
                 guard !isShuttingDown else { throw CancellationError() }
                 guard clock.now < deadline else { throw ProfileError.pagesClosing }
                 try await Task.sleep(for: .milliseconds(20))
             }
-            closingPages.removeAll { $0.webView == nil }
+            for store in pageStores { store.closingPages.removeAll { $0.webView == nil } }
             guard !isShuttingDown else { throw CancellationError() }
             if let dataStore = erasureDataStore {try await eraseProfileExtensionData(installedExtensions,profileID:id,controllerIDs:extensionNamespaces,expectedControllerID:extensionControllerID,dataStore:dataStore)}
             erasureDataStore = nil
@@ -103,8 +109,14 @@ extension BrowserStore {
     func clearProfileData(_ id: UUID, removeData: @escaping @MainActor (WKWebsiteDataStore) async throws -> Void = { dataStore in
         await withCheckedContinuation { continuation in dataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) { continuation.resume() } }
     }) async throws {
-        guard !clearingData, deletingProfileID == nil else { throw ProfileError.busy }
         guard !isShuttingDown else { throw CancellationError() }
+        let writer = metadataWriter
+        if writer !== self {
+            try await writer.clearProfileData(id, removeData: removeData)
+            if !isShuttingDown { message = writer.message }
+            return
+        }
+        guard !clearingData, deletingProfileID == nil else { throw ProfileError.busy }
         guard isPrivate ? id == BrowserProfile.defaultID : profiles.contains(where: { $0.id == id && !$0.isPendingDeletion }) else { throw ProfileError.missing }
         if #available(macOS 15.4,*),!isPrivate,try retainedExtensionNamespaces(profileID:id).contains(where:{ExtensionErasureJobs.holds($0)}) {throw ExtensionErasureError.busy}
         if !isPrivate { guard ProfileDataOperations.shared.begin(id) else { throw ProfileError.busy } }
@@ -135,7 +147,7 @@ extension BrowserStore {
         candidate.setLibrary(records, for: id)
         if isPrivate { try commitQuickDocument(candidate, discarding: affected, beforePublish: { self.splitID = nil; self.activePaneID = nil }) }
         else { try commitProfileDocument(candidate, discarding: affected, resetting: activeProfileID == id ? space.id : nil) }
-        closePeeks(forProfile: id)
+        closeProfilePages(id)
         clearingData = true; clearingProfileID = id
         defer { clearingData = false; clearingProfileID = nil }
         // This path is deliberately allowed to access a pending-clear store for removal only.
@@ -152,7 +164,7 @@ extension BrowserStore {
         }
         catch { message = "Website clearing did not finish. This profile remains paused so you can retry safely. \(error.localizedDescription)"; throw error }
         guard !isShuttingDown else { throw CancellationError() }
-        for tabID in Array(views.keys) where viewProfileIDs[tabID] == id { discardView(tabID) }
+        closeProfilePages(id)
         if !isPrivate {
             var finished = makeDocument()
             if let index = finished.profiles?.firstIndex(where: { $0.id == id }) {
@@ -164,6 +176,14 @@ extension BrowserStore {
             catch { message = "Website data was cleared, but its completion could not be saved. Unlock local data and retry this profile’s clear operation."; throw error }
         }
         message = "Website data and history cleared for this profile. Other profiles, bookmarks and downloaded files were kept."
+    }
+    private func closeProfilePages(_ id: UUID) {
+        for store in pageStores {
+            store.closePeeks(forProfile: id)
+            for tabID in Array(store.views.keys) where store.viewProfileIDs[tabID] == id {
+                store.discardView(tabID)
+            }
+        }
     }
     func profileUnavailable(_ id: UUID) -> Bool {
         if clearingProfileID == id { return true }
@@ -203,6 +223,8 @@ extension BrowserStore {
         for index in entries.indices { entries[index].library.quickPages = entries[index].library.quickPages?.map(effectiveQuickPage) }
         var document = BrowserDocument(session: session, library: entries.first(where: { $0.profileID == BrowserProfile.defaultID })?.library ?? BrowserLibrary(), preferences: preferences, profiles: profiles, profileLibraries: entries)
         document.workingRevision = windowGroup?.revision
+        if let windowGroup { document.windowRestore = windowGroup.restoreState() }
+        else { document.windowRestore = savedWindowRestore }
         return document
     }
     func applyDocument(_ document: BrowserDocument) throws {
@@ -217,6 +239,7 @@ extension BrowserStore {
     }
     func installDocumentFields(_ prepared: BrowserDocument, projecting selection: Session) {
         invalidateExtensionReviewEpochs(from: profiles, to: prepared.profiles ?? [])
+        if windowGroup == nil { savedWindowRestore = prepared.windowRestore }
         if session != selection { session = selection }
         profiles = prepared.profiles ?? [.defaultProfile]
         profileLibraries = prepared.profileLibraries ?? [ProfileLibrary(profileID: BrowserProfile.defaultID, library: prepared.library)]
