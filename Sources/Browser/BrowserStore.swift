@@ -160,9 +160,16 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var archiveTimer: Timer?
     var views: [UUID: WKWebView] = [:]
     private let documentIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
+    private let presentationIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     func documentIdentity(for web: WKWebView) -> NSUUID {
         if let identity = documentIDs.object(forKey: web) { return identity }
         let identity = NSUUID(); documentIDs.setObject(identity, forKey: web); return identity
+    }
+    func presentationIdentity(for web: WKWebView) -> NSUUID {
+        if let identity = presentationIDs.object(forKey: web) { return identity }
+        let identity = NSUUID()
+        presentationIDs.setObject(identity, forKey: web)
+        return identity
     }
     func invalidateDocumentIdentity(for web: WKWebView) {
         documentIDs.setObject(NSUUID(), forKey: web)
@@ -201,6 +208,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         let extensionOrigin = extensionOriginPopups.contains(web)
         let popupOwner = extensionPopupOwners.object(forKey: web)
         documentIDs.removeObject(forKey: web)
+        presentationIDs.removeObject(forKey: web)
         extensionOriginPopups.remove(web)
         extensionPopupOwners.removeObject(forKey: web)
         cancelExtensionNavigations(for: web)

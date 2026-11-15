@@ -11,11 +11,11 @@ MANUAL="$PWD/.build/manual/$ARCH"
 FLAGS=(-sdk "$SDK" -module-cache-path "$PWD/.build/cache" -target "$ARCH-apple-macosx14.0")
 mkdir -p "$MANUAL" "$OUT/Contents/MacOS"
 xcrun swiftc "${FLAGS[@]}" -emit-module -emit-library -enable-testing -module-name BrowserCore Sources/BrowserCore/*.swift -o "$MANUAL/libBrowserCore.dylib" -emit-module-path "$MANUAL/BrowserCore.swiftmodule"
-if [[ "${1:-}" == "window-model-test" ]]; then
+run_window_model_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/BrowserWindowWorkspaceChecks.swift -o "$MANUAL/window-workspace-checks"
     "$MANUAL/window-workspace-checks"
-    exit
-fi
+}
+if [[ "${1:-}" == "window-model-test" ]]; then run_window_model_checks; exit; fi
 STORE_SOURCES=()
 for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
 SIDEBAR_SOURCES=()
@@ -187,16 +187,16 @@ run_window_group_checks() {
     "$MANUAL/window-group-checks"
 }
 if [[ "${1:-}" == "window-group-test" ]]; then run_window_group_checks; exit; fi
-if [[ "${1:-}" == "multi-window-native-test" ]]; then
+run_multi_window_native_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/BrowserMultiWindowNativeChecks.swift -o "$MANUAL/multi-window-native-checks"
     "$MANUAL/multi-window-native-checks"
-    exit
-fi
-if [[ "${1:-}" == "window-handoff-test" ]]; then
+}
+if [[ "${1:-}" == "multi-window-native-test" ]]; then run_multi_window_native_checks; exit; fi
+run_window_handoff_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/BrowserWindowHandoffChecks.swift scripts/OwnedWebsiteStores.swift -o "$MANUAL/window-handoff-checks"
     "$MANUAL/window-handoff-checks"
-    exit
-fi
+}
+if [[ "${1:-}" == "window-handoff-test" ]]; then run_window_handoff_checks; exit; fi
 run_writer_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/WriterOwnershipChecks.swift -o "$MANUAL/writer-checks"
     "$MANUAL/writer-checks"
@@ -355,6 +355,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_extension_runtime_checks
     run_extension_runtime_checks navigation
     run_extension_runtime_checks adapter
+    run_extension_runtime_checks multi-window
     run_extension_runtime_checks private
     run_extension_runtime_checks permission
     run_extension_runtime_checks action
@@ -366,6 +367,10 @@ if [[ "${1:-}" == "test" ]]; then
     run_sidebar_organization_layout_checks
     run_spaces_layout_checks
     run_space_checks
+    run_window_model_checks
+    run_window_group_checks
+    run_multi_window_native_checks
+    run_window_handoff_checks
     run_writer_checks
     run_startup_checks
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostInputChecks.swift -o "$MANUAL/boosts-input-checks"

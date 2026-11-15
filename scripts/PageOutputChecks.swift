@@ -65,6 +65,41 @@ import BrowserCore
                 check(b.writes == 0 && !FileManager.default.fileExists(atPath: item.destination.path) && !c.isBusy(in: item.window), "\(mutation) change during \(phase) cannot export invalidated page bytes")
             }
         }
+        let returning = try fixture(isPrivate: false)
+        let returningBoundaries = OutputBoundaries()
+        let returningOutput = PageOutputCoordinator(environment: returningBoundaries.environment)
+        let returningOwner = BrowserWindowOwner(store: returning.store)
+        // Match the normal profile to the fixture's isolated temporary website store.
+        returning.store.namedDataStores[BrowserProfile.defaultID] = returning.web.configuration.websiteDataStore
+        let originalMember = try returningOwner.acquirePrimaryStore()
+        let secondMember = try returningOwner.acquirePrimaryStore(copying: returning.store, focus: false, claimSelection: false)
+        defer { returningOwner.release(secondMember.lease); returningOwner.release(originalMember.lease) }
+        guard let movingTab = returning.store.selectedID, let group = returning.store.windowGroup else { throw OutputCheckError.expected }
+        let movedWindow = OutputFixtureWindow(contentRect: returning.web.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        movedWindow.isReleasedWhenClosed = false
+        defer { movedWindow.contentView = nil; movedWindow.close() }
+        let documentBeforeMove = returning.store.documentIdentity(for: returning.web)
+        returningOutput.save(web: returning.web, store: returning.store, window: returning.window, format: .pdf)
+        guard let pendingCapture = returningBoundaries.captures.first else { throw OutputCheckError.expected }
+        pendingCapture.2(.success(bytes))
+        guard let pendingChoice = returningBoundaries.choices.first else { throw OutputCheckError.expected }
+        guard group.claimPresentation(tabID: movingTab, in: secondMember.store) else { throw OutputCheckError.expected }
+        movedWindow.contentView = returning.web
+        guard group.claimPresentation(tabID: movingTab, in: returning.store) else { throw OutputCheckError.expected }
+        returning.window.contentView = nil
+        returning.window.contentView = returning.web
+        check(returning.store.documentIdentity(for: returning.web) === documentBeforeMove && returning.web.window === returning.window,
+              "The save test moves the actual document out and back without navigation")
+        pendingChoice.3(returning.destination)
+        check(returningBoundaries.writes == 0 && !returningOutput.isBusy(in: returning.window),
+              "A save sheet from before the handoff cannot write after the same document returns")
+        returningOutput.save(web: returning.web, store: returning.store, window: returning.window, format: .pdf)
+        guard returningBoundaries.captures.count == 2 else { throw OutputCheckError.expected }
+        returningBoundaries.captures[1].2(.success(bytes))
+        guard returningBoundaries.choices.count == 2 else { throw OutputCheckError.expected }
+        returningBoundaries.choices[1].3(returning.destination)
+        check(returningBoundaries.writes == 1 && (try? Data(contentsOf: returning.destination)) == bytes,
+              "An explicit save requested after the handoff can still write the returned page")
         let paused = try fixture(isPrivate: false), p = OutputBoundaries(), pausedOutput = PageOutputCoordinator(environment: p.environment)
         paused.store.profiles[0].pendingDataClear = true
         pausedOutput.save(web: paused.web, store: paused.store, window: paused.window, format: .pdf)
