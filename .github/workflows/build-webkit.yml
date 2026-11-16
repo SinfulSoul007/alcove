@@ -1,0 +1,54 @@
+name: Build upstream WebKit for extension research
+
+on:
+  push:
+    branches: [research/webkit-build]
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 180
+    env:
+      WEBKIT_REVISION: 26695efdefc6076049ec50713a2c4e54b90b4d47
+    steps:
+      - name: Verify the Apple toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcode-select -p
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          df -h "$RUNNER_TEMP"
+          printf 'kernel void probe() {}\n' > "$RUNNER_TEMP/compile-probe.metal"
+          if ! xcrun --sdk macosx metal -c "$RUNNER_TEMP/compile-probe.metal" -o "$RUNNER_TEMP/compile-probe.air"; then
+            xcodebuild -downloadComponent MetalToolchain
+            xcrun --sdk macosx metal -c "$RUNNER_TEMP/compile-probe.metal" -o "$RUNNER_TEMP/compile-probe.air"
+          fi
+          df -h "$RUNNER_TEMP"
+
+      - name: Check out pinned upstream WebKit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/WebKit"
+          git -C "$RUNNER_TEMP/WebKit" remote add origin https://github.com/WebKit/WebKit.git
+          git -C "$RUNNER_TEMP/WebKit" fetch --depth=1 origin "$WEBKIT_REVISION"
+          git -C "$RUNNER_TEMP/WebKit" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/WebKit" rev-parse HEAD)" = "$WEBKIT_REVISION"
+          df -h "$RUNNER_TEMP"
+
+      - name: Compile the macOS engine
+        working-directory: ${{ runner.temp }}/WebKit
+        shell: bash
+        run: |
+          set -euo pipefail
+          Tools/Scripts/build-webkit --release
+          framework=WebKitBuild/Release/WebKit.framework/WebKit
+          test -s "$framework"
+          file "$framework"
+          xcrun lipo -archs "$framework"
+          df -h "$RUNNER_TEMP"
