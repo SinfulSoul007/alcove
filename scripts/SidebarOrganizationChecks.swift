@@ -109,6 +109,74 @@ import BrowserCore
         legacyTab.folder = "Imported";legacy.tabs = [legacyTab]
         let legacyRoundTrip = try JSONDecoder().decode(Space.self,from:JSONEncoder().encode(legacy))
         check(legacyRoundTrip.folderNames == ["Imported"],"Legacy tab memberships remain visible without explicit folder definitions")
+        let topologyFixture = Space(name: "Hierarchy")
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(topologyFixture)) as! [String: Any]
+        json["folders"] = ["Research", "Papers", "Drafts"]
+        json["folderParents"] = ["Papers": "Research", "Drafts": "Papers"]
+        let importedHierarchy = try JSONDecoder().decode(Space.self, from: JSONSerialization.data(withJSONObject: json))
+        let reencoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(importedHierarchy)) as! [String: Any]
+        check(reencoded["folderParents"] as? [String: String] == ["Papers": "Research", "Drafts": "Papers"],
+              "Saving a Space round-trips its nested folder structure")
+        let nestedRoot = root.appendingPathComponent("nested-folders")
+        let nested = BrowserStore(dataRoot: nestedRoot, keyProvider: { _ in key })
+        let nestedSpace = nested.space.id
+        let pinned = nested.newTab(url: URL(string: "https://example.invalid/subfolder")!)
+        let pinnedView = nested.view(for: pinned)
+        try nested.createTabFolder(name: "Research", in: nestedSpace)
+        try nested.createTabFolder(name: "Papers", in: nestedSpace, parent: "Research", adding: pinned)
+        try nested.createTabFolder(name: "Drafts: Notes", in: nestedSpace, parent: "Papers")
+        var tree = SidebarFolderTree(space: nested.space)
+        check(tree.path(to: "Drafts: Notes") == ["Research", "Papers", "Drafts: Notes"] &&
+              nested.tab(pinned)?.folder == "Papers" && nested.views[pinned] === pinnedView,
+              "Subfolder creation puts the original tab in its nested destination without replacing its live page")
+        check(tree.visibleFolders(collapsed: ["Research"]).map(\.name) == ["Research"],
+              "Collapsing a folder hides its descendants from the saved-sidebar layout")
+        rejects("A folder cannot be moved into its descendant") { try nested.moveTabFolder("Research", under: "Drafts: Notes", in: nestedSpace) }
+        rejects("A subfolder cannot be created under a missing parent") { try nested.createTabFolder(name: "Orphan", in: nestedSpace, parent: "Missing") }
+        try nested.setTabFolderExpanded("Papers", expanded: false, in: nestedSpace)
+        try nested.renameTabFolder("Papers", to: "Reading", in: nestedSpace)
+        tree = SidebarFolderTree(space: nested.space)
+        check(nested.tab(pinned)?.folder == "Reading" && nested.space.collapsedFolders == ["Reading"] &&
+              tree.path(to: "Drafts: Notes") == ["Research", "Reading", "Drafts: Notes"],
+              "Renaming a nested folder updates its tabs, descendants and disclosure state together")
+        let drag = SidebarFolderDrag(spaceID: nestedSpace, name: "Drafts: Notes")
+        let rootDrop = TabDrop(store: nested, section: .pinned)
+        check(SidebarFolderDrag(drag.text) == drag &&
+              !rootDrop.accept(SidebarFolderDrag(spaceID: UUID(), name: drag.name).text, in: nestedSpace, profile: BrowserProfile.defaultID),
+              "Folder drag payloads round-trip punctuation and reject moves from another Space")
+        let nestedDrop = TabDrop(store: nested, section: .pinned, folder: "Reading")
+        check(rootDrop.accept(drag.text, in: nestedSpace, profile: BrowserProfile.defaultID) &&
+              SidebarFolderTree(space: nested.space).parents[drag.name] == nil &&
+              nestedDrop.accept(drag.text, in: nestedSpace, profile: BrowserProfile.defaultID),
+              "Pinned sidebar drop routing can move a folder to the top level and nest it again")
+        let movingPin = nested.newTab(url: URL(string: "https://example.invalid/drag")!)
+        let oldRowTarget = TabDrop(store: nested, section: .pinned, before: pinned, folder: "Reading")
+        try nested.moveTabToFolder(pinned, folder: "Drafts: Notes", in: nestedSpace)
+        check(!oldRowTarget.accept(movingPin.uuidString, in: nestedSpace, profile: BrowserProfile.defaultID) &&
+              nested.tab(movingPin)?.pinned == false, "An asynchronous drop cannot reuse a tab anchor that moved to another folder")
+        try nested.moveTabToFolder(pinned, folder: "Reading", in: nestedSpace)
+        try nested.removeTabFolder("Reading", in: nestedSpace)
+        check(nested.tab(pinned)?.folder == "Research" && nested.views[pinned] === pinnedView &&
+              SidebarFolderTree(space: nested.space).parents[drag.name] == "Research",
+              "Removing a nested folder promotes its pins and subfolders to the parent")
+        var importedHierarchySession = Session()
+        importedHierarchySession.spaces = [importedHierarchy]
+        try nested.importSession(importedHierarchySession, into: BrowserProfile.defaultID)
+        let importedTree = nested.session.spaces.first(where: { $0.name == "Imported Hierarchy" }).map(SidebarFolderTree.init(space:))
+        check(importedTree?.path(to: "Drafts") == ["Research", "Papers", "Drafts"],
+              "Session import preserves folder hierarchy")
+        nested.shutdown()
+        let reopenedHierarchy = BrowserStore(dataRoot: nestedRoot, keyProvider: { _ in key })
+        check(reopenedHierarchy.tab(pinned)?.folder == "Research" &&
+              SidebarFolderTree(space: reopenedHierarchy.space).path(to: drag.name) == ["Research", drag.name],
+              "The nested folder and pin survive encrypted relaunch")
+        reopenedHierarchy.shutdown()
+        var broken = importedHierarchy
+        broken.folderParents = ["Research": "Papers", "Papers": "Research", "Drafts": "Unknown"]
+        let repairedTree = SidebarFolderTree(space: broken)
+        check(Set(repairedTree.visibleFolders(collapsed: []).map(\.name)) == Set(broken.folderNames) &&
+              repairedTree.parents["Drafts"] == nil && repairedTree.parents.count == 1,
+              "Repair preserves every folder and removes cyclic and stale parent links")
         let legacyRoot = root.appendingPathComponent("legacy-folder")
         var legacyDocument = BrowserDocument();legacyDocument.session.spaces = [legacy];legacyDocument.session.selectedSpace = legacy.id
         try MetadataStore(url:legacyRoot.appendingPathComponent("session-v2.sealed"),key:key).save(legacyDocument)

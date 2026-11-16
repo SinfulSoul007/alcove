@@ -147,29 +147,57 @@ private struct DeletedSpaceCard: View {
     }
 }
 
-private struct SpacePreview: View {
+struct SpacePreview: View {
     @ObservedObject var store: BrowserStore
     let space: Space
     let interactive: Bool
     @State private var collapsed: Set<String>
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     init(store:BrowserStore,space:Space,interactive:Bool) {
         self.store = store; self.space = space; self.interactive = interactive
         _collapsed = State(initialValue:Set(space.collapsedFolders ?? []))
     }
-    private var pins: [BrowserCore.Tab] { space.tabs.filter {$0.pinned && $0.favorite != true && !$0.url.isEmpty} }
-    private var today: [BrowserCore.Tab] { space.tabs.filter {!$0.pinned && !$0.url.isEmpty} }
+    private var today: [BrowserCore.Tab] { space.tabs.filter { !$0.pinned && !$0.url.isEmpty } }
+
     var body: some View {
-        ScrollView(.vertical,showsIndicators:false) {
-            VStack(alignment:.leading,spacing:5) {
-                ForEach(pins.filter{$0.folder == nil}) { tab in preview(tab) }
-                ForEach(Array(Set(pins.compactMap(\.folder))).sorted(),id:\.self) { folder in
-                    DisclosureGroup(isExpanded:Binding(get:{!collapsed.contains(folder)},set:{ if $0 { collapsed.remove(folder) } else { collapsed.insert(folder) } })) {
-                        ForEach(pins.filter{$0.folder == folder}) { tab in preview(tab) }
-                    } label: { Label(folder,systemImage:"folder").font(.system(size:12 * store.appearance.textScale,weight:.medium)).lineLimit(1).padding(.vertical,6) }
+        let layout = SidebarSavedLayout(space: space, collapsed: collapsed)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(layout.topLevelTabs.filter { !$0.url.isEmpty }) { tab in preview(tab) }
+                ForEach(layout.folders) { folder in
+                    let indentation = Double(min(folder.depth, 4)) * 9
+                    Button {
+                        withAnimation(!reduceMotion && store.appearance.animationsEnabled ? .easeInOut(duration: 0.16) : nil) {
+                            if folder.expanded { collapsed.insert(folder.name) }
+                            else { collapsed.remove(folder.name) }
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: folder.expanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 8, weight: .semibold)).accessibilityHidden(true)
+                            Label(folder.name, systemImage: "folder")
+                                .font(.system(size: 12 * store.appearance.textScale, weight: .medium)).lineLimit(1)
+                        }.padding(.vertical, 6).frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }.buttonStyle(.plain).padding(.leading, indentation)
+                        .accessibilityLabel(Text(layout.tree.path(to: folder.name).joined(separator: ", ")))
+                        .accessibilityValue(folder.expanded ? "Expanded" : "Collapsed")
+                    if folder.expanded {
+                        ForEach(layout.tabsByFolder[folder.name, default: []].filter { !$0.url.isEmpty }) { tab in
+                            preview(tab).padding(.leading, indentation + 9)
+                        }
+                    }
                 }
-                if !today.isEmpty { Divider().padding(.vertical,8); Text("Today").font(.system(size:10,weight:.semibold)).opacity(0.5); ForEach(today) { tab in preview(tab) } }
-                if pins.isEmpty && today.isEmpty { Text("No saved tabs").font(.system(size:12)).opacity(0.5).padding(.vertical,20) }
-            }.padding(.horizontal,14).padding(.bottom,12)
+                if !today.isEmpty {
+                    Divider().padding(.vertical, 8)
+                    Text("Today").font(.system(size: 10, weight: .semibold)).opacity(0.5)
+                    ForEach(today) { tab in preview(tab) }
+                }
+                if layout.topLevelTabs.allSatisfy(\.url.isEmpty) && layout.folders.isEmpty && today.isEmpty {
+                    Text("No saved tabs").font(.system(size: 12)).opacity(0.5).padding(.vertical, 20)
+                }
+            }.padding(.horizontal, 14).padding(.bottom, 12)
         }
     }
     @ViewBuilder private func preview(_ tab:BrowserCore.Tab) -> some View {

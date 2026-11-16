@@ -44,6 +44,7 @@ public struct Space: Codable, Identifiable, Equatable {
     public var icon: String?
     public var collapsedFolders: [String]?
     public var folders: [String]?
+    public var folderParents: [String: String]?
     public var profileID: UUID?
     public var tabs: [Tab]
     public var selected: UUID?

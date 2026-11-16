@@ -2,7 +2,7 @@ import AppKit
 import BrowserCore
 
 enum SidebarFolderError: LocalizedError {
-    case invalidName, duplicate, missing, wrongProfile, missingTab
+    case invalidName, duplicate, missing, wrongProfile, missingTab, circularFolder
     var errorDescription:String? {
         switch self {
         case .invalidName: return "Use a folder name from 1 to 80 characters, without control characters."
@@ -10,6 +10,7 @@ enum SidebarFolderError: LocalizedError {
         case .missing: return "That folder is no longer in this Space."
         case .wrongProfile: return "Move this tab to the same profile before adding it to a folder."
         case .missingTab: return "That tab is no longer available."
+        case .circularFolder: return "Choose a destination outside this folder."
         }
     }
 }
@@ -53,27 +54,69 @@ extension BrowserStore {
         guard !space.folderNames.contains(where:{$0 != excluding && $0.compare(name,options:[.caseInsensitive,.diacriticInsensitive]) == .orderedSame}) else {throw SidebarFolderError.duplicate}
         return name
     }
-    @discardableResult func createTabFolder(name:String,in spaceID:UUID,adding id:UUID? = nil) throws -> String {
-        let index = try requireManagedSpace(spaceID),cleaned = try uniqueFolderName(name,in:session.spaces[index])
-        var candidate = makeDocument();candidate.session.spaces[index].folders = session.spaces[index].folderNames + [cleaned]
-        if let id {try placeFolderTab(id,folder:cleaned,in:spaceID,candidate:&candidate)}
-        try commitQuickDocument(candidate);return cleaned
+    @discardableResult func createTabFolder(name: String, in spaceID: UUID, parent: String? = nil,
+                                           adding id: UUID? = nil) throws -> String {
+        let index = try requireManagedSpace(spaceID), source = session.spaces[index]
+        let tree = SidebarFolderTree(space: source)
+        if let parent, !tree.names.contains(parent) { throw SidebarFolderError.missing }
+        let cleaned = try uniqueFolderName(name, in: source)
+        var candidate = makeDocument()
+        candidate.session.spaces[index].folders = tree.names + [cleaned]
+        if let parent {
+            candidate.session.spaces[index].folderParents = tree.parents.merging([cleaned: parent]) { _, new in new }
+        }
+        if let id { try placeFolderTab(id, folder: cleaned, in: spaceID, candidate: &candidate) }
+        try commitQuickDocument(candidate)
+        return cleaned
     }
-    func renameTabFolder(_ name:String,to value:String,in spaceID:UUID) throws {
-        let index = try requireManagedSpace(spaceID),source = session.spaces[index]
-        guard source.folderNames.contains(name) else {throw SidebarFolderError.missing}
-        let cleaned = try uniqueFolderName(value,in:source,excluding:name)
-        var candidate = makeDocument();candidate.session.spaces[index].folders = source.folderNames.map {$0 == name ? cleaned : $0}
-        for t in candidate.session.spaces[index].tabs.indices where candidate.session.spaces[index].tabs[t].folder == name {candidate.session.spaces[index].tabs[t].folder = cleaned}
-        candidate.session.spaces[index].collapsedFolders = source.collapsedFolders?.map {$0 == name ? cleaned : $0}
+
+    func moveTabFolder(_ name: String, under parent: String?, in spaceID: UUID) throws {
+        let index = try requireManagedSpace(spaceID)
+        let tree = SidebarFolderTree(space: session.spaces[index])
+        guard tree.names.contains(name), parent.map(tree.names.contains) ?? true else { throw SidebarFolderError.missing }
+        guard tree.canMove(name, under: parent) else { throw SidebarFolderError.circularFolder }
+        guard tree.parents[name] != parent else { return }
+        var candidate = makeDocument(), parents = tree.parents
+        parents[name] = parent
+        candidate.session.spaces[index].folderParents = parents.isEmpty ? nil : parents
         try commitQuickDocument(candidate)
     }
-    func removeTabFolder(_ name:String,in spaceID:UUID) throws {
-        let index = try requireManagedSpace(spaceID),source = session.spaces[index]
-        guard source.folderNames.contains(name) else {throw SidebarFolderError.missing}
-        var candidate = makeDocument();candidate.session.spaces[index].folders = source.folderNames.filter {$0 != name}
-        for t in candidate.session.spaces[index].tabs.indices where candidate.session.spaces[index].tabs[t].folder == name {candidate.session.spaces[index].tabs[t].folder = nil}
-        candidate.session.spaces[index].collapsedFolders = source.collapsedFolders?.filter {$0 != name}
+
+    func renameTabFolder(_ name: String, to value: String, in spaceID: UUID) throws {
+        let index = try requireManagedSpace(spaceID), source = session.spaces[index]
+        let tree = SidebarFolderTree(space: source)
+        guard tree.names.contains(name) else { throw SidebarFolderError.missing }
+        let cleaned = try uniqueFolderName(value, in: source, excluding: name)
+        guard cleaned != name else { return }
+        var candidate = makeDocument(), updated = source
+        updated.folders = tree.names.map { $0 == name ? cleaned : $0 }
+        for index in updated.tabs.indices where updated.tabs[index].folder == name {
+            updated.tabs[index].folder = cleaned
+        }
+        updated.collapsedFolders = source.collapsedFolders?.map { $0 == name ? cleaned : $0 }
+        let parents = Dictionary(uniqueKeysWithValues: tree.parents.map { child, parent in
+            (child == name ? cleaned : child, parent == name ? cleaned : parent)
+        })
+        updated.folderParents = parents.isEmpty ? nil : parents
+        candidate.session.spaces[index] = updated
+        try commitQuickDocument(candidate)
+    }
+
+    func removeTabFolder(_ name: String, in spaceID: UUID) throws {
+        let index = try requireManagedSpace(spaceID), source = session.spaces[index]
+        let tree = SidebarFolderTree(space: source)
+        guard tree.names.contains(name) else { throw SidebarFolderError.missing }
+        let parent = tree.parents[name]
+        var candidate = makeDocument(), updated = source, parents = tree.parents
+        updated.folders = tree.names.filter { $0 != name }
+        for index in updated.tabs.indices where updated.tabs[index].folder == name {
+            updated.tabs[index].folder = parent
+        }
+        for child in tree.children(of: name) { parents[child] = parent }
+        parents.removeValue(forKey: name)
+        updated.folderParents = parents.isEmpty ? nil : parents
+        updated.collapsedFolders = source.collapsedFolders?.filter { $0 != name }
+        candidate.session.spaces[index] = updated
         try commitQuickDocument(candidate)
     }
     func setTabFolderExpanded(_ name:String,expanded:Bool,in spaceID:UUID) throws {

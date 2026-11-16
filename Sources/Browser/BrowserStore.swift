@@ -288,6 +288,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         for i in value.spaces.indices {
             let folders = value.spaces[i].folderNames
             if !folders.isEmpty { value.spaces[i].folders = folders }
+            if value.spaces[i].folderParents != nil {
+                let parents = SidebarFolderTree(space: value.spaces[i]).parents
+                value.spaces[i].folderParents = parents.isEmpty ? nil : parents
+            }
             if value.spaces[i].tabs.isEmpty { value.spaces[i].tabs = [BrowserCore.Tab()] }
             if !value.spaces[i].tabs.contains(where: { $0.id == value.spaces[i].selected }) { value.spaces[i].selected = value.spaces[i].tabs.first?.id }
         }

@@ -87,10 +87,12 @@ extension BrowserStore {
     }
 
     @discardableResult
-    func requestPlaceTab(_ id: UUID, in destination: UUID, section: SidebarSection, before target: UUID? = nil, folder: String? = nil) -> Bool {
+    func requestPlaceTab(_ id: UUID, in destination: UUID, section: SidebarSection, before target: UUID? = nil,
+                         folder: String? = nil, fromDrop: Bool = false) -> Bool {
         guard canModifyLocalMetadata, !profileDataOperationInProgress, !isShuttingDown,
               let sourceProfileID = profileID(for: id), tab(id) != nil,
-              let dest = session.spaces.first(where: { $0.id == destination }) else { return false }
+              let dest = session.spaces.first(where: { $0.id == destination }),
+              !fromDrop || matchesTabDrop(dest, section: section, target: target, folder: folder) else { return false }
         let sourceSpaceID = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) })?.id
         let destinationProfileID = dest.effectiveProfileID
         let changingProfile = !isPrivate && sourceProfileID != destinationProfileID
@@ -105,9 +107,20 @@ extension BrowserStore {
         guard canModifyLocalMetadata, !profileDataOperationInProgress, !isShuttingDown,
               session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) })?.id == sourceSpaceID,
               profileID(for: id) == sourceProfileID, tab(id) != nil,
-              session.spaces.first(where: { $0.id == destination })?.effectiveProfileID == destinationProfileID else { return false }
+              let current = session.spaces.first(where: { $0.id == destination }),
+              current.effectiveProfileID == destinationProfileID,
+              !fromDrop || matchesTabDrop(current, section: section, target: target, folder: folder) else { return false }
         if !isPrivate { guard availableProfileForRequest(sourceProfileID) != nil, availableProfileForRequest(destinationProfileID) != nil else { return false } }
         return placeTab(id, in: destination, section: section, before: target, folder: folder, allowProfileChange: changingProfile)
+    }
+
+    private func matchesTabDrop(_ space: Space, section: SidebarSection, target: UUID?, folder: String?) -> Bool {
+        if let folder, !space.folderNames.contains(folder) { return false }
+        guard let target else { return true }
+        if section == .favorites { return favorites(for: space.effectiveProfileID).contains { $0.id == target } }
+        guard let anchor = space.tabs.first(where: { $0.id == target }), anchor.folder == folder,
+              anchor.favorite != true else { return false }
+        return anchor.pinned == (section == .pinned)
     }
 
     private func profileManagementReady() -> Bool {

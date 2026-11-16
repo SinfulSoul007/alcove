@@ -172,7 +172,9 @@ extension BrowserStore {
             var tabs = source.tabs
             for i in tabs.indices { tabs[i].id = UUID() }
             var space = Space(name: "Imported \(source.name)", tabs: tabs.isEmpty ? [BrowserCore.Tab()] : tabs)
-            space.folders = source.folderNames; space.collapsedFolders = source.collapsedFolders
+            space.folders = source.folderNames
+            space.collapsedFolders = source.collapsedFolders
+            space.folderParents = source.folderParents
             space.profileID = profileID; candidate.session.spaces.append(space)
         }
         try commitProfileDocument(candidate)

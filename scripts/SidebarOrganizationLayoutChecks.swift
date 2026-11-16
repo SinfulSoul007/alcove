@@ -33,6 +33,16 @@ import BrowserCore
             if i < 20 {tab.folder = "Projects"};store.session.spaces[store.spaceIndex].tabs.append(tab)
         }
         let emptyFolder = try store.createTabFolder(name:"Empty folder",in:store.space.id)
+        let nestedFolder = try store.createTabFolder(name: "Current projects", in: store.space.id, parent: "Projects")
+        let row = SidebarSavedLayout(space: store.space).folders.first { $0.name == nestedFolder }
+        check(row?.depth == 1, "The mounted sidebar receives the child folder with one level of indentation")
+        let expandedHeight = SidebarSavedLayout(space: store.space).height(rowHeight: store.appearance.rowHeight)
+        try store.setTabFolderExpanded("Projects", expanded: false, in: store.space.id)
+        let collapsed = SidebarSavedLayout(space: store.space)
+        check(!collapsed.folders.contains { $0.name == nestedFolder } &&
+              collapsed.height(rowHeight: store.appearance.rowHeight) < expandedHeight,
+              "Collapsed descendants no longer reserve pinned-sidebar space")
+        try store.setTabFolderExpanded("Projects", expanded: true, in: store.space.id)
         let hosting = NSHostingView(rootView:BrowserUI(store:store,sidebarDefaults:defaults).environmentObject(UpdateController(installedTag:"test")))
         hosting.safeAreaRegions = [];hosting.sizingOptions = []
         let window = NSWindow(contentRect:NSRect(x:0,y:0,width:1260,height:820),styleMask:[.titled,.closable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
@@ -91,6 +101,36 @@ import BrowserCore
             while let current = ancestor {visible = visible && current.alphaValue > 0.99 && (current.layer?.opacity ?? 1) > 0.99;ancestor = current.superview}
             check(visible,"New command tab \(index + 1) finishes its native visibility transition")
             if added.window !== window || frame.height <= 200 {print("DYNAMIC FRAME",frame,"HOST",added.superview?.bounds as Any)}
+        }
+        do {
+            let showcase = try store.createSpace(name: "Research")
+            store.selectSpace(showcase)
+            let showcaseTab = store.newTab(url: URL(string: "about:blank")!)
+            store.update(showcaseTab) { $0.title = "Reading list" }
+            try store.createTabFolder(name: "Projects", in: showcase)
+            try store.createTabFolder(name: "Field notes", in: showcase, parent: "Projects", adding: showcaseTab)
+            try store.createTabFolder(name: "Reference", in: showcase, parent: "Field notes")
+            try store.createTabFolder(name: "Archive", in: showcase)
+            store.select(showcaseTab)
+            window.setContentSize(NSSize(width: 800, height: 540))
+            await settle(); hosting.layoutSubtreeIfNeeded()
+            let shelves = descendants(hosting, NSScrollView.self).filter {
+                let frame = $0.convert($0.bounds, to: hosting)
+                return frame.width > 100 && frame.height >= 25 && frame.maxX < 245
+            }.sorted { $0.convert($0.bounds, to: nil).minY < $1.convert($1.bounds, to: nil).minY }
+            // The empty Today scroll region can have no intrinsic width. Pinned is directly below Favorites.
+            let pinnedHeight = shelves.dropLast().last?.bounds.height ?? 0
+            let mounted = store.views[showcaseTab]?.window === window
+            if pinnedHeight < 155 || !mounted {
+                print("Sparse sidebar shelf heights: \(shelves.map { $0.bounds.height }), page mounted: \(mounted)")
+            }
+            check(pinnedHeight >= 155 && mounted,
+                  "An empty Today section yields room for nested pins without disturbing the mounted page")
+            if let output = ProcessInfo.processInfo.environment["ALCOVE_SIDEBAR_SCREENSHOT_DIR"],
+               let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
+                hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output).appendingPathComponent("sidebar-nested.png"))
+            }
         }
         print("Sidebar organization layout checks: \(failures) failures");exit(failures == 0 ? 0 : 1)
     }

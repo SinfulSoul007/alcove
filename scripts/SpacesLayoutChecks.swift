@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import WebKit
 import BrowserCore
+import Vision
 
 @MainActor final class SpacesLayoutApplication: NSApplication {
     var fixtureWindow: NSWindow?
@@ -19,6 +20,35 @@ import BrowserCore
         let testDefaults = UserDefaults(suiteName:suite)!
         defer { testDefaults.removePersistentDomain(forName:suite) }
         var appearance = store.appearance; appearance.animationsEnabled = false; store.appearance = appearance
+        var hierarchy = Space(name: "Hierarchy", tabs: [])
+        hierarchy.folders = ["Research", "Papers"]
+        hierarchy.folderParents = ["Papers": "Research"]
+        var sample = BrowserCore.Tab(title: "Manuscript", url: "https://example.invalid/notes", pinned: true)
+        sample.folder = "Papers"
+        hierarchy.tabs = [sample]
+        func previewText(_ space: Space) async throws -> String {
+            let view = NSHostingView(rootView: SpacePreview(store: store, space: space, interactive: false)
+                .foregroundStyle(Color.white).background(Color.black))
+            view.sizingOptions = []; view.safeAreaRegions = []
+            let frame = NSRect(x: 0, y: 0, width: 250, height: 200)
+            let window = NSWindow(contentRect: frame, styleMask: [], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = view
+            defer { window.contentView = nil; window.close() }
+            await settle(); view.layoutSubtreeIfNeeded()
+            guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw CocoaError(.fileWriteUnknown) }
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            guard let image = bitmap.cgImage else { throw CocoaError(.fileReadUnknown) }
+            let request = VNRecognizeTextRequest()
+            try VNImageRequestHandler(cgImage: image).perform([request])
+            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        }
+        let expanded = try await previewText(hierarchy)
+        hierarchy.collapsedFolders = ["Research"]
+        let collapsed = try await previewText(hierarchy)
+        check(expanded.contains("Research") && expanded.contains("Papers") && expanded.contains("Manuscript"),
+              "The mounted Space preview shows parent, subfolder and pin")
+        check(collapsed.contains("Research") && !collapsed.contains("Papers") && !collapsed.contains("Manuscript"),
+              "The mounted Space preview hides nested contents when an ancestor is collapsed")
         let originalSpace = store.space.id, pageID = store.selectedID!
         for index in 0..<8 { _ = try store.createSpace(name:"Research \(index) — a long descriptive name") }
         store.selectSpace(originalSpace); store.update(pageID) { $0.url = "about:blank" }

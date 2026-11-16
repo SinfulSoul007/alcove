@@ -103,7 +103,6 @@ struct BrowserUI: View {
     var theme: AppearanceTheme { store.activeTheme }
     var appearance: AppearanceSettings { store.appearance }
     var motion: Animation? { reduceMotion || !appearance.animationsEnabled ? nil : .spring(response: 0.28, dampingFraction: 0.88) }
-    var pins: [BrowserCore.Tab] { store.space.tabs.filter { $0.pinned && $0.favorite != true } }
     var today: [BrowserCore.Tab] { store.space.tabs.filter { !$0.pinned && !$0.url.isEmpty } }
     @ViewBuilder var body: some View {
         if store.awaitingInitialMetadata { MetadataStartupView(store: store) }
@@ -269,9 +268,17 @@ struct BrowserUI: View {
         let favoriteRows = Double((store.favorites.count + columns - 1) / columns)
         // Reserve chrome, both section headers and the footer before dividing the scrollable space.
         let pool = max(0, windowHeight - chrome.height - 197 - (store.favorites.isEmpty ? 0 : 8))
-        let favoritesHeight = min(max(0, favoriteRows * 55 - 7), min(224, pool * 0.30))
-        let savedRows = Double(pins.count) * (appearance.rowHeight + 3) + Double(store.space.folderNames.count) * 36 + 8
-        let pinnedHeight = min(max(32, savedRows), min(260, (pool - favoritesHeight) * 0.5))
+        let savedLayout = SidebarSavedLayout(space: store.space)
+        let rowHeight = appearance.rowHeight + 3
+        let pinnedDemand = max(32, savedLayout.height(rowHeight: appearance.rowHeight))
+        let todayDemand = max(32, Double(today.count) * rowHeight)
+        let favoriteDemand = min(224, max(0, favoriteRows * 55 - 7))
+        let favoriteBudget = max(pool * 0.30, pool - pinnedDemand - todayDemand)
+        let favoritesHeight = min(favoriteDemand, favoriteBudget)
+        let remaining = pool - favoritesHeight
+        // Keep the shelves separately scrollable and let them use space Today doesn't need.
+        let pinnedBudget = max(min(260, remaining * 0.5), remaining - todayDemand)
+        let pinnedHeight = min(pinnedDemand, pinnedBudget)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
                 Color.clear.frame(width: max(0, chrome.leadingEdge - 17)).allowsHitTesting(false)
@@ -316,7 +323,7 @@ struct BrowserUI: View {
                     spaceProfileMenu
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("Space settings")
             }.padding(.horizontal, 16).frame(height: 36)
-            SidebarSavedTabs(store: store, theme: theme, appearance: appearance, motion: motion, height: pinnedHeight)
+            SidebarSavedTabs(store: store, theme: theme, appearance: appearance, motion: motion, height: pinnedHeight, layout: savedLayout)
             Rectangle().fill(theme.ink.opacity(0.12)).frame(height: 1).padding(.horizontal, 18).padding(.vertical, 6)
             HStack {
                 Text("Today").font(.system(size: 11, weight: .semibold)).opacity(0.5)
