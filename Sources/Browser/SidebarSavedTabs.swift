@@ -62,7 +62,7 @@ struct SidebarSavedTabs: View {
                                 Text("Drop tabs here").font(.system(size: 11))
                                     .foregroundStyle(theme.ink.opacity(0.4)).frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.leading, indentation(folder.depth + 1) + 12).frame(height: 21)
-                                    .onDrop(of: [.text], delegate: TabDrop(store: store, section: .pinned, folder: folder.name))
+                                    .onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .pinned, folder: folder.name))
                             }
                         }
                     }
@@ -73,7 +73,7 @@ struct SidebarSavedTabs: View {
                     Color.clear.frame(height: 8).contentShape(Rectangle())
                 }.padding(.horizontal, 8)
             }.frame(height: height).accessibilityLabel("Pinned tabs")
-                .onDrop(of: [.text], delegate: TabDrop(store: store, section: .pinned))
+                .onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .pinned))
         }
     }
 
@@ -109,7 +109,7 @@ struct SidebarSavedTabs: View {
         .help(path.joined(separator: " › "))
         .disabled(!store.canManageSpace(spaceID))
         .onDrag { NSItemProvider(object: SidebarFolderDrag(spaceID: spaceID, name: name).text as NSString) }
-        .onDrop(of: [.text], delegate: TabDrop(store: store, section: .pinned, folder: name))
+        .onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .pinned, folder: name))
         .contextMenu {
             Button("New Subfolder…") { store.requestNewTabFolder(in: spaceID, parent: name) }
             Button("Rename Folder…") { store.requestRenameTabFolder(name, in: spaceID) }

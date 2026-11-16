@@ -241,6 +241,52 @@ import BrowserCore
             check(store.focusedID == tabs[3] && store.visiblePaneIDs == [tabs[1], tabs[3]],
                   "Activating an owned split pane through the extension adapter keeps the group open")
         }
+        inWindow { store, _, _ in
+            let tabs = (0..<6).map { store.newTab(url: URL(string: "about:blank#drag-split-\($0)")) }
+            let current = tabs[5], target = tabs[1]
+            let drag = store.sidebarTabDrag(tabs[0])!
+            let destination = store.splitDropTarget(target)!
+            check(store.focusedID == current && store.performSplitDrop(drag, onto: destination, edge: .left) &&
+                  store.visiblePaneIDs == [tabs[0], target] && store.focusedID == tabs[0],
+                  "A left sidebar split opens the actual target row and focuses the dragged tab")
+            check(!store.performSplitDrop(drag, onto: destination, edge: .right) && store.visiblePaneIDs == [tabs[0], target],
+                  "A drop captured before group creation cannot modify the new group")
+            for id in tabs[2...3] { store.openInSplit(id) }
+            let full = store.splitDropTarget(target)!
+            check(!store.performSplitDrop(store.sidebarTabDrag(tabs[4])!, onto: full, edge: .top) && store.visiblePaneIDs.count == 4,
+                  "Rejecting a fifth pane preserves the prior group")
+            check(store.performSplitDrop(store.sidebarTabDrag(tabs[3])!, onto: full, edge: .bottom) &&
+                  store.splitLayout?.axis == .rows && store.visiblePaneIDs == [tabs[0], target, tabs[3], tabs[2]],
+                  "Dragging an existing pane can reorder a full split group")
+            check(!store.performSplitDrop(store.sidebarTabDrag(target)!, onto: store.splitDropTarget(target)!, edge: .left),
+                  "A tab cannot be split with itself")
+            let foreign = BrowserStore(isPrivate: true)
+            foreign.session = store.session
+            defer { foreign.shutdown() }
+            check(!store.performSplitDrop(foreign.sidebarTabDrag(tabs[4])!, onto: store.splitDropTarget(target)!, edge: .left),
+                  "A private window cannot transfer sidebar tabs into another private window")
+            check(BrowserSplitDropGeometry.sidebarEdge(at: 0, width: 240) == .left &&
+                  BrowserSplitDropGeometry.sidebarEdge(at: 239, width: 240) == .right &&
+                  BrowserSplitDropGeometry.sidebarEdge(at: 120, width: 240) == nil,
+                  "Sidebar split zones leave the middle of the tab available for reordering")
+            let bounds = CGRect(x: 0, y: 0, width: 720, height: 500)
+            check(BrowserSplitDropGeometry.pageEdge(at: CGPoint(x: 360, y: 498), in: bounds) == .top &&
+                  BrowserSplitDropGeometry.pageEdge(at: CGPoint(x: 360, y: 2), in: bounds) == .bottom &&
+                  BrowserSplitDropGeometry.pageEdge(at: CGPoint(x: 2, y: 250), in: bounds) == .left &&
+                  BrowserSplitDropGeometry.pageEdge(at: CGPoint(x: 718, y: 250), in: bounds) == .right,
+                  "All four native page edges resolve to their matching split directions")
+            check(BrowserSplitDropGeometry.pageEdge(at: CGPoint(x: 240, y: 70), in: CGRect(x: 0, y: 0, width: 1200, height: 300)) == .bottom,
+                  "The drop chooses the physically nearest eligible edge in a wide pane")
+        }
+        inWindow { store, _, _ in
+            let a = store.newTab(url: URL(string: "about:blank#drag-center-a"))
+            let b = store.newTab(url: URL(string: "about:blank#drag-center-b"))
+            let drop = TabDrop(store: store, section: .today, before: a)
+            let accepted = drop.accept(store.sidebarTabDrag(b)!, in: store.space.id, profile: store.space.effectiveProfileID)
+            let order = store.space.tabs.map(\.id)
+            check(accepted && store.splitLayout == nil && order.firstIndex(of: b)! < order.firstIndex(of: a)!,
+                  "The existing sidebar reorder accepts typed tab drags without creating a split")
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:root)}
         let pending = BrowserStore(dataRoot:root,metadataKeyAccess:MetadataKeyAccess{_,_ in throw CocoaError(.fileReadNoPermission)})

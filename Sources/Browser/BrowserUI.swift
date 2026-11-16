@@ -2,7 +2,7 @@ import SwiftUI
 import WebKit
 import BrowserCore
 
-final class EdgeToEdgeWebHost: NSView {
+class EdgeToEdgeWebHost: NSView {
     private var recovery:ExtensionRecoveryBanner?
     private weak var recoveryWebView: WKWebView?
     func setRecovery(store:BrowserStore,webView:WKWebView) {
@@ -45,22 +45,28 @@ final class EdgeToEdgeWebHost: NSView {
 struct WebPane: NSViewRepresentable {
     let webView: WKWebView
     var store:BrowserStore?=nil
+    var splitDestination: BrowserSplitDropTarget?
+    var splitAccent: NSColor = .controlAccentColor
+
     func makeNSView(context: Context) -> EdgeToEdgeWebHost {
-        let host = EdgeToEdgeWebHost()
+        let host = SplitDropWebHost()
         mount(in: host)
         return host
     }
     func updateNSView(_ nsView: EdgeToEdgeWebHost, context: Context) { mount(in: nsView) }
 
     func mount(in host: EdgeToEdgeWebHost) {
+        let splitHost = host as? SplitDropWebHost
         if let store {
             guard !store.isShuttingDown, webView.navigationDelegate === store, store.profileID(for: webView) != nil else {
                 host.removeContent(webView)
+                splitHost?.bindDrop(store: nil, destination: nil, color: splitAccent)
                 return
             }
             host.setContent(webView)
             host.setRecovery(store: store, webView: webView)
         } else { host.setContent(webView) }
+        splitHost?.bindDrop(store: store, destination: splitDestination, color: splitAccent)
     }
 }
 
@@ -241,7 +247,10 @@ struct BrowserUI: View {
     private var content: some View {
         VStack(spacing: 0) {
             if store.extensionPopupProfileID != nil { popupControls }
-            else { Color.clear.frame(height: store.sidebarVisible ? 0 : max(0, chrome.height - 8)).accessibilityHidden(true) }
+            else {
+                let clearance = store.sidebarVisible ? chrome.pageTopInset : max(chrome.height, chrome.pageTopInset)
+                Color.clear.frame(height: max(0, clearance - 8)).accessibilityHidden(true)
+            }
             if !store.savingEnabled && !store.isPrivate {
                 HStack { Text("Local saving is paused. Your existing data is preserved."); Spacer(); Button(store.unlocking ? "Unlocking…" : "Unlock") { store.unlockLocalData() }.disabled(store.unlocking) }.font(.system(size: 11)).padding(9).background(Color.orange.opacity(0.18))
             }
@@ -345,10 +354,10 @@ struct BrowserUI: View {
                     ForEach(store.favorites) { tab in
                         Button { store.selectAny(tab.id) } label: {
                             SiteBadge(url: tab.homeURL ?? tab.url, large: true, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil).frame(maxWidth: .infinity).frame(height: 48).background(store.focusedID == tab.id ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: 10))
-                        }.buttonStyle(.plain).help(tab.pinnedTitle ?? tab.title).onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }.contextMenu { TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id); Button("Remove from Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata); Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) }.disabled(!store.canModifyLocalMetadata) }
+                        }.buttonStyle(.plain).help(tab.pinnedTitle ?? tab.title).onDrag { store.beginSidebarTabDrag(tab.id) }.contextMenu { TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id); Button("Remove from Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata); Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) }.disabled(!store.canModifyLocalMetadata) }
                     }
                 }
-                }.frame(height: favoritesHeight).accessibilityLabel("Favorites").padding(.horizontal, 8).padding(.bottom, 8).onDrop(of: [.text], delegate: TabDrop(store: store, section: .favorites))
+                }.frame(height: favoritesHeight).accessibilityLabel("Favorites").padding(.horizontal, 8).padding(.bottom, 8).onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .favorites))
             }
             HStack {
                 Text(store.space.name.isEmpty ? "Space" : store.space.name).font(.system(size: 12, weight: .semibold)).opacity(0.5)
@@ -373,10 +382,10 @@ struct BrowserUI: View {
                 Spacer(minLength: 4)
                 if !today.isEmpty { Button("Clear") { for tab in today { store.close(tab.id) } }.font(.system(size: 10)).buttonStyle(.plain).opacity(0.4).help("Close Today tabs") }
                 Button { store.showCommand(new: true) } label: { Label("New Tab", systemImage: "plus").font(.system(size: 12)).opacity(0.5) }.buttonStyle(.plain)
-            }.padding(.horizontal, 18).frame(height: 32).onDrop(of: [.text], delegate: TabDrop(store: store, section: .today))
+            }.padding(.horizontal, 18).frame(height: 32).onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .today))
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 3) { ForEach(today) { row($0) } }.padding(.horizontal, 8)
-            }.accessibilityLabel("Today tabs").onDrop(of: [.text], delegate: TabDrop(store: store, section: .today))
+            }.accessibilityLabel("Today tabs").onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .today))
             HStack(spacing: 10) {
                 mini("archivebox", "Library") { store.libraryVisible = true }
                 if updates.offer != nil { mini("arrow.down.circle.fill", "An Alcove update is available") { store.updatesVisible = true }.foregroundStyle(theme.accent) }
@@ -389,7 +398,7 @@ struct BrowserUI: View {
                                     Image(systemName: space.icon ?? SpaceSymbol.defaultName(at:index)).font(.system(size: 11)).opacity(store.session.selectedSpace == space.id ? 1 : 0.3).frame(width: 19, height: 26)
                                 }.buttonStyle(.plain).help(store.isPrivate ? space.name : "\(space.name) · \(store.profiles.first(where: { $0.id == space.effectiveProfileID })?.name ?? "Profile")").id(space.id)
                                     .onDrag { NSItemProvider(object:("alcove-space:" + space.id.uuidString) as NSString) }
-                                    .onDrop(of:[.text],delegate:SpaceDrop(store:store,target:space.id))
+                                    .onDrop(of: SidebarTabDrag.dropTypes, delegate: SpaceDrop(store:store,target:space.id))
                                     .contextMenu { SpaceActionItems(store:store,spaceID:space.id) }
                             }
                         }.frame(minHeight: 26)
@@ -425,7 +434,8 @@ struct BrowserUI: View {
         }
         else if let id, let tab = store.tab(id), !tab.url.isEmpty,
                 let webView = store.primaryPageView(for: id) {
-            WebPane(webView: webView, store: store).id(id)
+            WebPane(webView: webView, store: store, splitDestination: store.splitDropTarget(id),
+                    splitAccent: NSColor(theme.accent)).id(id)
         }
         else {
             VStack(spacing: 10) {
@@ -460,6 +470,8 @@ struct SidebarTabRow: View {
     let appearance: AppearanceSettings
     let motion: Animation?
     @State private var hovered = false
+    @State private var rowWidth: CGFloat = 0
+    @State private var splitHover: SidebarSplitHover?
     @StateObject private var extensionMenuAnchor=ExtensionTabMenuAnchor()
     var body: some View {
         let split = store.splitGroup(containing: tab.id)
@@ -484,8 +496,16 @@ struct SidebarTabRow: View {
         .background(store.focusedID == tab.id ? theme.selected : (hovered || hasSplitPane ? theme.tile : .clear),
                     in: RoundedRectangle(cornerRadius: appearance.cornerRadius))
         .onHover { hovered = $0 }.animation(motion, value: hovered)
-        .onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }
-        .onDrop(of: [.text], delegate: TabDrop(store: store, section: tab.pinned ? .pinned : .today, before: tab.id, folder: tab.folder))
+        .onDrag { store.beginSidebarTabDrag(tab.id) }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rowWidth = $0 }
+        .overlay(alignment: splitHover?.edge == .left ? .leading : .trailing) {
+            if splitHover?.valid == true {
+                Capsule().fill(theme.accent).frame(width: 3).padding(.vertical, 4)
+                    .allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }
+        .onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: tab.pinned ? .pinned : .today,
+                                                               before: tab.id, folder: tab.folder, rowWidth: rowWidth, hover: $splitHover))
         .background(ExtensionTabAnchorReader(anchor:extensionMenuAnchor))
         .contextMenu {
             Button(tab.pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id) }.disabled(!store.canModifyLocalMetadata)

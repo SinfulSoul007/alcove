@@ -7,6 +7,33 @@ enum BrowserWindowHandoffTestError: Error {
     case missingWindow, pageDidNotLoad
 }
 
+@MainActor
+private final class OwnedTabDraggingInfo: NSObject, NSDraggingInfo {
+    let draggingPasteboard = NSPasteboard.withUniqueName()
+    let draggingSequenceNumber: Int
+    let draggingDestinationWindow: NSWindow?
+    var draggingLocation = NSPoint.zero
+    var draggingSourceOperationMask: NSDragOperation = [.move, .copy]
+    var draggedImageLocation: NSPoint { draggingLocation }
+    nonisolated var draggedImage: NSImage? { nil }
+    var draggingSource: Any? { nil }
+    var draggingFormation: NSDraggingFormation = .none
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 1
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+
+    init(window: NSWindow, sequence: Int) {
+        draggingDestinationWindow = window
+        draggingSequenceNumber = sequence
+    }
+
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    func resetSpringLoading() {}
+    func enumerateDraggingItems(options: NSDraggingItemEnumerationOptions, for view: NSView?, classes: [AnyClass],
+                                searchOptions: [NSPasteboard.ReadingOptionKey: Any],
+                                using block: @escaping (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
+}
+
 @main
 struct BrowserWindowHandoffChecks {
     @MainActor
@@ -98,10 +125,48 @@ struct BrowserWindowHandoffChecks {
         check(child.primaryPageView(for: movingTab) == nil && child.views[movingTab] == nil,
               "Rendering the same tab from another window creates no second WebKit view")
         root.update(movingTab) { $0.url = "about:blank" }
-        child.openInSplit(movingTab)
+        child.update(independentTab) { $0.url = "about:blank" }
+        let payload = root.sidebarTabDrag(movingTab)!
+        let provider = payload.itemProvider()
+        let data: Data? = await withCheckedContinuation { continuation in
+            provider.loadDataRepresentation(forTypeIdentifier: SidebarTabDrag.contentType.identifier) { data, _ in
+                continuation.resume(returning: data)
+            }
+        }
+        check(SidebarTabDrag.decode(data) == payload && provider.registeredTypeIdentifiers == [SidebarTabDrag.contentType.identifier],
+              "A sidebar tab advertises only its typed payload and decodes to the exact source")
+        guard let data else { throw CocoaError(.coderInvalidValue) }
+        let nativeHost = SplitDropWebHost(frame: paneFrame)
+        let dragWindow = NSWindow(contentRect: paneFrame, styleMask: [.borderless], backing: .buffered, defer: false)
+        dragWindow.isReleasedWhenClosed = false
+        dragWindow.contentView = nativeHost
+        defer { dragWindow.contentView = nil; dragWindow.close() }
+        WebPane(webView: independent, store: child, splitDestination: child.splitDropTarget(independentTab)).mount(in: nativeHost)
+        let regular = OwnedTabDraggingInfo(window: dragWindow, sequence: 1)
+        regular.draggingPasteboard.setString("normal page text", forType: .string)
+        regular.draggingLocation = nativeHost.convert(NSPoint(x: 798, y: 300), to: nil)
+        check(nativeHost.registeredDraggedTypes == [SidebarTabDrag.pasteboardType] && nativeHost.draggingEntered(regular).isEmpty,
+              "A mounted native WebKit host registers its internal drop type and leaves ordinary text drags alone")
+        nativeHost.draggingExited(regular)
+        let sender = OwnedTabDraggingInfo(window: dragWindow, sequence: 2)
+        sender.draggingPasteboard.setData(data, forType: SidebarTabDrag.pasteboardType)
+        let subviews = nativeHost.subviews.count
+        sender.draggingLocation = nativeHost.convert(NSPoint(x: 400, y: 300), to: nil)
+        check(nativeHost.draggingEntered(sender).isEmpty && nativeHost.subviews.count == subviews,
+              "The center of a native page does not create a split target or highlight")
+        sender.draggingLocation = nativeHost.convert(NSPoint(x: 798, y: 300), to: nil)
+        check(nativeHost.draggingUpdated(sender) == .move && nativeHost.subviews.count == subviews + 1,
+              "A typed drag at the native page edge adds a directional highlight")
+        nativeHost.draggingEnded(sender)
+        check(nativeHost.subviews.count == subviews && child.splitLayout == nil,
+              "Cancelling a native drag inside the target clears the indicator without changing tabs")
+        check(nativeHost.draggingEntered(sender) == .move, "A fresh native drag can preview the same page after cancellation")
+        let accepted = nativeHost.prepareForDragOperation(sender) && nativeHost.performDragOperation(sender)
+        check(accepted && nativeHost.subviews.count == subviews && !child.validatesSidebarDrag(payload),
+              "Dropping on the right edge clears the highlight and invalidates the old window's payload")
         check(child.splitLayout?.tabIDs == [independentTab, movingTab] && child.selectedID == independentTab && child.primaryPageView(for: movingTab) === source &&
                 root.views[movingTab] == nil && child.documentIdentity(for: source) === identity,
-              "Open in Split View brings over the exact live tab and keeps the existing primary pane")
+              "A page edge split brings over the exact live tab and keeps the existing primary pane")
         child.clearSplit()
         let leftOver = child.newTab(url: URL(string: "about:blank#left-over"))
         let attached = child.newTab(url: URL(string: "about:blank#attached"))
@@ -182,7 +247,10 @@ struct BrowserWindowHandoffChecks {
                 root.session.spaces.first { $0.id == separateSpace.id }?.selected == leftTab.id,
               "A Quick Browse expansion preserves each window's selection in an unrelated Space")
         child.close(selectionProbe)
+        let closedOrigin = root.sidebarTabDrag(attached)
+        check(closedOrigin.map(child.validatesSidebarDrag) == true, "A shared sidebar tab can start a drag from an open window")
         owner.release(first.lease)
+        check(closedOrigin.map(child.validatesSidebarDrag) == false, "Closing a source window invalidates its sidebar drag even while its writer stays alive")
         let survived = try await hasFixture(source, token: "moving")
         check(child.views[movingTab] === source && child.documentIdentity(for: source) === identity && survived,
               "Closing its presenter hands the still-open tab to the surviving window without reloading")

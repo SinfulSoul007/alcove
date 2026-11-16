@@ -9,6 +9,7 @@ enum BrowserPanel: String, Identifiable { case library, settings, appearance, up
 
 @MainActor
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+    let sidebarDragID = UUID()
     weak var windowGroup: BrowserWindowGroup?
     var windowGroupID: UUID?
     var extensionPopupProfileID: UUID?

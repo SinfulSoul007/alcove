@@ -63,7 +63,7 @@ struct SpacesPanel: View {
                         } else {
                             ForEach(Array(store.session.spaces.enumerated()),id:\.element.id) { index,space in
                                 OpenSpaceCard(store:store,space:space,index:index)
-                                    .onDrop(of:[.text],delegate:SpaceDrop(store:store,target:space.id,midpoint:110))
+                                    .onDrop(of: SidebarTabDrag.dropTypes, delegate: SpaceDrop(store:store,target:space.id,midpoint:110))
                             }
                             Button { store.requestNewSpace() } label: {
                                 VStack(spacing:12) { Image(systemName:"plus.circle.fill").font(.system(size:34)); Text("New Space").font(.headline) }

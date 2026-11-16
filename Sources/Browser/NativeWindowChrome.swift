@@ -6,14 +6,17 @@ import SwiftUI
     private struct Layout: Equatable {
         var height: CGFloat = 40
         var leadingEdge: CGFloat = 81
+        var pageTopInset: CGFloat = 0
     }
     @Published private var layout = Layout()
     var height: CGFloat { layout.height }
     /// Window-content x coordinate where the first custom control may start.
     var leadingEdge: CGFloat { layout.leadingEdge }
+    var pageTopInset: CGFloat { layout.pageTopInset }
     private weak var window: NSWindow?
     private let ownedToolbars = NSHashTable<NSToolbar>.weakObjects()
     private var observations: [NSObjectProtocol] = []
+    private var contentLayoutObservation: NSKeyValueObservation?
     private var measurementScheduled = false
 
     func attach(to window: NSWindow) {
@@ -39,6 +42,9 @@ import SwiftUI
                      NSWindow.didChangeScreenNotification, NSWindow.didEnterFullScreenNotification,
                      NSWindow.didExitFullScreenNotification] {
             observe(name, object: window)
+        }
+        contentLayoutObservation = window.observe(\.contentLayoutRect, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor in self?.scheduleMeasurement() }
         }
         for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             if let button = window.standardWindowButton(type) {
@@ -75,16 +81,22 @@ import SwiftUI
             if toolbar.isVisible != visible { toolbar.isVisible = visible }
         }
         content.superview?.layoutSubtreeIfNeeded()
-        guard let close = window.standardWindowButton(.closeButton) else { return }
-        let bounds = close.convert(close.bounds, to: content)
-        let center = content.isFlipped ? bounds.midY - content.bounds.minY : content.bounds.maxY - bounds.midY
-        // A fullscreen titlebar may temporarily be outside the content bounds.
-        // Keep its last usable layout until AppKit finishes that transition.
-        guard center.isFinite, (16...64).contains(center) else { return }
-        let right = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap {
-            window.standardWindowButton($0).map { $0.convert($0.bounds, to: content).maxX }
-        }.max() ?? bounds.maxX
-        let next = Layout(height: center * 2, leadingEdge: right + 16)
+        var next = layout
+        let usable = content.convert(window.contentLayoutRect, from: nil)
+        let inset = content.isFlipped ? usable.minY - content.bounds.minY : content.bounds.maxY - usable.maxY
+        if inset.isFinite { next.pageTopInset = max(0, min(content.bounds.height, inset)) }
+        if let close = window.standardWindowButton(.closeButton) {
+            let bounds = close.convert(close.bounds, to: content)
+            let center = content.isFlipped ? bounds.midY - content.bounds.minY : content.bounds.maxY - bounds.midY
+            // Traffic lights can temporarily leave the content bounds in fullscreen.
+            if center.isFinite, (16...64).contains(center) {
+                let right = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap {
+                    window.standardWindowButton($0).map { $0.convert($0.bounds, to: content).maxX }
+                }.max() ?? bounds.maxX
+                next.height = center * 2
+                next.leadingEdge = right + 16
+            }
+        }
         if layout != next { layout = next }
     }
 

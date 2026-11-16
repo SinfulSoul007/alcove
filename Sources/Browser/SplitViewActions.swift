@@ -80,29 +80,33 @@ extension BrowserStore {
         }
     }
 
-    func openInSplit(_ id: UUID, at edge: BrowserSplitEdge? = nil) {
-        guard !isShuttingDown, !awaitingInitialMetadata, let primary = selectedID,
-              (windowGroup?.presentation(tabID: primary, in: self) ?? .owned) == .owned,
-              !profileUnavailable(activeProfileID), space.tabs.contains(where: { $0.id == id && !$0.url.isEmpty }) else { return }
-        var layout = splitLayout ?? BrowserSplitLayout(spaceID: space.id, axis: .columns, tabIDs: [primary])
+    @discardableResult
+    func openInSplit(_ id: UUID, at edge: BrowserSplitEdge? = nil, relativeTo target: UUID? = nil) -> Bool {
+        guard !isShuttingDown, !awaitingInitialMetadata, let anchor = target ?? selectedID, anchor != id,
+              (windowGroup?.presentation(tabID: anchor, in: self) ?? .owned) == .owned,
+              !profileUnavailable(activeProfileID), space.tabs.contains(where: { $0.id == id && !$0.url.isEmpty }),
+              space.tabs.contains(where: { $0.id == anchor }) else { return false }
+        var layout = splitGroup(containing: anchor) ?? BrowserSplitLayout(spaceID: space.id, axis: .columns, tabIDs: [anchor])
         if layout.tabIDs.contains(id) {
-            focusPane(id)
-            return
+            if target == nil { focusPane(id); return true }
+            layout.tabIDs.removeAll { $0 == id }
         }
         guard layout.tabIDs.count < BrowserSplitLayout.maximumPanes else {
             message = "Split View can show up to four tabs."
-            return
+            return false
         }
-        if let windowGroup, !windowGroup.claimPresentation(tabID: id, in: self) { return }
+        if let windowGroup, !windowGroup.claimPresentation(tabID: id, in: self) { return false }
         if let edge {
-            let reference = focusedID.flatMap { layout.tabIDs.firstIndex(of: $0) } ?? 0
+            let reference = (target ?? focusedID).flatMap { layout.tabIDs.firstIndex(of: $0) } ?? 0
             layout.axis = edge.axis
             layout.tabIDs.insert(id, at: reference + (edge.insertsBefore ? 0 : 1))
         } else {
             layout.tabIDs.append(id)
         }
         splitLayout = layout
+        if splitLayout?.id != layout.id { select(anchor) }
         focusPane(id)
+        return true
     }
 
     func addSplit(at edge: BrowserSplitEdge? = nil) {

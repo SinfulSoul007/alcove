@@ -93,6 +93,10 @@ import BrowserCore
             let webBounds = web.convert(web.bounds, to: nil)
             let sample = root.convert(NSPoint(x: webBounds.midX, y: webBounds.maxY - 3), from: nil)
             let hit = root.hitTest(sample)
+            print("Native chrome fixture, page bounds:", webBounds, "usable content:", main.contentLayoutRect,
+                  "window frame:", main.frame, "hit:", hit.map { String(describing: type(of: $0)) } ?? "nil")
+            check(webBounds.maxY <= main.contentLayoutRect.maxY + 0.5,
+                  "Pinned sidebar keeps the page below the native toolbar's content boundary")
             if !(hit === web || hit?.isDescendant(of: web) == true) {
                 print("Web hit geometry:", webBounds, "hit", hit.map { String(describing: type(of: $0)) } ?? "nil")
             }
