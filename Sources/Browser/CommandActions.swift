@@ -16,6 +16,8 @@ extension BrowserStore {
             case .profiles: return !isPrivate
             case .spaces,.deletedSpaces: return !isShuttingDown && !awaitingInitialMetadata
             case .newSpace,.renameSpace,.deleteSpace,.newFolder: return canManageSpace(space.id)
+            case .collapsePinned: return space.pinnedShelfCollapsed != true && canManageSpace(space.id)
+            case .expandPinned: return space.pinnedShelfCollapsed == true && canManageSpace(space.id)
             case .restoreSpace: return canUndoSpaceDeletion
             case .splitLeft, .splitRight, .splitTop, .splitBottom:
                 return !isShuttingDown && !awaitingInitialMetadata &&
@@ -48,6 +50,8 @@ extension BrowserStore {
         case .deletedSpaces: showSpacesManager(deleted:true)
         case .newSpace: requestNewSpace()
         case .newFolder: requestNewTabFolder()
+        case .collapsePinned: requestPinnedShelfCollapsed(true, in: space.id)
+        case .expandPinned: requestPinnedShelfCollapsed(false, in: space.id)
         case .renameSpace: requestRenameSpace(space.id)
         case .deleteSpace: requestDeleteSpace(space.id)
         case .restoreSpace: undoSpaceDeletion()

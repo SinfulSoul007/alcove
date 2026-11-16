@@ -84,6 +84,28 @@ import BrowserCore
                 }
             }
         }
+        window.setContentSize(NSSize(width: 760, height: 400))
+        store.togglePin(pageID)
+        await settle(); hosting.layoutSubtreeIfNeeded()
+        func sidebarScrollHeights() -> [CGFloat] {
+            descendants(hosting, NSScrollView.self).compactMap { scroll in
+                let frame = scroll.convert(scroll.bounds, to: nil)
+                return frame.width > 100 && frame.height > 30 && frame.maxX < 245 ? frame : nil
+            }.sorted { $0.minY < $1.minY }.map(\.height)
+        }
+        let openShelf = sidebarScrollHeights()
+        try store.setPinnedShelfCollapsed(true, in: store.space.id)
+        await settle(); hosting.layoutSubtreeIfNeeded()
+        let closedShelf = sidebarScrollHeights()
+        check(openShelf.count == 3 && closedShelf.count == 2 &&
+              (closedShelf.first ?? 0) > (openShelf.first ?? 0) + 20,
+              "Closing the compact Pinned shelf gives its independent scroll area to Today")
+        check(store.selectedID == pageID && store.views[pageID] === web && web.window === window,
+              "Collapsing the Pinned section keeps its selected page live")
+        try store.setPinnedShelfCollapsed(false, in: store.space.id)
+        await settle(); hosting.layoutSubtreeIfNeeded()
+        check(sidebarScrollHeights().count == 3, "Opening the Pinned shelf restores its independently scrollable list")
+        store.togglePin(pageID)
         // Match the app's hosting and animated command submission path after the root already exists.
         window.setContentSize(NSSize(width:1260,height:820));await settle()
         hosting.sizingOptions = [.minSize]

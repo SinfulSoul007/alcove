@@ -305,6 +305,17 @@ import BrowserCore
         let folder = try saved.createTabFolder(name:"  Research  ",in:savedSpace)
         check(folder == "Research" && saved.space.folderNames == ["Research"] && saved.space.tabs.allSatisfy(\.url.isEmpty),"Creating an empty folder makes no dummy website tab")
         _ = try saved.createTabFolder(name:"Travel",in:savedSpace)
+        let anotherShelf = try saved.createSpace(name: "Parallel Shelf")
+        saved.selectSpace(savedSpace)
+        check(saved.availableCommands.contains(.collapsePinned) && !saved.availableCommands.contains(.expandPinned),
+              "An expanded shelf offers only the Collapse Pinned command")
+        saved.runCommand(.collapsePinned)
+        check(saved.space.pinnedShelfCollapsed == true && saved.availableCommands.contains(.expandPinned) &&
+              !saved.availableCommands.contains(.collapsePinned) && BrowserCommand.expandPinned.matches("expand pin"),
+              "The command closes only the active Space's shelf and offers the matching command")
+        saved.selectSpace(anotherShelf)
+        check(saved.space.pinnedShelfCollapsed != true, "Another Space keeps its own Pinned disclosure state")
+        saved.selectSpace(savedSpace)
         rejects("Folder names reject case-insensitive duplicates") {_ = try saved.createTabFolder(name:"research",in:savedSpace)}
         rejects("Folder names reject blank names") {_ = try saved.createTabFolder(name:" \n ",in:savedSpace)}
         rejects("Folder names reject control characters") {_ = try saved.createTabFolder(name:"Bad\u{0001}Name",in:savedSpace)}
@@ -312,6 +323,10 @@ import BrowserCore
         saved.shutdown()
         let reopened = BrowserStore(dataRoot:savedRoot,keyProvider:{_ in key})
         check(reopened.space.folderNames == ["Research","Travel"],"Empty folders survive encrypted relaunch in their original order")
+        check(reopened.space.pinnedShelfCollapsed == true, "The collapsed Pinned shelf survives encrypted relaunch")
+        reopened.runCommand(.expandPinned)
+        check(reopened.space.pinnedShelfCollapsed != true && reopened.space.folderNames == ["Research", "Travel"],
+              "Expanding exposes the original saved folders")
         let bytes = try Data(contentsOf:reopened.sessionURL)
         check(bytes.range(of:Data("Research".utf8)) == nil,"Saved folder names remain inside encrypted metadata")
         reopened.shutdown()
@@ -319,6 +334,7 @@ import BrowserCore
         legacyTab.folder = "Imported";legacy.tabs = [legacyTab]
         let legacyRoundTrip = try JSONDecoder().decode(Space.self,from:JSONEncoder().encode(legacy))
         check(legacyRoundTrip.folderNames == ["Imported"],"Legacy tab memberships remain visible without explicit folder definitions")
+        check(legacyRoundTrip.pinnedShelfCollapsed != true, "Legacy Spaces start with Pinned expanded")
         let topologyFixture = Space(name: "Hierarchy")
         var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(topologyFixture)) as! [String: Any]
         json["folders"] = ["Research", "Papers", "Drafts"]
@@ -397,7 +413,15 @@ import BrowserCore
         var privateKeys = 0
         let privateRoot = root.appendingPathComponent("private-folders"),temporary = BrowserStore(isPrivate:true,dataRoot:privateRoot,keyProvider:{_ in privateKeys += 1;return key})
         let target = temporary.space.id,id = temporary.newTab(url:URL(string:"https://example.invalid/folder")!),web = temporary.view(for:id)
+        try temporary.setPinnedShelfCollapsed(true, in: target)
+        check(temporary.space.pinnedShelfCollapsed == true && privateKeys == 0 && !FileManager.default.fileExists(atPath: temporary.sessionURL.path),
+              "Private Pinned disclosure stays in memory")
+        let collapsedDrop = TabDrop(store: temporary, section: .pinned)
+        check(collapsedDrop.accept(id.uuidString, in: target, profile: BrowserProfile.defaultID) &&
+              temporary.tab(id)?.pinned == true && temporary.views[id] === web && temporary.space.pinnedShelfCollapsed == true,
+              "A tab can be pinned directly to a collapsed shelf without reloading the page or opening the list")
         _ = try temporary.createTabFolder(name:"Work",in:target)
+        check(temporary.space.pinnedShelfCollapsed != true, "Creating a folder reveals the shelf so the new folder is visible")
         rejects("Creating a folder with a vanished tab fails atomically") {_ = try temporary.createTabFolder(name:"Phantom",in:target,adding:UUID())}
         check(!temporary.space.folderNames.contains("Phantom"),"Failed create-and-move leaves no phantom empty folder")
         try temporary.moveTabToFolder(id,folder:"Work",in:target)
