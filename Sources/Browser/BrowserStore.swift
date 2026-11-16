@@ -11,6 +11,7 @@ enum BrowserPanel: String, Identifiable { case library, settings, appearance, up
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     weak var windowGroup: BrowserWindowGroup?
     var windowGroupID: UUID?
+    var extensionPopupProfileID: UUID?
     var savedWindowRestore: BrowserWindowRestoreState?
     var metadataWriter: BrowserStore { windowGroup?.root ?? self }
     @Published var session = Session() {
@@ -326,7 +327,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func select(_ id: UUID) {
         guard session.spaces[spaceIndex].tabs.contains(where: { $0.id == id }) else { return }
         if focusedID != id { dismissCommand() }
-        windowGroup?.claimPresentation(tabID: id, in: self)
+        if let windowGroup, !windowGroup.claimPresentation(tabID: id, in: self) { return }
         session.spaces[spaceIndex].selected = id; activePaneID = nil
         accessOrder.removeAll { $0 == id }; accessOrder.append(id)
         update(id) { $0.lastAccessed = Date() }
@@ -335,7 +336,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         save()
     }
     func selectSpace(_ id: UUID) {
-        guard session.spaces.contains(where: { $0.id == id }) else { return }
+        guard session.spaces.contains(where: { $0.id == id && (extensionPopupProfileID == nil || $0.effectiveProfileID == extensionPopupProfileID) }) else { return }
         if session.selectedSpace != id { dismissCommand() }
         closePrimaryPeek(); activePaneID = nil; splitID = nil; session.activateSpace(id); save()
     }
@@ -398,6 +399,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         library(for: profile).favoriteTabs ?? session.spaces.filter { isPrivate || $0.effectiveProfileID == profile }.flatMap(\.tabs).filter { $0.favorite == true }
     }
     var profileTabs: [BrowserCore.Tab] {
+        if extensionPopupProfileID != nil { return extensionPopupTabs }
         let local = session.spaces.filter { isPrivate || $0.effectiveProfileID == activeProfileID }.flatMap(\.tabs)
         let ids = Set(local.map(\.id))
         return local + favorites.filter { !ids.contains($0.id) } + quickPages(for: activeProfileID).map(\.tab)
@@ -415,6 +417,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return true
     }
     func selectAny(_ id: UUID) {
+        if extensionPopupProfileID != nil { selectExtensionPopupTab(id); return }
         if let profile = quickProfileID(id) {
             guard profile == activeProfileID, !profileUnavailable(profile) else { return }
             touchQuickPage(id); quickPageRequested?(id); return
@@ -440,7 +443,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return placeTab(id, in: destination, section: source.favorite == true ? .favorites : (source.pinned ? .pinned : .today), folder: source.folder, allowProfileChange: allowProfileChange)
     }
     func showCommand(new: Bool = false) {
-        guard !awaitingInitialMetadata, !isShuttingDown else { return }
+        guard !awaitingInitialMetadata, !isShuttingDown,
+              extensionPopupProfileID == nil || space.effectiveProfileID == extensionPopupProfileID else { return }
         commandFocusRequest += 1
         commandOpensNewTab = new
         commandSiteSearch = nil; commandError = nil; commandContext = searchInputContext()
@@ -450,7 +454,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         let editing = commandVisible, new = commandOpensNewTab
         do {
             if editing { guard let context = commandContext, matchesSearchInputContext(context) else { throw SearchInputError.contextChanged } }
-            guard !profileUnavailable(activeProfileID), !isShuttingDown else { throw ProfileError.pending }
+            guard !profileUnavailable(activeProfileID), !isShuttingDown,
+                  extensionPopupProfileID == nil || space.effectiveProfileID == extensionPopupProfileID else { throw ProfileError.pending }
             let url = try resolveSearchInput(input, selection: editing ? commandSiteSearch : nil)
             let peek = editing && !new ? primaryPeekView : nil
             if let peek {
@@ -557,7 +562,11 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func toggleSplit() {
         if splitID != nil { splitID = nil; return }
-        guard let id = space.tabs.first(where: { $0.id != selectedID && !$0.url.isEmpty })?.id else {
+        let available = space.tabs.first {
+            $0.id != selectedID && !$0.url.isEmpty &&
+                (extensionPopupProfileID == nil || windowGroup?.presentation(tabID: $0.id, in: self) == .owned)
+        }
+        guard let id = available?.id else {
             message = "Open a second website, then choose Split View."
             return
         }

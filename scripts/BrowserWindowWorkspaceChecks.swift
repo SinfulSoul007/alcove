@@ -90,6 +90,26 @@ import CryptoKit
         rejects(.missingWindow, "Copying an unknown window fails before creating anything") { _ = try model.openWindow(id: UUID(), copying: UUID()) }
         check(model.windows.count == 2, "Failed window requests do not create phantom records")
 
+        let popup = UUID(), newNormal = UUID()
+        var popupModel = try BrowserWindowWorkspace(session: original)
+        _ = try popupModel.openWindow(id: a)
+        _ = try popupModel.openWindow(id: popup, copying: a, claimSelection: false, popupProfileID: BrowserProfile.defaultID)
+        check(popupModel.claim(first, for: popup), "An explicit move can transfer a tab to a popup")
+        _ = try popupModel.openWindow(id: newNormal, copying: a, focus: false)
+        check(popupModel.assignedWindow(for: first) == popup && popupModel.session(for: newNormal)?.spaces[0].selected != first,
+              "A default normal-window selection never transfers a tab away from its popup")
+        var reassigned = popupModel.session(for: a)!
+        reassigned.spaces[0].profileID = UUID()
+        try popupModel.apply(reassigned, from: a)
+        check(popupModel.assignedWindow(for: first) == a,
+              "A popup releases a tab when its Space changes to another profile")
+        check(popupModel.session(for: popup)?.spaces.flatMap(\.tabs).contains(where: { $0.id == second.id }) == true &&
+              popupModel.session(for: popup)?.spaces.first(where: { $0.id == personal })?.selected == nil,
+              "A popup cannot select a normal-window tab from a reassigned Space")
+        check(popupModel.closeWindow(a) && popupModel.closeWindow(newNormal) && popupModel.focusedWindowID == nil &&
+              !popupModel.focusWindow(popup) && popupModel.assignedWindow(for: second.id) == nil,
+              "A popup cannot focus as a primary or collect parked workspace tabs")
+
         var invalid = model.session(for: a)!
         invalid.spaces.append(invalid.spaces[0])
         rejects(.invalidSession, "Duplicate Space identities are rejected atomically") { try model.apply(invalid, from: a) }

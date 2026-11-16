@@ -62,6 +62,7 @@ public struct BrowserWindowWorkspace {
     public private(set) var windows: [BrowserWindowSelection]
     public private(set) var focusedWindowID: UUID?
     public private(set) var assignments: [UUID: UUID]
+    private var popupProfiles: [UUID: UUID] = [:]
 
     public init(session: Session, windows: [BrowserWindowSelection] = [], focusedWindowID: UUID? = nil, assignments: [UUID: UUID] = [:]) throws {
         let normalized = try Self.normalized(session)
@@ -79,11 +80,34 @@ public struct BrowserWindowWorkspace {
     }
 
     public func session(for windowID: UUID) -> Session? {
-        windows.first(where: { $0.id == windowID })?.projecting(session)
+        guard let selection = windows.first(where: { $0.id == windowID }) else { return nil }
+        var projection = selection.projecting(session)
+        guard let profile = popupProfiles[windowID] else {
+            guard !popupProfiles.isEmpty else { return projection }
+            for index in projection.spaces.indices {
+                let space = projection.spaces[index]
+                guard let selected = space.selected, let owner = assignments[selected],
+                      popupProfiles[owner] != nil else { continue }
+                projection.spaces[index].selected = space.tabs.first { assignments[$0.id] == windowID }?.id
+            }
+            return projection
+        }
+        for index in projection.spaces.indices {
+            let space = projection.spaces[index]
+            let owned = space.effectiveProfileID == profile ? space.tabs.filter { assignments[$0.id] == windowID } : []
+            projection.spaces[index].selected = owned.first(where: { $0.id == space.selected })?.id ?? owned.first?.id
+        }
+        if !projection.spaces.contains(where: { $0.id == projection.selectedSpace && $0.effectiveProfileID == profile }),
+           let scoped = projection.spaces.first(where: { $0.effectiveProfileID == profile && $0.selected != nil })
+                     ?? projection.spaces.first(where: { $0.effectiveProfileID == profile }) {
+            projection.selectedSpace = scoped.id
+        }
+        return projection
     }
 
     @discardableResult public mutating func openWindow(id: UUID = UUID(), copying sourceID: UUID? = nil,
-                                                       focus: Bool = true, claimSelection: Bool = true) throws -> BrowserWindowSelection {
+                                                       focus: Bool = true, claimSelection: Bool = true,
+                                                       popupProfileID: UUID? = nil) throws -> BrowserWindowSelection {
         guard !windows.contains(where: { $0.id == id }) else { throw BrowserWindowWorkspaceError.duplicateWindow }
         let seed: Session
         if let sourceID {
@@ -92,9 +116,13 @@ public struct BrowserWindowWorkspace {
         } else { seed = session }
         let selection = BrowserWindowSelection(id: id, session: seed).reconciled(in: session)
         windows.append(selection)
-        if focus || focusedWindowID == nil { focusedWindowID = id }
+        if let popupProfileID { popupProfiles[id] = popupProfileID }
+        else if focus || focusedWindowID == nil { focusedWindowID = id }
         fillUnassignedTabs(with: focusedWindowID)
-        if claimSelection, let selected = selection.selectedTabsBySpace[selection.spaceID] { assignments[selected] = id }
+        if popupProfileID == nil, claimSelection, let selected = selection.selectedTabsBySpace[selection.spaceID],
+           assignments[selected].flatMap({ popupProfiles[$0] }) == nil {
+            assignments[selected] = id
+        }
         synchronizeFocusedSelection(recordFocus: focusedWindowID == id)
         return selection
     }
@@ -119,21 +147,32 @@ public struct BrowserWindowWorkspace {
             selections[source] = BrowserWindowSelection(id: windowID, session: normalized)
         }
         selections = selections.map { $0.reconciled(in: normalized) }
-        let retainedTabs = Set(normalized.spaces.flatMap(\.tabs).map(\.id))
-        let retainedWindows = Set(selections.map(\.id))
-        var nextAssignments = assignments.filter { retainedTabs.contains($0.key) && retainedWindows.contains($0.value) }
-        if let owner = windowID ?? focusedWindowID {
-            for id in retainedTabs.subtracting(previousTabs) { nextAssignments[id] = owner }
+        var profilesByTab: [UUID: UUID] = [:]
+        for space in normalized.spaces {
+            for tab in space.tabs { profilesByTab[tab.id] = space.effectiveProfileID }
         }
-        session = normalized
+        let retainedWindows = Set(selections.map(\.id))
+        var nextAssignments = assignments.filter { tab, window in
+            guard let profile = profilesByTab[tab], retainedWindows.contains(window) else { return false }
+            return popupProfiles[window].map { $0 == profile } ?? true
+        }
+        if let owner = windowID ?? focusedWindowID {
+            for (id, profile) in profilesByTab where !previousTabs.contains(id) {
+                if popupProfiles[owner].map({ $0 == profile }) ?? true { nextAssignments[id] = owner }
+            }
+        }
+        if let windowID, popupProfiles[windowID] != nil, focusedWindowID == nil {
+            let lastPrimary = BrowserWindowSelection(id: windowID, session: session)
+            session = lastPrimary.reconciled(in: normalized).projecting(normalized)
+        } else { session = normalized }
         windows = selections
         assignments = nextAssignments
-        fillUnassignedTabs(with: focusedWindowID ?? windows.first?.id)
+        fillUnassignedTabs(with: focusedWindowID)
         synchronizeFocusedSelection()
     }
 
     @discardableResult public mutating func focusWindow(_ id: UUID) -> Bool {
-        guard windows.contains(where: { $0.id == id }) else { return false }
+        guard popupProfiles[id] == nil, windows.contains(where: { $0.id == id }) else { return false }
         focusedWindowID = id
         synchronizeFocusedSelection(recordFocus: true)
         return true
@@ -142,16 +181,19 @@ public struct BrowserWindowWorkspace {
     @discardableResult public mutating func closeWindow(_ id: UUID) -> Bool {
         guard let index = windows.firstIndex(where: { $0.id == id }) else { return false }
         windows.remove(at: index)
-        if focusedWindowID == id { focusedWindowID = windows.last?.id }
+        popupProfiles.removeValue(forKey: id)
+        if focusedWindowID == id { focusedWindowID = windows.last(where: { popupProfiles[$0.id] == nil })?.id }
         let remaining = Set(windows.map(\.id))
         assignments = assignments.filter { remaining.contains($0.value) }
-        fillUnassignedTabs(with: focusedWindowID ?? windows.first?.id)
+        fillUnassignedTabs(with: focusedWindowID)
         synchronizeFocusedSelection()
         return true
     }
 
     @discardableResult public mutating func claim(_ tabID: UUID, for windowID: UUID) -> Bool {
-        guard allTabIDs.contains(tabID), windows.contains(where: { $0.id == windowID }) else { return false }
+        guard windows.contains(where: { $0.id == windowID }),
+              let space = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == tabID }) }),
+              popupProfiles[windowID].map({ $0 == space.effectiveProfileID }) ?? true else { return false }
         assignments[tabID] = windowID
         return true
     }
@@ -161,7 +203,7 @@ public struct BrowserWindowWorkspace {
     private var allTabIDs: Set<UUID> { Set(session.spaces.flatMap(\.tabs).map(\.id)) }
 
     private mutating func fillUnassignedTabs(with owner: UUID?) {
-        guard let owner else { assignments = [:]; return }
+        guard let owner else { return }
         for id in allTabIDs where assignments[id] == nil { assignments[id] = owner }
     }
 

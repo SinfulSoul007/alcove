@@ -249,11 +249,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if activate { surfacePrimary(window) }
     }
     private func preferredPrimary(of owner: BrowserWindowOwner) -> NSWindow? {
-        if let activeBrowserWindow, primaryOwners[activeBrowserWindow] === owner { return activeBrowserWindow }
+        if let activeBrowserWindow, primaryOwners[activeBrowserWindow] === owner,
+           windows[activeBrowserWindow]?.extensionPopupProfileID == nil { return activeBrowserWindow }
         if let window = owner.store.windowGroup?.focusedPrimary?.extensionWindows[.primary]?.window,
            primaryOwners[window] === owner { return window }
         if let normalWindow, primaryOwners[normalWindow] === owner { return normalWindow }
-        return primaryOwners.first(where: { $0.value === owner })?.key
+        return primaryOwners.first(where: { $0.value === owner && windows[$0.key]?.extensionPopupProfileID == nil })?.key
     }
     private func surfacePrimary(_ window: NSWindow) {
         if window.isMiniaturized { window.deminiaturize(nil) }
@@ -266,16 +267,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         } else { openPrimary(owner, activate: activate) }
     }
     private func makePrimaryWindow(_ store: BrowserStore, owner: BrowserWindowOwner, lease: UUID) -> NSWindow {
-        let window = ExtensionCommandWindow(contentRect: NSRect(x: 0, y: 0, width: 1260, height: 820), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        let compact = store.extensionPopupProfileID != nil
+        let frame = NSRect(x: 0, y: 0, width: compact ? 760 : 1260, height: compact ? 600 : 820)
+        let window = ExtensionCommandWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.extensionStore=store;window.extensionCommandSource={[weak store] in store?.primaryPeekView ?? store?.currentView}
         window.title = store.isPrivate ? "Alcove — Private" : "Alcove"; window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden
-        window.isReleasedWhenClosed = false; window.delegate = self; window.minSize = NSSize(width: 800, height: 540)
+        window.isReleasedWhenClosed = false; window.delegate = self
+        window.minSize = compact ? NSSize(width: 440, height: 340) : NSSize(width: 800, height: 540)
         let hosting = NSHostingView(rootView: BrowserUI(store: store).environmentObject(updates))
         hosting.safeAreaRegions = []; hosting.sizingOptions = [.minSize]; window.contentView = hosting
         windows[window] = store; primaryOwners[window] = owner; primaryLeases[window] = lease
         if store !== owner.store { configurePrimaryActions(store, owner: owner) }
         store.registerExtensionWindow(window,kind:.primary)
-        if !store.isPrivate { normalWindow = window }
+        if !store.isPrivate, !compact { normalWindow = window }
         window.center()
         checkAutomaticallyIfNeeded(store)
         return window
@@ -303,8 +307,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         try writer.requireQuickProfile(profileID)
         let previous = normalWindow
+        let popupProfileID = configuration.windowType == .popup ? profileID : nil
         let member = try owner.acquirePrimaryStore(copying: writer.windowGroup?.focusedPrimary,
-                                                   focus: configuration.shouldBeFocused, claimSelection: false)
+                                                   focus: configuration.shouldBeFocused, claimSelection: false,
+                                                   popupProfileID: popupProfileID)
         do { try member.store.prepareExtensionWindowTabs(profileID: profileID, URLs: configuration.tabURLs, moving: tabIDs) }
         catch { owner.release(member.lease); throw error }
 
@@ -340,7 +346,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationDidBecomeActive(_ notification: Notification) { checkNormalWindowAutomatically() }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { openWindow(isPrivate: false); return true }
     func windowDidBecomeKey(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, let store = windows[window], !store.isPrivate else { return }
+        guard let window = notification.object as? NSWindow, let store = windows[window], !store.isPrivate,
+              store.extensionPopupProfileID == nil else { return }
         normalWindow = window
         store.windowGroup?.focusPrimary(store)
     }
@@ -351,6 +358,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
               !window.styleMask.contains(.fullScreen), !window.isMiniaturized else { return }
         let frame = window.frame
         store.windowGroup?.recordFrame(BrowserWindowFrame(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height), for: store)
+    }
+    func windowShouldClose(_ window: NSWindow) -> Bool {
+        guard !terminating, let store = windows[window], store.extensionPopupProfileID != nil else { return true }
+        do { try store.closeExtensionPopupTabs(); return true }
+        catch { store.message = error.localizedDescription; return false }
     }
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
@@ -546,9 +558,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func stepTab(_ delta: Int) {
         guard activeQuick == nil, let store = activeStore else { return }
-        let tabs = store.space.tabs
+        let tabs = store.extensionPopupProfileID == nil ? store.space.tabs : store.extensionPopupTabs
         guard let index = tabs.firstIndex(where: { $0.id == store.focusedID }), !tabs.isEmpty else { return }
-        store.select(tabs[(index + delta + tabs.count) % tabs.count].id)
+        let next = tabs[(index + delta + tabs.count) % tabs.count].id
+        if store.extensionPopupProfileID == nil { store.select(next) }
+        else { store.selectExtensionPopupTab(next) }
     }
     func stepSpace(_ delta: Int) {
         guard activeQuick == nil, let store = activeStore else { return }
@@ -579,15 +593,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             (store.windowGroup?.presentation(tabID: id, in: store) ?? .owned) == .owned
         }
         if let id = store.focusedID, isLocal(id) { store.close(id) }
-        guard let next = store.space.tabs.first(where: { !$0.pinned && !$0.url.isEmpty && isLocal($0.id) }) else {
+        let visibleTabs = store.extensionPopupProfileID == nil ? store.space.tabs : store.extensionPopupTabs
+        guard let next = visibleTabs.first(where: { !$0.pinned && !$0.url.isEmpty && isLocal($0.id) }) else {
             window.performClose(nil)
             return
         }
-        if store.focusedID.map(isLocal) != true { store.select(next.id) }
+        if store.focusedID.map(isLocal) != true {
+            if store.extensionPopupProfileID == nil { store.select(next.id) }
+            else { store.selectExtensionPopupTab(next.id) }
+        }
     }
     @objc func reopen() { guard activeQuick == nil, let store = activeStore, store.canModifyLocalMetadata, !store.profileUnavailable(store.activeProfileID) else { return }; store.reopenClosed() }
     @objc func reload() { activeWebView?.reload() }
-    @objc func sidebar() { if activeQuick == nil { activeStore?.sidebarVisible.toggle() } }
+    @objc func sidebar() { if activeQuick == nil, let store = activeStore, store.extensionPopupProfileID == nil { store.sidebarVisible.toggle() } }
     @objc func split() { if activeQuick == nil { activeStore?.toggleSplit() } }
     @objc func pin() { if activeQuick == nil, let store = activeStore, store.canModifyLocalMetadata, !store.profileUnavailable(store.activeProfileID), let id = store.focusedID { store.togglePin(id) } }
     @objc func back() { activeWebView?.goBack() }

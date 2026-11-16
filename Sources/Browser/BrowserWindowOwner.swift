@@ -41,7 +41,7 @@ enum BrowserWindowOwnerError: LocalizedError {
         let token = UUID(); primaryLeases.insert(token);resumeArchiveIfReady(); return token
     }
     func acquirePrimaryStore(copying source: BrowserStore? = nil, focus: Bool = true,
-                             claimSelection: Bool = true) throws -> (store: BrowserStore, lease: UUID) {
+                             claimSelection: Bool = true, popupProfileID: UUID? = nil) throws -> (store: BrowserStore, lease: UUID) {
         try requireNormalWindows()
         let group: BrowserWindowGroup
         if let windowGroup { group = windowGroup }
@@ -49,7 +49,8 @@ enum BrowserWindowOwnerError: LocalizedError {
             group = try BrowserWindowGroup(root: store)
             windowGroup = group
         }
-        let member = try group.openPrimary(copying: source, focus: focus, claimSelection: claimSelection)
+        let member = try group.openPrimary(copying: source, focus: focus, claimSelection: claimSelection,
+                                           popupProfileID: popupProfileID)
         let lease = try acquirePrimary()
         groupedPrimaries[lease] = member
         return (member, lease)

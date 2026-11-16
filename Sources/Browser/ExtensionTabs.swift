@@ -3,6 +3,32 @@ import WebKit
 import BrowserCore
 
 extension BrowserStore {
+    var extensionPopupTabs: [BrowserCore.Tab] {
+        guard let profileID = extensionPopupProfileID, let windowGroup else { return [] }
+        return session.spaces.filter { $0.effectiveProfileID == profileID }.flatMap(\.tabs).filter {
+            windowGroup.presentation(tabID: $0.id, in: self) == .owned
+        }
+    }
+
+    func selectExtensionPopupTab(_ id: UUID) {
+        guard extensionPopupTabs.contains(where: { $0.id == id }),
+              let targetSpace = session.spaces.first(where: { $0.tabs.contains { $0.id == id } }) else { return }
+        if targetSpace.id != space.id { selectSpace(targetSpace.id) }
+        select(id)
+    }
+
+    func closeExtensionPopupTabs() throws {
+        let tabs = extensionPopupTabs.filter { !$0.pinned }
+        guard !tabs.isEmpty else { return }
+        var document = makeDocument()
+        for tab in tabs {
+            if let space = document.session.spaces.first(where: { $0.tabs.contains { $0.id == tab.id } }) {
+                document.session.close(tab.id, in: space.id)
+            }
+        }
+        try commitQuickDocument(document, discarding: tabs.map(\.id))
+    }
+
     func restoreSavedExtensionTab(_ id:UUID,url:URL,placeholder:WKWebView,profileID:UUID) {
         guard ensureExtensionHost() != nil else {
             extensionStates[profileID] = .failed(ExtensionHostError.unavailable.localizedDescription)
@@ -93,7 +119,8 @@ extension BrowserStore {
             guard url == nil || ["http","https"].contains(url!.scheme?.lowercased() ?? "") || url?.absoluteString == "about:blank" else {throw QuickBrowseError.invalidAddress}
             configuration = nil
         }
-        let target = activeProfileID == profileID ? space.id : session.spaces.first(where:{$0.effectiveProfileID == profileID})?.id
+        let currentProfileID = isPrivate ? BrowserProfile.defaultID : space.effectiveProfileID
+        let target = currentProfileID == profileID ? space.id : session.spaces.first(where:{$0.effectiveProfileID == profileID})?.id
         guard let target, let spaceIndex = session.spaces.firstIndex(where:{$0.id == target}) else {throw ProfileError.missing}
         var tab = BrowserCore.Tab(title:url?.host ?? "New Tab",url:url?.absoluteString ?? "");tab.pinned = pinned
         if pinned {tab.homeURL = tab.url;tab.pinnedTitle = tab.title}
@@ -116,7 +143,7 @@ extension BrowserStore {
             spaceIndex = document.session.spaces.firstIndex { space in
                 space.effectiveProfileID == profileID && space.tabs.contains { $0.id == first }
             }
-        } else if activeProfileID == profileID {
+        } else if space.effectiveProfileID == profileID {
             spaceIndex = self.spaceIndex
         } else {
             spaceIndex = document.session.spaces.firstIndex { $0.effectiveProfileID == profileID }
@@ -128,7 +155,7 @@ extension BrowserStore {
         document.session.spaces[spaceIndex].selected = tabIDs.first ?? tabs.first?.id
         document.session.activateSpace(document.session.spaces[spaceIndex].id)
         try commitProfileDocument(document)
-        for tabID in tabIDs { group.claimPresentation(tabID: tabID, in: self) }
+        for tabID in tabIDs { group.claimPresentation(tabID: tabID, in: self, allowPopupTransfer: true) }
     }
 }
 

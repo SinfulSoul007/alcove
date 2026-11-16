@@ -35,9 +35,11 @@ extension BrowserStore {
             return .quick(pageID: id, profileID: profile, peekID: peek?.id)
         }
         let profile = activeProfileID, peek = peekPages[.primary]
-        guard !profileUnavailable(profile), peek == nil || (peek?.profileID == profile && peek?.spaceID == space.id) else { return nil }
-        guard peek != nil || focusedID.flatMap({ profileID(for: $0) }) == profile else { return nil }
-        return .primary(spaceID: space.id, profileID: profile, tabID: focusedID, peekID: peek?.id)
+        guard !profileUnavailable(profile), isPrivate || space.effectiveProfileID == profile,
+              peek == nil || (peek?.profileID == profile && peek?.spaceID == space.id) else { return nil }
+        let tab = focusedID
+        if peek == nil, let tab, profileID(for: tab) != profile { return nil }
+        return .primary(spaceID: space.id, profileID: profile, tabID: tab, peekID: peek?.id)
     }
     func matchesSearchInputContext(_ context: SearchInputContext) -> Bool {
         switch context {

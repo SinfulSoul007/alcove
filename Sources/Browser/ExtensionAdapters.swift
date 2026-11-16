@@ -63,7 +63,8 @@ import BrowserCore
             let clients = normalClients + privateClients.values.filter {$0.profileID == profileID}.compactMap(\.current)
             for client in clients {
                 let localProfileID = client.isPrivate ? BrowserProfile.defaultID : profileID
-                for reference in client.extensionWindows.values where reference.window != nil {
+                for reference in client.extensionWindows.values where reference.window != nil &&
+                    (reference.popupProfileID == nil || reference.popupProfileID == profileID) {
                     let windowKey = NativeExtensionWindowKey(storeID:client.extensionStoreID,profileID:profileID,windowID:reference.id)
                     let window = nativeWindows[windowKey] ?? NativeExtensionWindow(host:self,store:client,profileID:profileID,reference:reference)
                     let newWindow = nativeWindows[windowKey] == nil
@@ -77,7 +78,10 @@ import BrowserCore
                     switch reference.kind {
                     case .primary:
                         var seen = Set<UUID>()
-                        for tab in client.session.spaces.filter({$0.effectiveProfileID == localProfileID}).flatMap(\.tabs) + client.favorites(for:localProfileID) where seen.insert(tab.id).inserted {
+                        let tabs = reference.popupProfileID == nil
+                            ? client.session.spaces.filter({ $0.effectiveProfileID == localProfileID }).flatMap(\.tabs) + client.favorites(for: localProfileID)
+                            : client.extensionPopupTabs
+                        for tab in tabs where seen.insert(tab.id).inserted {
                             if let group = client.windowGroup, group.extensionPresenter(for: tab.id) !== client { continue }
                             append(tab.id,false,client.views[tab.id],tab.title,tab.url,tab.pinned)
                         }
@@ -152,7 +156,8 @@ import BrowserCore
         guard !configuration.shouldBePrivate, !hasApprovedPrivateClient(context, profileID: id) else {
             completionHandler(nil, ExtensionHostError.native("Open a normal window directly when private browsing is involved.")); return
         }
-        guard configuration.windowType == .normal, let app = NSApp.delegate as? AppDelegate,
+        guard configuration.windowType == .normal || configuration.windowType == .popup,
+              let app = NSApp.delegate as? AppDelegate,
               configuration.tabURLs.allSatisfy({ permitsNavigation($0, context: context, profileID: id) }) else {
             completionHandler(nil, ExtensionHostError.native("The requested window type or URL is unavailable.")); return
         }

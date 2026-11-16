@@ -72,14 +72,17 @@ final class BrowserWindowGroup {
         return identity
     }
 
-    func openPrimary(copying source: BrowserStore?, focus: Bool = true, claimSelection: Bool = true) throws -> BrowserStore {
+    func openPrimary(copying source: BrowserStore?, focus: Bool = true, claimSelection: Bool = true,
+                     popupProfileID: UUID? = nil) throws -> BrowserStore {
         guard let root, !root.isShuttingDown else { throw BrowserWindowOwnerError.closed }
         if let source, !isMember(source) { throw BrowserWindowOwnerError.closed }
         let selection = try workspace.openWindow(copying: source?.windowGroupID ?? workspace.focusedWindowID,
-                                                  focus: focus, claimSelection: claimSelection)
-        let store = attachPrimary(selection.id, root: root)
+                                                  focus: focus, claimSelection: claimSelection, popupProfileID: popupProfileID)
+        let store = attachPrimary(selection.id, root: root, popupProfileID: popupProfileID)
         publishWorkspace(workspace)
-        if claimSelection, let tab = store.selectedID { claimPresentation(tabID: tab, in: store) }
+        if claimSelection, let tab = store.selectedID, workspace.assignedWindow(for: tab) == selection.id {
+            claimPresentation(tabID: tab, in: store)
+        }
         root.save()
         return store
     }
@@ -97,16 +100,18 @@ final class BrowserWindowGroup {
         return restored
     }
 
-    private func attachPrimary(_ id: UUID, root: BrowserStore, restoring record: BrowserWindowRestoreRecord? = nil) -> BrowserStore {
+    private func attachPrimary(_ id: UUID, root: BrowserStore, restoring record: BrowserWindowRestoreRecord? = nil,
+                               popupProfileID: UUID? = nil) -> BrowserStore {
         let store: BrowserStore
-        if root.windowGroupID == nil { store = root }
+        if root.windowGroupID == nil && popupProfileID == nil { store = root }
         else {
             store = BrowserStore(dataRoot: root.sessionURL.deletingLastPathComponent(),
                                  metadataKeyAccess: root.metadataKeyAccess, windowGroup: self)
         }
         store.windowGroupID = id
+        store.extensionPopupProfileID = popupProfileID
         store.windowSidebarWidth = record?.sidebarWidth
-        store.sidebarVisible = record?.sidebarVisible ?? true
+        store.sidebarVisible = record?.sidebarVisible ?? (popupProfileID == nil)
         members[id] = Member(store: store)
         if store !== root {
             broadcasting = true
@@ -150,29 +155,39 @@ final class BrowserWindowGroup {
             guard let id = live.windowGroupID else { return .pooled }
             presenter = id
         } else { presenter = workspace.assignedWindow(for: tabID) }
+        if let scope = store.extensionPopupProfileID, scope != profile || presenter != id { return .unavailable }
         if let presenter, presenter != id { return .elsewhere(windowID: presenter) }
         return .owned
     }
 
     @discardableResult
-    func claimPresentation(tabID: UUID, in store: BrowserStore) -> Bool {
+    func claimPresentation(tabID: UUID, in store: BrowserStore, allowPopupTransfer: Bool = false) -> Bool {
         guard let id = store.windowGroupID, isMember(store),
-              let profile = spaceProfile(forTab: tabID), !store.profileUnavailable(profile) else { return false }
+              let profile = spaceProfile(forTab: tabID), !store.profileUnavailable(profile),
+              store.extensionPopupProfileID == nil || store.extensionPopupProfileID == profile else { return false }
         let live = liveStore(forTab: tabID)
         let previousID = live?.windowGroupID ?? workspace.assignedWindow(for: tabID)
+        guard store.extensionPopupProfileID == nil || previousID == id || allowPopupTransfer else { return false }
         if let previous = live, previous !== store {
             guard previous.moveView(tabID, profile: profile, to: store) else { return false }
         }
         let claimed = workspace.claim(tabID, for: id)
         if claimed && (previousID != id || live == nil) {
             for member in stores { member.revision += 1 }
-            if previousID != id { root?.save() }
+            if previousID != id {
+                if store.extensionPopupProfileID != nil ||
+                   previousID.flatMap({ members[$0]?.store?.extensionPopupProfileID }) != nil {
+                    publishWorkspace(workspace)
+                }
+                root?.save()
+            }
         }
         return claimed
     }
 
     func canClaimPresentation(tabID: UUID, in store: BrowserStore) -> Bool {
-        guard containsPrimary(store), let profile = spaceProfile(forTab: tabID), !store.profileUnavailable(profile) else { return false }
+        guard containsPrimary(store), let profile = spaceProfile(forTab: tabID), !store.profileUnavailable(profile),
+              store.extensionPopupProfileID == nil || store.extensionPopupProfileID == profile else { return false }
         guard let live = liveStore(forTab: tabID), live !== store else { return true }
         return live.canMoveView(tabID, profile: profile, to: store)
     }
@@ -208,7 +223,7 @@ final class BrowserWindowGroup {
     }
 
     private func handOffPages(from closing: BrowserStore) {
-        let survivors = workspace.windows.compactMap { members[$0.id]?.store }
+        let survivors = workspace.windows.compactMap { members[$0.id]?.store }.filter { $0.extensionPopupProfileID == nil }
         for tabID in Array(closing.views.keys) {
             guard let profile = spaceProfile(forTab: tabID), !closing.profileUnavailable(profile) else { continue }
             let destination = survivors.first { $0.selectedID == tabID || $0.splitID == tabID }
@@ -224,7 +239,7 @@ final class BrowserWindowGroup {
     func focusPrimary(_ store: BrowserStore) -> Bool {
         guard let id = store.windowGroupID, members[id]?.store === store else { return false }
         if workspace.focusedWindowID != id {
-            workspace.focusWindow(id)
+            guard workspace.focusWindow(id) else { return false }
             publishWorkspace(workspace)
             root?.save()
         }
@@ -252,14 +267,16 @@ final class BrowserWindowGroup {
     func restoreState() -> BrowserWindowRestoreState? { restoreState(for: workspace) }
 
     private func restoreState(for workspace: BrowserWindowWorkspace) -> BrowserWindowRestoreState? {
-        guard !workspace.windows.isEmpty else { return nil }
-        let records = workspace.windows.map { selection in
+        let saved = workspace.windows.filter { members[$0.id]?.store?.extensionPopupProfileID == nil }
+        guard !saved.isEmpty else { return nil }
+        let records = saved.map { selection in
             let store = members[selection.id]?.store
             return BrowserWindowRestoreRecord(selection: selection, frame: frames[selection.id],
                                               sidebarWidth: store?.windowSidebarWidth, sidebarVisible: store?.sidebarVisible)
         }
+        let savedIDs = Set(saved.map(\.id))
         return BrowserWindowRestoreState(records: records, focusedWindowID: workspace.focusedWindowID,
-                                         assignments: workspace.assignments)
+                                         assignments: workspace.assignments.filter { savedIDs.contains($0.value) })
     }
 
     func sessionDidChange(from source: BrowserStore) {
@@ -376,6 +393,11 @@ final class BrowserWindowGroup {
         let recipients = stores
         broadcasting = true
         for store in recipients {
+            if store.extensionPopupProfileID != nil, let splitID = store.splitID,
+               presentation(tabID: splitID, in: store) != .owned {
+                store.splitID = nil
+                store.activePaneID = nil
+            }
             let selectedSession = projectedSession(for: store)
             if let document { store.installDocumentFields(document, projecting: selectedSession) }
             else if store.session != selectedSession { store.session = selectedSession }

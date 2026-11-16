@@ -191,7 +191,7 @@ extension BrowserStore {
         if ProfileDataOperations.shared.activeIDs.contains(id) { return true }
         return !persistedProfileIDs.contains(id) || !profiles.contains(where: { $0.id == id && !$0.isPendingDeletion && !$0.isPendingClear })
     }
-    var activeProfileID: UUID { isPrivate ? BrowserProfile.defaultID : space.effectiveProfileID }
+    var activeProfileID: UUID { isPrivate ? BrowserProfile.defaultID : (extensionPopupProfileID ?? space.effectiveProfileID) }
     var activeProfile: BrowserProfile { profiles.first(where: { $0.id == activeProfileID }) ?? .defaultProfile }
     var profileDataOperationInProgress: Bool { clearingData || deletingProfileID != nil || (!isPrivate && !ProfileDataOperations.shared.activeIDs.isEmpty) }
     func profileID(for tabID: UUID) -> UUID? {

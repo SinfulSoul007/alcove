@@ -5,10 +5,11 @@ import BrowserCore
 enum ExtensionWindowKind:Hashable {case primary,quick(UUID)}
 @MainActor final class ExtensionBrowserWindow {
     let id = UUID(),kind:ExtensionWindowKind
+    let popupProfileID: UUID?
     weak var window:NSWindow?
     private var focusObservers:[NSObjectProtocol] = []
-    init(_ window:NSWindow,kind:ExtensionWindowKind,changed:@escaping @MainActor ()->Void) {
-        self.window = window;self.kind = kind
+    init(_ window:NSWindow,kind:ExtensionWindowKind,popupProfileID:UUID? = nil,changed:@escaping @MainActor ()->Void) {
+        self.window = window;self.kind = kind;self.popupProfileID = popupProfileID
         for name in [NSWindow.didBecomeKeyNotification,NSWindow.didResignKeyNotification] {
             focusObservers.append(NotificationCenter.default.addObserver(forName:name,object:window,queue:.main){_ in MainActor.assumeIsolated{changed()}})
         }
@@ -17,7 +18,9 @@ enum ExtensionWindowKind:Hashable {case primary,quick(UUID)}
 }
 extension BrowserStore {
     func registerExtensionWindow(_ window:NSWindow,kind:ExtensionWindowKind) {
-        if extensionWindows[kind]?.window !== window {extensionWindows[kind] = ExtensionBrowserWindow(window,kind:kind){ [weak self] in self?.extensionBrowserStateChanged() }}
+        if extensionWindows[kind]?.window !== window {
+            extensionWindows[kind] = ExtensionBrowserWindow(window, kind: kind, popupProfileID: kind == .primary ? extensionPopupProfileID : nil) { [weak self] in self?.extensionBrowserStateChanged() }
+        }
         ensureExtensionHost()?.refresh()
     }
     func unregisterExtensionWindow(kind:ExtensionWindowKind) {
@@ -41,6 +44,7 @@ struct NativeExtensionWindowKey:Hashable {let storeID:UUID,profileID:UUID,window
     }
     func live(_ context:WKWebExtensionContext) -> (BrowserStore,NSWindow)? {
         guard let store, let window = reference.window, store.extensionWindows[reference.kind] === reference,
+              reference.popupProfileID == nil || reference.popupProfileID == key.profileID,
               host?.authorized(context,profileID:key.profileID,client:store) == true else {return nil}
         return (store,window)
     }
@@ -58,7 +62,11 @@ struct NativeExtensionWindowKey:Hashable {let storeID:UUID,profileID:UUID,window
     }
     // WebKit caches this classification before permission filtering and for the window's lifetime.
     func isPrivate(for context:WKWebExtensionContext) -> Bool {privateWindow}
-    func windowType(for context:WKWebExtensionContext) -> WKWebExtension.WindowType {if case .quick = reference.kind {return .popup};return .normal}
+    func windowType(for context:WKWebExtensionContext) -> WKWebExtension.WindowType {
+        if reference.popupProfileID != nil { return .popup }
+        if case .quick = reference.kind { return .popup }
+        return .normal
+    }
     func windowState(for context:WKWebExtensionContext) -> WKWebExtension.WindowState {
         guard let (_,window) = live(context) else {return .normal}
         if window.isMiniaturized {return .minimized};if window.styleMask.contains(.fullScreen) {return .fullscreen}
@@ -95,7 +103,7 @@ struct NativeExtensionWindowKey:Hashable {let storeID:UUID,profileID:UUID,window
     }
     func close(for context:WKWebExtensionContext,completionHandler:@escaping(Error?)->Void) {
         guard let (store,window) = live(context) else {completionHandler(ExtensionHostError.stale);return}
-        if reference.kind == .primary,!store.isPrivate {
+        if reference.kind == .primary, reference.popupProfileID == nil, !store.isPrivate {
             let otherSpaces = store.session.spaces.contains{$0.effectiveProfileID != key.profileID}
             let otherPages = store.views.keys.contains{store.quickProfileID($0) == nil && store.viewProfileIDs[$0] != key.profileID}
             guard !otherSpaces && !otherPages else {

@@ -111,49 +111,52 @@ struct BrowserUI: View {
     }
     private var browserBody: some View {
         GeometryReader { geometry in
+            let compact = store.extensionPopupProfileID != nil
             let width = SidebarSizing.width(saved: resize.temporaryWidth ?? sidebarWidth, windowWidth: geometry.size.width)
             let managerShown = store.presentedPanel == .spaces
             let managerWidth = max(0,min(geometry.size.width - 16,min(900,max(520,geometry.size.width * 0.62))))
             let shown = store.sidebarVisible || reveal.revealed
-            let floatingAllowed = !store.sidebarVisible && !sidebarInteractionBlocked
+            let floatingAllowed = !compact && !store.sidebarVisible && !sidebarInteractionBlocked
             ZStack(alignment: .leading) {
                 // Keep web content and sidebar mounted; transitions change layout, not view ownership.
-                content.padding(8).padding(.leading, managerShown ? managerWidth : (store.sidebarVisible ? width : 0))
+                content.padding(8).padding(.leading, managerShown ? managerWidth : (!compact && store.sidebarVisible ? width : 0))
                     .animation(resize.temporaryWidth == nil ? motion : nil, value: store.sidebarVisible)
                     .animation(motion,value:managerShown)
-                HStack(spacing: 7) {
-                    Color.clear.frame(width: max(0, chrome.leadingEdge - 17)).allowsHitTesting(false)
-                    mini("sidebar.left", "Show Sidebar") { store.sidebarVisible = true }
-                    Spacer(minLength: 0)
-                }.padding(.horizontal, 10).frame(height: store.sidebarVisible ? 0 : chrome.height).clipped()
-                    .background(NativeChromeReader(chrome: chrome))
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .opacity(store.sidebarVisible ? 0 : 1)
-                    .allowsHitTesting(!store.sidebarVisible).accessibilityHidden(store.sidebarVisible)
-                sidebar(width: width, windowHeight: geometry.size.height).frame(width: width)
-                    .background(theme.gradient)
-                    .background(SidebarTracking(controller: reveal, region: .panel, enabled: floatingAllowed && shown))
-                    .clipShape(RoundedRectangle(cornerRadius: store.sidebarVisible ? 0 : appearance.cornerRadius + 4))
-                    .shadow(color: .black.opacity(!store.sidebarVisible && shown ? 0.25 : 0), radius: 20, x: 8, y: 0)
-                    .overlay(alignment: .trailing) {
-                        SidebarResizeHandle(interactionEnabled: !sidebarInteractionBlocked && shown, width: width,
-                                            canInteract: { !sidebarInteractionBlocked && (store.sidebarVisible || reveal.revealed) }, onBegin: {
-                            reveal.beginResize()
-                            resize.begin(at: SidebarSizing.width(saved: sidebarWidth, windowWidth: geometry.size.width))
-                        }, onDrag: { resize.drag(by: $0, windowWidth: geometry.size.width) }, onEnd: {
-                            if let value = resize.finish() { setSidebarWidth(value) }
-                            reveal.endResize()
-                        }, onCancel: {
-                            resize.cancel(); reveal.endResize()
-                        }, onReset: resetSidebarWidth, onSetWidth: { value in
-                            resize.cancel(); setSidebarWidth(value); reveal.endResize()
-                        }, onFocusChange: { reveal.setKeyboardFocus($0) }).frame(width: 6)
-                    }
-                    .offset(x: shown ? 0 : -width - 16)
-                    .opacity(shown ? 1 : 0)
-                    .allowsHitTesting(shown).accessibilityHidden(!shown)
-                    .animation(motion, value: shown)
-                SidebarTracking(controller: reveal, region: .edge, enabled: floatingAllowed).frame(width: 8)
+                if !compact {
+                    HStack(spacing: 7) {
+                        Color.clear.frame(width: max(0, chrome.leadingEdge - 17)).allowsHitTesting(false)
+                        mini("sidebar.left", "Show Sidebar") { store.sidebarVisible = true }
+                        Spacer(minLength: 0)
+                    }.padding(.horizontal, 10).frame(height: store.sidebarVisible ? 0 : chrome.height).clipped()
+                        .background(NativeChromeReader(chrome: chrome))
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .opacity(store.sidebarVisible ? 0 : 1)
+                        .allowsHitTesting(!store.sidebarVisible).accessibilityHidden(store.sidebarVisible)
+                    sidebar(width: width, windowHeight: geometry.size.height).frame(width: width)
+                        .background(theme.gradient)
+                        .background(SidebarTracking(controller: reveal, region: .panel, enabled: floatingAllowed && shown))
+                        .clipShape(RoundedRectangle(cornerRadius: store.sidebarVisible ? 0 : appearance.cornerRadius + 4))
+                        .shadow(color: .black.opacity(!store.sidebarVisible && shown ? 0.25 : 0), radius: 20, x: 8, y: 0)
+                        .overlay(alignment: .trailing) {
+                            SidebarResizeHandle(interactionEnabled: !sidebarInteractionBlocked && shown, width: width,
+                                                canInteract: { !sidebarInteractionBlocked && (store.sidebarVisible || reveal.revealed) }, onBegin: {
+                                reveal.beginResize()
+                                resize.begin(at: SidebarSizing.width(saved: sidebarWidth, windowWidth: geometry.size.width))
+                            }, onDrag: { resize.drag(by: $0, windowWidth: geometry.size.width) }, onEnd: {
+                                if let value = resize.finish() { setSidebarWidth(value) }
+                                reveal.endResize()
+                            }, onCancel: {
+                                resize.cancel(); reveal.endResize()
+                            }, onReset: resetSidebarWidth, onSetWidth: { value in
+                                resize.cancel(); setSidebarWidth(value); reveal.endResize()
+                            }, onFocusChange: { reveal.setKeyboardFocus($0) }).frame(width: 6)
+                        }
+                        .offset(x: shown ? 0 : -width - 16)
+                        .opacity(shown ? 1 : 0)
+                        .allowsHitTesting(shown).accessibilityHidden(!shown)
+                        .animation(motion, value: shown)
+                    SidebarTracking(controller: reveal, region: .edge, enabled: floatingAllowed).frame(width: 8)
+                }
                 if store.primaryPeekView != nil {
                     Color.black.opacity(0.35).ignoresSafeArea().onTapGesture { store.closePrimaryPeek() }
                     PeekPanel(store: store).frame(width: min(1000, geometry.size.width - 96), height: geometry.size.height - 96).frame(maxWidth: .infinity, maxHeight: .infinity).transition(.opacity.combined(with: .scale(scale: reduceMotion ? 1 : 0.98)))
@@ -181,7 +184,7 @@ struct BrowserUI: View {
             .animation(motion, value: store.primaryPeekView != nil)
             .onAppear { reveal.setEnabled(floatingAllowed) }
             .onChange(of: store.windowGroupID, initial: true) { _, windowID in
-                if windowID != nil, store.windowSidebarWidth == nil { store.windowSidebarWidth = initialSidebarWidth }
+                if !compact, windowID != nil, store.windowSidebarWidth == nil { store.windowSidebarWidth = initialSidebarWidth }
             }
             .onChange(of: floatingAllowed) { _, value in reveal.setEnabled(value) }
             .onChange(of: store.sidebarVisible) { _, _ in resize.cancel(); reveal.endResize() }
@@ -228,7 +231,8 @@ struct BrowserUI: View {
     }
     private var content: some View {
         VStack(spacing: 0) {
-            Color.clear.frame(height: store.sidebarVisible ? 0 : max(0, chrome.height - 8)).accessibilityHidden(true)
+            if store.extensionPopupProfileID != nil { popupControls }
+            else { Color.clear.frame(height: store.sidebarVisible ? 0 : max(0, chrome.height - 8)).accessibilityHidden(true) }
             if !store.savingEnabled && !store.isPrivate {
                 HStack { Text("Local saving is paused. Your existing data is preserved."); Spacer(); Button(store.unlocking ? "Unlocking…" : "Unlock") { store.unlockLocalData() }.disabled(store.unlocking) }.font(.system(size: 11)).padding(9).background(Color.orange.opacity(0.18))
             }
@@ -238,6 +242,27 @@ struct BrowserUI: View {
             HSplitView { pane(store.selectedID); if let split = store.splitID { pane(split) } }
         }.background(theme.isDark ? Color(red: 0.095, green: 0.09, blue: 0.12) : .white)
             .clipShape(RoundedRectangle(cornerRadius: appearance.cornerRadius))
+    }
+    private var popupControls: some View {
+        let address = store.currentView?.url?.absoluteString ?? store.selectedTab?.url ?? ""
+        let tabs = store.extensionPopupTabs
+        return HStack(spacing: 8) {
+            Color.clear.frame(width: max(0, chrome.leadingEdge - 14)).allowsHitTesting(false)
+            Button { store.showCommand() } label: {
+                Text(address.isEmpty ? "Search or Enter URL" : address)
+                    .font(.system(size: 12 * appearance.textScale)).lineLimit(1).truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }.buttonStyle(.plain).accessibilityLabel("Website Address").accessibilityValue(address)
+            if tabs.count > 1 || (!tabs.isEmpty && store.focusedID == nil) {
+                Menu {
+                    ForEach(tabs) { tab in
+                        Button(tab.title) { store.selectExtensionPopupTab(tab.id) }
+                    }
+                } label: { Label("Tabs", systemImage: "square.on.square").labelStyle(.iconOnly) }
+                    .fixedSize().accessibilityLabel("Switch Tabs")
+            }
+        }.padding(.horizontal, 8).frame(height: max(34, chrome.height))
+            .background(theme.gradient).background(NativeChromeReader(chrome: chrome))
     }
     private func sidebar(width: Double, windowHeight: Double) -> some View {
         let columns = appearance.columns(for: width)

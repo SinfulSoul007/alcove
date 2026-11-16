@@ -119,7 +119,8 @@ extension BrowserStore {
         do {try bookmarkWebsite(web)} catch {message = error.localizedDescription}
     }
     func reopenClosed() {
-        guard var tab = library.closedTabs.first else { return }
+        guard extensionPopupProfileID == nil || space.effectiveProfileID == extensionPopupProfileID,
+              var tab = library.closedTabs.first else { return }
         library.closedTabs.removeFirst(); tab.id = UUID(); tab.lastAccessed = Date()
         session.spaces[spaceIndex].tabs.append(tab); select(tab.id)
     }
