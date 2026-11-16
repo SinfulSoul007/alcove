@@ -39,6 +39,7 @@ struct SidebarSavedTabs: View {
 
     var body: some View {
         let spaceID = store.space.id
+        let empty = layout.topLevelTabs.isEmpty && layout.folders.isEmpty
         VStack(spacing: 0) {
             HStack {
                 Text("Pinned").font(.system(size: 11, weight: .semibold)).opacity(0.5)
@@ -66,13 +67,17 @@ struct SidebarSavedTabs: View {
                             }
                         }
                     }
-                    if layout.topLevelTabs.isEmpty && layout.folders.isEmpty {
+                    if empty {
                         Text("Drag tabs here to keep them").font(.system(size: 11))
-                            .foregroundStyle(theme.ink.opacity(0.35)).padding(.horizontal, 10).frame(height: 32)
+                            .foregroundStyle(theme.ink.opacity(0.35)).padding(.horizontal, 10)
+                            .frame(maxWidth: .infinity, alignment: .leading).frame(height: height)
+                    } else {
+                        Color.clear.frame(height: 8).contentShape(Rectangle())
                     }
-                    Color.clear.frame(height: 8).contentShape(Rectangle())
                 }.padding(.horizontal, 8)
-            }.frame(height: height).accessibilityLabel("Pinned tabs")
+            }.frame(height: height).scrollDisabled(empty)
+                .scrollIndicators(empty ? .hidden : .automatic)
+                .accessibilityLabel("Pinned tabs")
                 .onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .pinned))
         }
     }

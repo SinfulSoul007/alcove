@@ -164,9 +164,12 @@ import BrowserCore
             let footer = NSPoint(x: frame.midX, y: frame.minY - 16)
             let page = NSPoint(x: frame.maxX + 90, y: frame.midY)
             func send(_ phase: CGScrollPhase, x: Int32 = 0, y: Int32 = 0,
-                      at point: NSPoint, units: CGScrollEventUnit = .pixel) -> Bool {
+                      at point: NSPoint, units: CGScrollEventUnit = .pixel,
+                      flags: CGEventFlags = []) -> Bool {
                 guard let cgEvent = CGEvent(scrollWheelEvent2Source: nil, units: units, wheelCount: 2,
                                             wheel1: y, wheel2: x, wheel3: 0) else { return false }
+                // Avoid inheriting modifier flags from unrelated keyboard activity in the VM.
+                cgEvent.flags = flags
                 cgEvent.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
                 let expected: NSEvent.Phase
                 switch phase {
@@ -196,6 +199,9 @@ import BrowserCore
             check(!send(.began, x: -24, at: shelf, units: .line) &&
                   !send(.changed, x: -100, at: shelf, units: .line) && store.space.id == first,
                   "Coarse wheel events leave Space navigation untouched")
+            check(!send(.began, x: -83, at: shelf, flags: .maskShift) &&
+                  !send(.ended, at: shelf) && store.space.id == first,
+                  "Using a modifier during a scroll gesture leaves Space navigation untouched")
             check(send(.began, x: -20, at: shelf) && send(.changed, x: -88, at: shelf) &&
                   store.space.id == first, "A mounted horizontal gesture tracks without switching before release")
             check(send(.ended, at: shelf) && store.space.id == second && store.selectedID == originalTab,
@@ -311,6 +317,16 @@ import BrowserCore
             hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output).appendingPathComponent("four-pane.png"))
         }
+        _ = try store.createSpace(name: "Empty Pinned fixture")
+        window.setContentSize(NSSize(width: 800, height: 540))
+        await settle()
+        hosting.layoutSubtreeIfNeeded()
+        let emptyShelfOverflow = descendants(hosting, NSScrollView.self).contains { scroll in
+            let frame = scroll.convert(scroll.bounds, to: hosting)
+            return frame.maxX < 245 && frame.height >= 25 && frame.height <= 40 &&
+                (scroll.documentView?.bounds.height ?? 0) > scroll.contentView.bounds.height + 1
+        }
+        check(!emptyShelfOverflow, "An empty pinned shelf has no overflowing scroll view")
         print("Sidebar organization layout checks: \(failures) failures");exit(failures == 0 ? 0 : 1)
     }
 }
