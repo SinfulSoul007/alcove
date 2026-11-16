@@ -14,6 +14,11 @@ jobs:
     env:
       WEBKIT_REVISION: 26695efdefc6076049ec50713a2c4e54b90b4d47
     steps:
+      - name: Check out the owned loopback fixture
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
       - name: Verify the Apple toolchain
         shell: bash
         run: |
@@ -46,9 +51,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The default scheme also builds developer tools that the engine probe does not use.
-          # Keep progress and compiler diagnostics visible on the long standard-runner build.
-          Tools/Scripts/build-webkit --release --only='Everything up to WebKit' 2>&1 |
+          # This development build is for API probes. Keep the upstream source
+          # and feature configuration while reducing compiler work on hosted runners.
+          Tools/Scripts/set-webkit-configuration --release --force-optimization-level=O1 --lto-mode=none
+          Tools/Scripts/build-webkit --release --lto-mode=none --only='Everything up to WebKit' 2>&1 |
             awk 'NR <= 80 || NR % 4000 == 0 || / (fatal error|error|warning):|BUILD (SUCCEEDED|FAILED)|No space left/ {
               print substr($0, 1, 700)
               fflush()
@@ -58,3 +64,30 @@ jobs:
           file "$framework"
           xcrun lipo -archs "$framework"
           df -h "$RUNNER_TEMP"
+
+      - name: Verify the built framework serves the loopback extension probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          product="$RUNNER_TEMP/WebKit/WebKitBuild/Release"
+          scratch=$(mktemp -d "$RUNNER_TEMP/alcove-webkit-probe.XXXXXX")
+          server=''
+          cleanup() {
+            if [[ -n "$server" ]]; then kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true; fi
+            rm -rf "$scratch"
+          }
+          trap cleanup EXIT
+          xcrun swiftc -parse-as-library diagnostics/webkit-extension-probe.swift -o "$scratch/probe"
+          python3 diagnostics/webkit-probe-server.py "$scratch/port" > "$scratch/requests.log" 2>&1 &
+          server=$!
+          for attempt in {1..100}; do
+            [[ ! -s "$scratch/port" ]] || break
+            kill -0 "$server"
+            sleep 0.1
+          done
+          test -s "$scratch/port"
+          status=0
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" || status=$?
+          cat "$scratch/requests.log"
+          exit "$status"
