@@ -18,11 +18,7 @@ extension BrowserStore {
     func canManageSpace(_ id:UUID) -> Bool { (try? requireManagedSpace(id)) != nil }
     private func commitSpaceDocument(_ candidate:BrowserDocument,discarding ids:[UUID] = [],resetting spaceID:UUID? = nil,beforePublish:(() -> Void)? = nil) throws {
         if isPrivate {
-            let reset = spaceID == space.id || ids.contains(where: visiblePaneIDs.contains)
-            try commitQuickDocument(candidate,discarding:ids,beforePublish:{
-                beforePublish?()
-                if reset { self.clearSplit() }
-            })
+            try commitQuickDocument(candidate, discarding: ids, beforePublish: beforePublish)
         } else { try commitProfileDocument(candidate,discarding:ids,resetting:spaceID,beforePublish:beforePublish) }
     }
     @discardableResult func createSpace(name:String,profileID:UUID? = nil) throws -> UUID {
@@ -32,7 +28,7 @@ extension BrowserStore {
         let position = min(spaceIndex + 1,candidate.session.spaces.count)
         var created = Space(name:try SpaceSymbol.cleanedName(name)); created.profileID = owner; created.icon = SpaceSymbol.defaultName(at:position)
         candidate.session.spaces.insert(created,at:position); candidate.session.activateSpace(created.id)
-        try commitSpaceDocument(candidate,beforePublish:{ self.closePrimaryPeek(); self.clearSplit() })
+        try commitSpaceDocument(candidate,beforePublish:{ self.closePrimaryPeek() })
         return created.id
     }
     func renameSpace(_ id:UUID,name:String) throws {
@@ -99,7 +95,7 @@ extension BrowserStore {
         candidate.session.spaces.insert(restored,at:max(0,min(record.originalIndex,candidate.session.spaces.count)))
         candidate.session.activateSpace(restored.id)
         records.deletedSpaces?.remove(at:index); candidate.setLibrary(records,for:profileID)
-        try commitSpaceDocument(candidate,beforePublish:{ self.closePrimaryPeek(); self.clearSplit() })
+        try commitSpaceDocument(candidate,beforePublish:{ self.closePrimaryPeek() })
         if lastSpaceDeletion == DeletedSpaceReference(profileID:profileID,recordID:recordID) { lastSpaceDeletion = nil }
         message = "\(restored.name) restored. Saved pages reopen with their original profile."
         if collision || record.routingCollisionHandled == true { message! += " Conflicting link destinations remain unavailable. Choose the intended Space in Link Routing Settings." }

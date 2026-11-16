@@ -33,23 +33,32 @@ public struct BrowserWindowRestoreRecord: Codable, Equatable {
     public let frame: BrowserWindowFrame?
     public let sidebarWidth: Double?
     public let sidebarVisible: Bool?
+    public let splitGroups: [BrowserSplitLayout]?
 
     public init(selection: BrowserWindowSelection, frame: BrowserWindowFrame? = nil,
-                sidebarWidth: Double? = nil, sidebarVisible: Bool? = nil) {
+                sidebarWidth: Double? = nil, sidebarVisible: Bool? = nil, splitGroups: [BrowserSplitLayout]? = nil) {
         self.selection = selection
         self.frame = frame
         self.sidebarWidth = SidebarSizing.validSavedWidth(sidebarWidth)
         self.sidebarVisible = sidebarVisible
+        self.splitGroups = splitGroups.flatMap { $0.isEmpty ? nil : $0 }
     }
 
-    private enum CodingKeys: String, CodingKey { case selection, frame, sidebarWidth, sidebarVisible }
+    private enum CodingKeys: String, CodingKey { case selection, frame, sidebarWidth, sidebarVisible, splitGroups }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        var groups: [BrowserSplitLayout] = []
+        if var entries = try? values.nestedUnkeyedContainer(forKey: .splitGroups) {
+            while !entries.isAtEnd {
+                let entry = try entries.superDecoder()
+                if let group = try? BrowserSplitLayout(from: entry) { groups.append(group) }
+            }
+        }
         self.init(selection: try values.decode(BrowserWindowSelection.self, forKey: .selection),
                   frame: try values.decodeIfPresent(BrowserWindowFrame.self, forKey: .frame),
                   sidebarWidth: try? values.decodeIfPresent(Double.self, forKey: .sidebarWidth),
-                  sidebarVisible: try? values.decodeIfPresent(Bool.self, forKey: .sidebarVisible))
+                  sidebarVisible: try? values.decodeIfPresent(Bool.self, forKey: .sidebarVisible), splitGroups: groups)
     }
 }
 
@@ -97,8 +106,12 @@ public struct BrowserWindowRestoreState: Codable, Equatable {
         let records = model.windows.map { selection in
             let original = uniqueRecords[selection.id]
             let frame = original?.frame.flatMap { $0.isValid ? $0 : nil }
+            let groups = BrowserSplitLayout.repairedGroups(original?.splitGroups ?? [], in: model.session.spaces) {
+                model.assignedWindow(for: $0) == selection.id
+            }
             return BrowserWindowRestoreRecord(selection: selection, frame: frame,
-                                              sidebarWidth: original?.sidebarWidth, sidebarVisible: original?.sidebarVisible)
+                                              sidebarWidth: original?.sidebarWidth, sidebarVisible: original?.sidebarVisible,
+                                              splitGroups: groups)
         }
         return Self(records: records, focusedWindowID: model.focusedWindowID, assignments: model.assignments)
     }

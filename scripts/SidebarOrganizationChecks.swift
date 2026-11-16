@@ -193,6 +193,36 @@ import BrowserCore
             check(window.closeRequests == 0 && store.visiblePaneIDs == Array(tabs.prefix(2)),
                   "Cmd-W preserves the split window when two pinned panes are still open")
         }
+        inWindow { store, _, delegate in
+            let anchor = store.newTab(url: URL(string: "about:blank#command-anchor"))
+            let pane = store.newTab(url: URL(string: "about:blank#command-pane"))
+            store.select(anchor); store.openInSplit(pane)
+            store.showCommand()
+            let wasEditing = store.commandVisible && store.focusedID == pane
+            delegate.closeTab()
+            check(wasEditing && store.focusedID == anchor && !store.commandVisible,
+                  "Closing a focused pane dismisses its command instead of retargeting the remaining page")
+        }
+        inWindow { store, _, _ in
+            let original = store.space.id
+            let tabs = (0..<5).map { store.newTab(url: URL(string: "about:blank#remembered-split-\($0)")) }
+            store.select(tabs[0]); store.openInSplit(tabs[1], at: .bottom)
+            store.select(tabs[2]); store.openInSplit(tabs[3]); store.select(tabs[4]); store.select(tabs[1])
+            check(store.visiblePaneIDs == [tabs[0], tabs[1]] && store.focusedID == tabs[1] && store.splitLayout?.axis == .rows,
+                  "Selecting a dormant split member restores its group and orientation")
+            store.select(tabs[2])
+            let otherSpace = try! store.createSpace(name: "Offscreen work")
+            store.selectSpace(original)
+            check(store.space.id != otherSpace && store.visiblePaneIDs == [tabs[2], tabs[3]] && store.focusedID == tabs[2],
+                  "Returning from another Space restores the selected split group")
+            store.select(tabs[4]); try! store.activateExtensionTab(tabs[3], profileID: BrowserProfile.defaultID)
+            check(store.visiblePaneIDs == [tabs[2], tabs[3]] && store.focusedID == tabs[3],
+                  "Extension activation focuses its requested tab when reopening a dormant split")
+            store.openInSplit(tabs[0])
+            store.select(tabs[1])
+            check(store.visiblePaneIDs == [tabs[1]] && store.splitGroup(containing: tabs[0])?.tabIDs == [tabs[2], tabs[3], tabs[0]],
+                  "Adding a tab from a dormant group dissolves the previous single-pane remnant")
+        }
         inWindow { store, _, _ in
             let destination = Space(name: "Another Space")
             store.session.spaces.append(destination)

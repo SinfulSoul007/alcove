@@ -16,7 +16,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var metadataWriter: BrowserStore { windowGroup?.root ?? self }
     @Published var session = Session() {
         didSet {
-            reconcileSplitLayout()
+            reconcileSplitGroups(from: oldValue)
             windowGroup?.sessionDidChange(from: self)
             if boostPicker != nil { reconcileBoostPicker() }
             extensionBrowserStateChanged()
@@ -83,8 +83,13 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func setCustomTheme(_ theme: CustomTheme) { session.spaces[spaceIndex].customTheme = theme; save() }
     func finishOnboarding() { preferences.onboardingCompleted = true; onboardingVisible = false; flush(); onboardingDidFinish?() }
 
-    @Published var splitLayout: BrowserSplitLayout? { didSet { if boostPicker != nil { reconcileBoostPicker() };extensionBrowserStateChanged() } }
-    @Published var activePaneID: UUID? { didSet { if boostPicker != nil { reconcileBoostPicker() };extensionBrowserStateChanged() } }
+    @Published var splitGroups: [BrowserSplitLayout] = [] {
+        didSet {
+            if boostPicker != nil { reconcileBoostPicker() }
+            extensionBrowserStateChanged()
+            if windowGroupID != nil && extensionPopupProfileID == nil { save() }
+        }
+    }
     @Published var message: String?
     @Published var revision = 0 {didSet {extensionBrowserStateChanged()}}
     @Published var profiles: [BrowserProfile] = [.defaultProfile] {
@@ -344,7 +349,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func closePrimaryWindowPages() {
         closePrimaryPeek()
         for id in Array(views.keys) where quickProfileID(id) == nil { discardView(id) }
-        clearSplit(); presentedPanel = nil; commandVisible = false; findVisible = false
+        splitGroups.removeAll(); presentedPanel = nil; commandVisible = false; findVisible = false
     }
     func select(_ id: UUID) {
         guard session.spaces[spaceIndex].tabs.contains(where: { $0.id == id }) else { return }
@@ -355,7 +360,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             return
         }
         session.spaces[spaceIndex].selected = id
-        activePaneID = nil
+        activePaneID = id
         recordTabVisit(id)
         save()
     }
@@ -370,9 +375,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         let switching = session.selectedSpace != id
         if switching { dismissCommand(); cancelRecentTabSwitcher() }
         closePrimaryPeek()
-        if switching { clearSplit() }
         session.activateSpace(id)
-        if switching, recordingVisit, let selectedID { recordTabVisit(selectedID) }
+        if switching, recordingVisit, let focusedID { recordTabVisit(focusedID) }
         save()
     }
     func addSpace() {
@@ -403,7 +407,6 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         if let tab = tab(id), tab.pinned {
             update(id) { $0.url = $0.homeURL ?? $0.url; $0.title = $0.pinnedTitle ?? $0.title }
             discardSharedView(id)
-            if activePaneID == id { activePaneID = nil }
             if let s = session.spaces.firstIndex(where: { $0.id == owner }), session.spaces[s].selected == id {
                 if let next = session.spaces[s].tabs.first(where: { $0.id != id && !$0.pinned }) { session.spaces[s].selected = next.id }
                 else { let empty = BrowserCore.Tab(); session.spaces[s].tabs.append(empty); session.spaces[s].selected = empty.id }
@@ -414,7 +417,6 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             let profile = session.spaces.first(where: { $0.id == owner })?.effectiveProfileID ?? BrowserProfile.defaultID
             mutateLibrary(for: profile) { value in value.closedTabs.insert(tab, at: 0); value.closedTabs = Array(value.closedTabs.prefix(30)) }
         }
-        if activePaneID == id { activePaneID = nil }
         discardSharedView(id)
         session.close(id, in: owner)
         save()

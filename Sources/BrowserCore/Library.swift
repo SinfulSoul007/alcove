@@ -47,7 +47,7 @@ public struct Preferences: Codable {
     public init() {}
 }
 public struct BrowserDocument: Codable {
-    public static let currentFormatVersion = 7
+    public static let currentFormatVersion = 8
     /// Identifies the live window-group snapshot used to prepare a transaction.
     /// Excluded from disk data and the encrypted document format.
     public var workingRevision: UUID? = nil

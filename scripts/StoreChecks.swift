@@ -108,10 +108,12 @@ struct StoreChecks {
         let archiveCandidates = (0..<4).map { normal.newTab(url: URL(string: "about:blank#archive-pane-\($0)")) }
         normal.select(primaryID)
         for id in archiveCandidates.prefix(3) { normal.openInSplit(id) }
+        let standalone = normal.newTab(url: URL(string: "about:blank#standalone-while-archive"))
         for id in archiveCandidates { normal.update(id) { $0.lastAccessed = .distantPast } }
         normal.archiveOldTabs()
-        check(archiveCandidates.prefix(3).allSatisfy { normal.tab($0) != nil } && normal.tab(archiveCandidates[3]) == nil,
-              "Automatic archiving protects every displayed split pane")
+        check(normal.focusedID == standalone && archiveCandidates.prefix(3).allSatisfy { normal.tab($0) != nil } && normal.tab(archiveCandidates[3]) == nil,
+              "Automatic archiving protects every pane of a dormant split group")
+        normal.select(primaryID)
         normal.clearSplit()
         let current = normal.view(for: primaryID)
         let orderBeforeRender = normal.accessOrder

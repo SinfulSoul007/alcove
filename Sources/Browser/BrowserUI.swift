@@ -462,12 +462,23 @@ struct SidebarTabRow: View {
     @State private var hovered = false
     @StateObject private var extensionMenuAnchor=ExtensionTabMenuAnchor()
     var body: some View {
+        let split = store.splitGroup(containing: tab.id)
         let hasSplitPane = store.splitLayout?.tabIDs.contains(tab.id) == true
         let fullSplit = store.visiblePaneIDs.count >= BrowserSplitLayout.maximumPanes
         return HStack(spacing: 7) {
             Button { store.select(tab.id) } label: {
-                HStack(spacing: 9) { SiteBadge(url: tab.homeURL ?? tab.url, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil); Text(tab.pinned ? (tab.pinnedTitle ?? tab.title) : tab.title).font(.system(size: 12 * appearance.textScale, weight: store.focusedID == tab.id ? .semibold : .medium)).lineLimit(1); Spacer(minLength: 0) }.contentShape(Rectangle())
+                HStack(spacing: 9) {
+                    SiteBadge(url: tab.homeURL ?? tab.url, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil)
+                    Text(tab.pinned ? (tab.pinnedTitle ?? tab.title) : tab.title)
+                        .font(.system(size: 12 * appearance.textScale, weight: store.focusedID == tab.id ? .semibold : .medium)).lineLimit(1)
+                    Spacer(minLength: 0)
+                    if let split {
+                        Image(systemName: split.axis == .columns ? "rectangle.split.2x1" : "rectangle.split.1x2")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).accessibilityHidden(true)
+                    }
+                }.contentShape(Rectangle())
             }.buttonStyle(.plain)
+                .accessibilityHint(split == nil ? "" : "Opens this page in its split group")
             Button { store.close(tab.id) } label: { Image(systemName: "xmark").font(.system(size: 9)).frame(width: 18, height: 22) }.buttonStyle(.plain).opacity(hovered || appearance.alwaysShowCloseButtons ? 0.65 : 0).help(tab.pinned ? "Close page and keep pin" : "Close tab").accessibilityLabel(tab.pinned ? "Close pinned page" : "Close tab")
         }.padding(.horizontal, 10).frame(height: appearance.rowHeight)
         .background(store.focusedID == tab.id ? theme.selected : (hovered || hasSplitPane ? theme.tile : .clear),
@@ -480,9 +491,10 @@ struct SidebarTabRow: View {
             Button(tab.pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id) }.disabled(!store.canModifyLocalMetadata)
             Button("Add to Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata)
             TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id)
-            if hasSplitPane {
+            if split != nil {
                 Button("Remove from Split View") { store.removeFromSplit(tab.id) }
-            } else if tab.id != store.selectedID && !tab.url.isEmpty {
+            }
+            if !hasSplitPane && tab.id != store.selectedID && !tab.url.isEmpty {
                 Button("Open in Split View") { store.openInSplit(tab.id) }.disabled(fullSplit)
                 Menu("Place in Split View") {
                     ForEach(BrowserSplitEdge.allCases) { edge in

@@ -190,7 +190,7 @@ import CryptoKit
         try storage.save(versionSix)
         var upgraded = try storage.load(BrowserDocument.self)!
         try upgraded.repairProfiles()
-        check(upgraded.formatVersion == 7 && upgraded.windowRestore == windows && upgraded.session == versionSix.session,
+        check(upgraded.formatVersion == BrowserDocument.currentFormatVersion && upgraded.windowRestore == windows && upgraded.session == versionSix.session,
               "Format-6 migration preserves window restoration and advances the format past older readers")
         let canonicalEncoder = JSONEncoder()
         canonicalEncoder.outputFormatting = [.sortedKeys]
@@ -200,6 +200,30 @@ import CryptoKit
         check(canonical == reencoded, "Window selections and assignments have stable canonical serialization after relaunch")
         check(encrypted.range(of: Data("https://first.invalid/".utf8)) == nil && restoredDocument.session.spaces.flatMap(\.tabs).count == 3,
               "Window restoration data uses the existing encrypted vault and leaves the tab library intact")
+
+        var versionSeven = restoredDocument
+        versionSeven.formatVersion = 7
+        try storage.save(versionSeven)
+        var latest = try storage.load(BrowserDocument.self)!
+        try latest.repairProfiles()
+        check(latest.formatVersion == 8 && latest.windowRestore == windows,
+              "Format-7 migration keeps window state and defaults to no saved split groups")
+        let saved = BrowserSplitLayout(spaceID: personal, axis: .rows,
+                                       tabIDs: [second.id, first, first, work.tabs[0].id], focusedTabID: second.id)
+        let conflict = BrowserSplitLayout(spaceID: personal, axis: .columns, tabIDs: [first, second.id])
+        let valid = BrowserSplitLayout(id: saved.id, spaceID: personal, axis: .rows, tabIDs: [second.id, first], focusedTabID: second.id)
+        let groupedRecord = BrowserWindowRestoreRecord(selection: secondRecord.selection, frame: outside, splitGroups: [saved, conflict])
+        var encodedWithGroups = try JSONSerialization.jsonObject(with: JSONEncoder().encode(groupedRecord)) as! [String: Any]
+        let groupEntries = encodedWithGroups["splitGroups"] as! [[String: Any]]
+        encodedWithGroups["splitGroups"] = [["axis": "invalid"], groupEntries[0], groupEntries[1]]
+        let decodedRecord = try JSONDecoder().decode(BrowserWindowRestoreRecord.self, from: JSONSerialization.data(withJSONObject: encodedWithGroups))
+        latest.windowRestore = BrowserWindowRestoreState(records: [firstRecord, decodedRecord], focusedWindowID: b,
+                                                          assignments: [first: b, second.id: b, work.tabs[0].id: a])
+        try latest.repairProfiles()
+        try storage.save(latest)
+        let readBack = try storage.load(BrowserDocument.self)!
+        check(readBack.windowRestore?.records[1].splitGroups == [valid] && readBack.windowRestore?.records[1].frame == outside,
+              "Split restore skips malformed groups, foreign tabs and duplicates and retains the valid ordered group")
 
         let encoded = try JSONEncoder().encode(migrated)
         var malformed = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]

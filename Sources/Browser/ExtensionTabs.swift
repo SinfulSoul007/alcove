@@ -103,7 +103,8 @@ extension BrowserStore {
         document.session.activateSpace(document.session.spaces[owner].id)
         document.session.spaces[owner].selected=id
         try commitQuickDocument(document)
-        dismissCommand();closePrimaryPeek();clearSplit()
+        dismissCommand();closePrimaryPeek()
+        if splitLayout?.tabIDs.contains(id) == true { focusPane(id) }
     }
     @discardableResult func openExtensionOptions(_ id:UUID,profileID:UUID) async throws -> UUID {
         try await prepareExtensions(profileID:profileID)

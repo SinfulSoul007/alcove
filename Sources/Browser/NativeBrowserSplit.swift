@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import BrowserCore
 
 /// One native split controller keeps each tab's host attached when the axis changes.
 struct NativeBrowserSplit<Pane: View>: NSViewControllerRepresentable {

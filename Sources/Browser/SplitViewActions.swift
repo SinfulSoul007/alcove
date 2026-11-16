@@ -1,12 +1,6 @@
 import Foundation
 import BrowserCore
 
-enum BrowserSplitAxis: Equatable {
-    case columns, rows
-
-    var flipped: Self { self == .columns ? .rows : .columns }
-}
-
 enum BrowserSplitEdge: CaseIterable, Identifiable {
     case left, right, top, bottom
 
@@ -28,19 +22,49 @@ enum BrowserSplitEdge: CaseIterable, Identifiable {
     }
 }
 
-struct BrowserSplitLayout: Equatable {
-    static let maximumPanes = 4
-    let spaceID: UUID
-    var axis: BrowserSplitAxis
-    var tabIDs: [UUID]
-
-    func neighbor(of removed: UUID, keeping available: (UUID) -> Bool) -> UUID? {
-        guard let index = tabIDs.firstIndex(of: removed) else { return nil }
-        return tabIDs.dropFirst(index + 1).first(where: available) ?? tabIDs.prefix(index).reversed().first(where: available)
-    }
-}
-
 extension BrowserStore {
+    var splitLayout: BrowserSplitLayout? {
+        get { activeSplit(in: session) }
+        set {
+            if let newValue { storeSplitGroup(newValue) }
+            else if let group = activeSplit(in: session) { splitGroups.removeAll { $0.id == group.id } }
+        }
+    }
+
+    var activePaneID: UUID? {
+        get { splitLayout?.focusedTabID }
+        set {
+            guard var group = splitLayout, group.focusedTabID != newValue,
+                  newValue.map(group.tabIDs.contains) ?? true else { return }
+            group.focusedTabID = newValue
+            splitLayout = group
+        }
+    }
+
+    func splitGroup(containing id: UUID) -> BrowserSplitLayout? {
+        splitGroups.first { $0.tabIDs.contains(id) }
+    }
+
+    private func activeSplit(in model: Session) -> BrowserSplitLayout? {
+        guard let space = model.spaces.first(where: { $0.id == model.selectedSpace }) ?? model.spaces.first,
+              let selected = space.selected else { return nil }
+        return splitGroups.first { $0.spaceID == space.id && $0.tabIDs.contains(selected) }
+    }
+
+    private func storeSplitGroup(_ group: BrowserSplitLayout) {
+        let added = Set(group.tabIDs)
+        var updated = splitGroups.compactMap { existing -> BrowserSplitLayout? in
+            guard existing.id != group.id else { return group }
+            guard !added.isDisjoint(with: existing.tabIDs) else { return existing }
+            var trimmed = existing
+            trimmed.tabIDs.removeAll(where: added.contains)
+            if let focus = trimmed.focusedTabID, !trimmed.tabIDs.contains(focus) { trimmed.focusedTabID = nil }
+            return trimmed.tabIDs.count >= 2 ? trimmed : nil
+        }
+        if !updated.contains(where: { $0.id == group.id }) { updated.append(group) }
+        if updated != splitGroups { splitGroups = updated }
+    }
+
     var visiblePaneIDs: [UUID] {
         splitLayout?.tabIDs ?? selectedID.map { [$0] } ?? []
     }
@@ -107,60 +131,72 @@ extension BrowserStore {
     }
 
     func clearSplit() {
-        let displacedFocus = splitLayout != nil && activePaneID != nil && (session.spaces.isEmpty || activePaneID != selectedID)
-        if splitLayout != nil { splitLayout = nil }
-        if activePaneID != nil { activePaneID = nil }
-        if displacedFocus { dismissCommand(); cancelRecentTabSwitcher() }
+        guard splitLayout != nil else { return }
+        let previous = focusedID
+        splitLayout = nil
+        if previous != focusedID { dismissCommand(); cancelRecentTabSwitcher() }
     }
 
     func removeFromSplit(_ id: UUID) {
-        guard var layout = splitLayout, layout.tabIDs.contains(id) else { return }
+        guard var layout = splitGroup(containing: id) else { return }
         let previous = focusedID
-        if selectedID == id, let replacement = layout.neighbor(of: id, keeping: { id in
+        if let index = session.spaces.firstIndex(where: { $0.id == layout.spaceID && $0.selected == id }),
+           let replacement = layout.neighbor(of: id, keeping: { id in
             (windowGroup?.presentation(tabID: id, in: self) ?? .owned) == .owned
         }) {
-            session.spaces[spaceIndex].selected = replacement
+            session.spaces[index].selected = replacement
         }
         layout.tabIDs.removeAll { $0 == id }
-        splitLayout = layout.tabIDs.count >= 2 && selectedID != id ? layout : nil
-        if activePaneID == id || splitLayout == nil { activePaneID = nil }
+        if layout.focusedTabID == id { layout.focusedTabID = nil }
+        if layout.tabIDs.count >= 2 { storeSplitGroup(layout) }
+        else { splitGroups.removeAll { $0.id == layout.id } }
         if previous != focusedID { dismissCommand(); cancelRecentTabSwitcher() }
     }
 
-    /// When the selected anchor leaves the Space, keep the neighboring owned pane selected.
-    func retainSplitSelection(in incoming: inout Session, keeping owned: (UUID) -> Bool = { _ in true }) -> Bool {
-        guard let layout = splitLayout, let selectedID, incoming.selectedSpace == layout.spaceID,
-              let index = incoming.spaces.firstIndex(where: { $0.id == layout.spaceID }),
-              incoming.spaces[index].effectiveProfileID == space.effectiveProfileID else { return false }
-        let panes = Set(incoming.spaces[index].tabs.lazy.map(\.id))
-        guard !panes.contains(selectedID),
-              let neighbor = layout.neighbor(of: selectedID, keeping: { panes.contains($0) && owned($0) }) else { return false }
-        incoming.spaces[index].selected = neighbor
-        return true
+    /// Preserve the remembered pane when a tab leaves its Space without navigating to it.
+    func splitSelectionRepairs(in incoming: Session, keeping owned: (UUID) -> Bool = { _ in true }) -> [UUID: UUID] {
+        guard !splitGroups.isEmpty else { return [:] }
+        let groupsBySpace = Dictionary(grouping: splitGroups, by: \.spaceID)
+        let selectedGroups = session.spaces.reduce(into: [UUID: (BrowserSplitLayout, UUID, UUID)]()) { result, space in
+            guard let selected = space.selected,
+                  let layout = groupsBySpace[space.id]?.first(where: { $0.tabIDs.contains(selected) }) else { return }
+            result[space.id] = (layout, selected, space.effectiveProfileID)
+        }
+        return incoming.spaces.reduce(into: [UUID: UUID]()) { result, space in
+            guard let (layout, anchor, profile) = selectedGroups[space.id], space.effectiveProfileID == profile,
+                  !space.tabs.contains(where: { $0.id == anchor }) else { return }
+            result[space.id] = layout.neighbor(of: anchor) { id in
+                owned(id) && space.tabs.contains { $0.id == id }
+            }
+        }
+    }
+
+    func reconciledSplitGroups(in incoming: Session, previous: Session, discarding: Set<UUID> = [],
+                               keeping owned: (UUID) -> Bool = { _ in true }) -> [BrowserSplitLayout] {
+        guard !splitGroups.isEmpty else { return [] }
+        let groupSpaceIDs = Set(splitGroups.map(\.spaceID))
+        let profiles = previous.spaces.reduce(into: [UUID: UUID]()) { result, space in
+            if groupSpaceIDs.contains(space.id) { result[space.id] = space.effectiveProfileID }
+        }
+        let spaces = incoming.spaces.filter { incomingSpace in
+            profiles[incomingSpace.id] == incomingSpace.effectiveProfileID
+        }
+        return BrowserSplitLayout.repairedGroups(splitGroups, in: spaces) { !discarding.contains($0) && owned($0) }
     }
 
     func resetSplitIfDiscardingPages(_ discarded: Set<UUID>, in incoming: Session) {
-        guard let layout = splitLayout else { return }
-        guard let replacement = incoming.spaces.first(where: { $0.id == layout.spaceID }),
-              replacement.effectiveProfileID == space.effectiveProfileID else { clearSplit(); return }
-        if replacement.tabs.contains(where: { discarded.contains($0.id) && layout.tabIDs.contains($0.id) }) {
-            clearSplit()
-        }
+        let previous = focusedID
+        let remaining = reconciledSplitGroups(in: incoming, previous: session, discarding: discarded)
+        if remaining != splitGroups { splitGroups = remaining }
+        if previous != focusedID { dismissCommand(); cancelRecentTabSwitcher() }
     }
 
-    func reconcileSplitLayout() {
-        guard var layout = splitLayout else { return }
-        guard !session.spaces.isEmpty, layout.spaceID == space.id,
-              let selectedID, layout.tabIDs.contains(selectedID) else {
-            clearSplit()
-            return
-        }
-        let localTabs = space.tabs
-        let previous = focusedID
-        layout.tabIDs.removeAll { id in !localTabs.contains(where: { $0.id == id }) }
-        if layout.tabIDs.count < 2 { clearSplit() }
-        else if layout != splitLayout { splitLayout = layout }
-        if let activePaneID, !visiblePaneIDs.contains(activePaneID) { self.activePaneID = nil }
-        if previous != focusedID { dismissCommand(); cancelRecentTabSwitcher() }
+    func reconcileSplitGroups(from previous: Session) {
+        guard !splitGroups.isEmpty else { return }
+        let previousSpace = previous.spaces.first { $0.id == previous.selectedSpace } ?? previous.spaces.first
+        let oldFocus = activeSplit(in: previous)?.focusedTabID ?? previousSpace?.selected
+        let remaining = reconciledSplitGroups(in: session, previous: previous)
+        if remaining != splitGroups { splitGroups = remaining }
+        if oldFocus != focusedID { dismissCommand(); cancelRecentTabSwitcher() }
     }
 }

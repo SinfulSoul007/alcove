@@ -92,7 +92,6 @@ extension BrowserStore {
                         let profile = owner?.effectiveProfileID ?? quickOwner?.profileID ?? favoriteOwner?.profileID
                         if profile != viewProfileIDs[id] || tab?.url != self.tab(id)?.url { discardView(id) }
                     }
-                    clearSplit()
                     reconcilePeeks(in: candidate, recovering: true)
                 }
                 try applyDocument(candidate)
@@ -134,7 +133,7 @@ extension BrowserStore {
         guard !isPrivate, preferences.archiveAfterDays > 0 else { return }
         let cutoff = Date().addingTimeInterval(-Double(preferences.archiveAfterDays) * 86400)
         var protected = Set(session.spaces.compactMap(\.selected))
-        protected.formUnion(visiblePaneIDs)
+        protected.formUnion(splitGroups.flatMap(\.tabIDs))
         if let windowGroup { protected.formUnion(windowGroup.protectedPaneIDs) }
         var profileBeforeArchive: [UUID: UUID] = [:]
         for space in session.spaces { for tab in space.tabs { profileBeforeArchive[tab.id] = space.effectiveProfileID } }

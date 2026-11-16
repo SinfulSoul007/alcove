@@ -97,6 +97,9 @@ final class BrowserWindowGroup {
             return (store: store, frame: frames[window.id], focused: window.id == workspace.focusedWindowID)
         }
         publishWorkspace(workspace)
+        for item in restored {
+            if let id = item.store.windowGroupID { item.store.splitGroups = byID[id]?.splitGroups ?? [] }
+        }
         return restored
     }
 
@@ -207,13 +210,14 @@ final class BrowserWindowGroup {
     }
 
     var protectedPaneIDs: Set<UUID> {
-        Set(stores.filter { $0.windowGroupID != nil }.flatMap(\.visiblePaneIDs))
+        Set(stores.filter { $0.windowGroupID != nil }.flatMap { store in
+            store.splitGroups.flatMap(\.tabIDs) + store.visiblePaneIDs
+        })
     }
 
     func discardPage(_ id: UUID) {
         for store in stores {
             store.removeFromSplit(id)
-            if store.activePaneID == id { store.activePaneID = nil }
             if store.views[id] != nil {
                 store.discardView(id)
                 store.revision += 1
@@ -273,13 +277,19 @@ final class BrowserWindowGroup {
 
     func restoreState() -> BrowserWindowRestoreState? { restoreState(for: workspace) }
 
-    private func restoreState(for workspace: BrowserWindowWorkspace) -> BrowserWindowRestoreState? {
+    private func restoreState(for workspace: BrowserWindowWorkspace, discarding: Set<UUID> = []) -> BrowserWindowRestoreState? {
         let saved = workspace.windows.filter { members[$0.id]?.store?.extensionPopupProfileID == nil }
         guard !saved.isEmpty else { return nil }
         let records = saved.map { selection in
             let store = members[selection.id]?.store
+            let groups = store.map { store in
+                store.reconciledSplitGroups(in: workspace.session, previous: store.session, discarding: discarding) {
+                    workspace.assignedWindow(for: $0) == selection.id
+                }
+            }
             return BrowserWindowRestoreRecord(selection: selection, frame: frames[selection.id],
-                                              sidebarWidth: store?.windowSidebarWidth, sidebarVisible: store?.sidebarVisible)
+                                              sidebarWidth: store?.windowSidebarWidth, sidebarVisible: store?.sidebarVisible,
+                                              splitGroups: groups)
         }
         let savedIDs = Set(saved.map(\.id))
         return BrowserWindowRestoreState(records: records, focusedWindowID: workspace.focusedWindowID,
@@ -343,9 +353,13 @@ final class BrowserWindowGroup {
         try prepared.repairProfiles()
         prepared.session = BrowserStore.repairedSession(prepared.session)
         let next = try replacingSession(prepared.session, from: source)
+        let retained = Set(prepared.session.spaces.flatMap(\.tabs).map(\.id))
+        let nextQuick = Set((prepared.profileLibraries ?? []).flatMap { $0.library.quickPages ?? [] }.map(\.id))
+        let removedQuick = Set(root.allQuickPages.map(\.id)).subtracting(nextQuick).subtracting(retained)
+        let discarded = Set(ids).union(removedQuick)
         var diskDocument = prepared
         diskDocument.session = next.session
-        diskDocument.windowRestore = restoreState(for: next)
+        diskDocument.windowRestore = restoreState(for: next, discarding: discarded)
         do { try vault.save(diskDocument) }
         catch {
             root.savingEnabled = false
@@ -355,10 +369,6 @@ final class BrowserWindowGroup {
             throw error
         }
 
-        let retained = Set(prepared.session.spaces.flatMap(\.tabs).map(\.id))
-        let nextQuick = Set((prepared.profileLibraries ?? []).flatMap { $0.library.quickPages ?? [] }.map(\.id))
-        let removedQuick = Set(root.allQuickPages.map(\.id)).subtracting(nextQuick).subtracting(retained)
-        let discarded = Set(ids).union(removedQuick)
         let recipients = stores
         for store in recipients {
             for id in discarded { store.discardView(id) }
@@ -384,13 +394,14 @@ final class BrowserWindowGroup {
         var next = workspace
         if let id = source.windowGroupID { try next.apply(session, from: id) }
         else { try next.applySharedSession(session) }
-        for store in stores where store.splitLayout != nil {
-            guard let id = store.windowGroupID, let anchor = store.selectedID,
-                  let space = next.session.spaces.first(where: { $0.id == store.space.id }),
-                  !space.tabs.contains(where: { $0.id == anchor }), var projection = next.session(for: id) else { continue }
-            if store.retainSplitSelection(in: &projection, keeping: { next.assignedWindow(for: $0) == id }) {
-                try next.apply(projection, from: id)
+        for store in stores where !store.splitGroups.isEmpty {
+            guard let id = store.windowGroupID else { continue }
+            let repairs = store.splitSelectionRepairs(in: next.session) { next.assignedWindow(for: $0) == id }
+            guard !repairs.isEmpty, var projection = next.session(for: id) else { continue }
+            for index in projection.spaces.indices {
+                if let replacement = repairs[projection.spaces[index].id] { projection.spaces[index].selected = replacement }
             }
+            try next.apply(projection, from: id)
         }
         return next
     }

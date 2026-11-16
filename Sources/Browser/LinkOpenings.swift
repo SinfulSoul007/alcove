@@ -48,7 +48,7 @@ extension BrowserStore {
         let tab = BrowserCore.Tab(title:url.host ?? "Page",url:url.absoluteString)
         let discard = insertLinkTab(tab,at:index,in:&candidate), targetID = candidate.session.spaces[index].id
         try commitQuickDocument(candidate,discarding:discard,beforePublish:{
-            self.publishPreservedPeek(preserved); self.clearSplit()
+            self.publishPreservedPeek(preserved)
         })
         return .space(targetID)
     }
@@ -70,7 +70,7 @@ extension BrowserStore {
         }
         let preserved = try preservePrimaryPeek(in:&candidate), index = try linkSpaceIndex(decision.destination,in:&candidate)
         let discard = insertLinkTab(tab,at:index,in:&candidate)
-        try commitQuickDocument(candidate,discarding:discard,beforePublish:{ self.publishPreservedPeek(preserved); self.clearSplit() })
+        try commitQuickDocument(candidate,discarding:discard,beforePublish:{ self.publishPreservedPeek(preserved) })
         return tab.id
     }
     @discardableResult func performPeekPromotion(_ request: PeekPromotionRequest, allowProfileChange: Bool = false) throws -> UUID {
@@ -113,7 +113,6 @@ extension BrowserStore {
                 self.transferDocumentBindings(for: page.web, to: presenter)
                 presenter.registerView(page.web, for: tab.id, profile: targetProfile)
             }
-            if case .quick = current.decision.destination {} else { presenter.clearSplit() }
         })
         if !crossing { presenter.loadSiteIcon(page.web) }
         if case .quick = current.decision.destination { presenter.startArchiveTimer(); presenter.quickPageRequested?(tab.id) }

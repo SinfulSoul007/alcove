@@ -65,6 +65,7 @@ extension BrowserStore {
             for id in ids { discardView(id) }
             beforePublish?()
             reconcilePeeks(in: document)
+            resetSplitIfDiscardingPages(Set(ids), in: document.session)
             session = Self.repairedSession(document.session); profileLibraries = document.profileLibraries ?? []
             preferences = document.preferences; reconcileSearchInputContext(); pruneQuickActivity(); quickPagesDidChange?(); refreshBoosts()
         } else { try commitProfileDocument(document, discarding: ids, beforePublish: beforePublish) }
@@ -169,7 +170,6 @@ extension BrowserStore {
             if !crossing { self.views[id]?.removeFromSuperview() }
             if crossing { presenter.closePrimaryPeek(); self.closeQuickPeek(id) }
             else { self.adoptQuickPeek(id, into: spaceID, in: presenter) }
-            presenter.clearSplit()
         })
         if presenter !== self { windowGroup?.claimPresentation(tabID: id, in: presenter) }
         if focusedQuickPageID == id { focusedQuickPageID = nil }

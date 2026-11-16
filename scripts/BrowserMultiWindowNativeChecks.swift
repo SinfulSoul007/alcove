@@ -167,6 +167,15 @@ struct BrowserMultiWindowNativeChecks {
         originalDelegate.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification, object: originalRight))
         let focusedProfile = try focusedStore.createProfile(name: "Restored focused account")
         let restoredTab = focusedStore.newTab(url: URL(string: "http://127.0.0.1:9/existing-restored-tab"))
+        let dormantAnchor = focusedStore.newTab(url: URL(string: "about:blank#saved-anchor"))
+        focusedStore.select(restoredTab)
+        focusedStore.openInSplit(dormantAnchor, at: .top)
+        let secondAnchor = focusedStore.newTab(url: URL(string: "about:blank#another-saved-anchor"))
+        let secondMember = focusedStore.newTab(url: URL(string: "about:blank#another-saved-member"))
+        focusedStore.select(secondAnchor); focusedStore.openInSplit(secondMember)
+        let leftAnchor = originalStore.newTab(url: URL(string: "about:blank#left-saved-anchor"))
+        let leftMember = originalStore.newTab(url: URL(string: "about:blank#left-saved-member"))
+        originalStore.select(leftAnchor); originalStore.openInSplit(leftMember)
         let isolated = WKWebViewConfiguration()
         isolated.websiteDataStore = .nonPersistent()
         let secondaryPage = WKWebView(frame: .zero, configuration: isolated)
@@ -202,6 +211,17 @@ struct BrowserMultiWindowNativeChecks {
         let restoredRight = recovering.windows.first { $0.value.windowGroupID == focusedWindowID }?.key
         check(restoredLeft?.frame == leftFrame && restoredRight?.frame == rightFrame,
               "Real AppKit position and size survive native quit and workspace restoration")
+        let leftStore = recovering.windows.values.first { $0.windowGroupID == leftID }
+        check(leftStore?.visiblePaneIDs == [leftAnchor, leftMember] && leftStore?.focusedID == leftMember &&
+              restored?.splitGroup(containing: leftMember) == nil,
+              "Relaunch restores an active split and its focused pane only in the owning window")
+        restored?.select(dormantAnchor)
+        check(restored?.visiblePaneIDs == [dormantAnchor, restoredTab] && restored?.splitLayout?.axis == .rows &&
+              restored?.focusedID == dormantAnchor,
+              "Native quit and relaunch restore a dormant split in its owning window after an external link")
+        restored?.select(secondMember)
+        check(restored?.visiblePaneIDs == [secondAnchor, secondMember] && restored?.splitLayout?.axis == .columns,
+              "The same window restores a second saved split independently")
         print("Native window checks: \(passed) passed, \(failed) failed")
         return failed
     }

@@ -60,6 +60,23 @@ struct BrowserWindowHandoffChecks {
             root.clearSplit()
             for id in ids { root.close(id) }
         }
+        do {
+            let original = root.space.id
+            let target = Space(name: "Background split Space")
+            root.session.spaces.append(target)
+            let ids = (0..<4).map { root.newTab(url: URL(string: "about:blank#background-split-\($0)")) }
+            root.select(ids[0]); for id in ids.dropFirst() { root.openInSplit(id) }
+            root.selectSpace(target.id)
+            let claimed = group.claimPresentation(tabID: ids[0], in: child)
+            check(claimed && root.space.id == target.id && root.session.spaces.first(where: { $0.id == original })?.selected == ids[1],
+                  "Transferring a dormant split anchor selects its neighbor without switching Spaces")
+            let moved = child.requestMoveTab(ids[1], to: target.id)
+            root.selectSpace(original)
+            check(moved && root.selectedID == ids[2] && root.visiblePaneIDs == Array(ids.suffix(2)),
+                  "Moving the replacement anchor from a dormant split keeps its other panes together")
+            root.clearSplit()
+            for id in ids { root.close(id) }
+        }
 
         let movingTab = root.newTab()
         let independentTab = child.newTab()
@@ -85,6 +102,7 @@ struct BrowserWindowHandoffChecks {
         check(child.splitLayout?.tabIDs == [independentTab, movingTab] && child.selectedID == independentTab && child.primaryPageView(for: movingTab) === source &&
                 root.views[movingTab] == nil && child.documentIdentity(for: source) === identity,
               "Open in Split View brings over the exact live tab and keeps the existing primary pane")
+        child.clearSplit()
         let leftOver = child.newTab(url: URL(string: "about:blank#left-over"))
         let attached = child.newTab(url: URL(string: "about:blank#attached"))
         child.select(independentTab)
