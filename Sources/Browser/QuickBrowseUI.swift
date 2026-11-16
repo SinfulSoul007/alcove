@@ -187,7 +187,7 @@ struct QuickBrowseUI: View {
                         }
                     }
             }
-            .background(theme.gradient)
+            .background { theme.surface }
             .foregroundStyle(theme.ink)
             .preferredColorScheme(theme.isDark ? .dark : .light)
             .ignoresSafeArea()
@@ -277,7 +277,7 @@ struct QuickBrowseUI: View {
         .padding(.leading, 8).padding(.trailing, 10)
         .frame(height: chrome.height)
         .background(NativeChromeReader(chrome: chrome))
-        .background(theme.gradient)
+        .background { theme.surface }
         .popover(isPresented: $profilePickerVisible, arrowEdge: .bottom) { profilePicker }
     }
 
@@ -406,7 +406,7 @@ struct QuickBrowseUI: View {
                 Divider()
                 Button("Manage Profiles…") { profilePickerVisible = false; onManageProfiles() }
             }
-        }.padding(16).frame(width: 290).foregroundStyle(theme.ink).background(theme.gradient)
+        }.padding(16).frame(width: 290).foregroundStyle(theme.ink).background { theme.surface }
             .preferredColorScheme(theme.isDark ? .dark : .light)
     }
 
@@ -442,7 +442,7 @@ struct QuickBrowseUI: View {
                         .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                     Button(store.peekOpenTitle(in: .quick(id)), action: onPromotePeek).font(.system(size: 11 * appearance.textScale))
                         .disabled(!canMove).help("Move the Peek page into a Space")
-                }.padding(10).background(theme.gradient)
+                }.padding(10).background { theme.surface }
                 WebPane(webView: web,store:store).id(ObjectIdentifier(web))
             }
             .background(.background)

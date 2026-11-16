@@ -114,7 +114,7 @@ private struct OpenSpaceCard: View {
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).accessibilityLabel("\(space.name) actions")
             }.padding(.horizontal,12).padding(.bottom,10)
         }.frame(width:220).frame(maxHeight:.infinity).foregroundStyle(theme.ink).environment(\.colorScheme,theme.isDark ? .dark : .light)
-            .background(theme.gradient,in:RoundedRectangle(cornerRadius:16))
+            .background { theme.surface.clipShape(RoundedRectangle(cornerRadius: 16)) }
             .overlay { RoundedRectangle(cornerRadius:16).stroke(theme.ink.opacity(0.08),lineWidth:1) }
             .contextMenu { SpaceActionItems(store:store,spaceID:space.id) }
             .accessibilityElement(children:.contain).accessibilityLabel("Space: \(space.name)")
@@ -141,7 +141,7 @@ private struct DeletedSpaceCard: View {
                 label: { Image(systemName:"ellipsis").frame(width:22,height:28) }.menuStyle(.borderlessButton).menuIndicator(.hidden).accessibilityLabel("\(space.name) recovery actions")
             }.padding(12)
         }.frame(width:220).frame(maxHeight:.infinity).foregroundStyle(theme.ink).environment(\.colorScheme,theme.isDark ? .dark : .light)
-            .background(theme.gradient,in:RoundedRectangle(cornerRadius:16))
+            .background { theme.surface.clipShape(RoundedRectangle(cornerRadius: 16)) }
             .overlay { RoundedRectangle(cornerRadius:16).stroke(theme.ink.opacity(0.08),lineWidth:1) }
             .accessibilityElement(children:.contain).accessibilityLabel("Deleted Space: \(space.name)")
     }

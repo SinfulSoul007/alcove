@@ -139,7 +139,7 @@ struct BrowserUI: View {
                         .opacity(store.sidebarVisible ? 0 : 1)
                         .allowsHitTesting(!store.sidebarVisible).accessibilityHidden(store.sidebarVisible)
                     sidebar(width: width, windowHeight: geometry.size.height).frame(width: width)
-                        .background(theme.gradient)
+                        .background { theme.surface }
                         .background(SidebarTracking(controller: reveal, region: .panel, enabled: floatingAllowed && shown))
                         .clipShape(RoundedRectangle(cornerRadius: store.sidebarVisible ? 0 : appearance.cornerRadius + 4))
                         .shadow(color: .black.opacity(!store.sidebarVisible && shown ? 0.25 : 0), radius: 20, x: 8, y: 0)
@@ -191,7 +191,7 @@ struct BrowserUI: View {
                 }
                 if store.onboardingVisible { OnboardingView(store: store).transition(.opacity).zIndex(10) }
             }
-            .background(theme.gradient).foregroundStyle(theme.ink)
+            .background { theme.surface }.foregroundStyle(theme.ink)
             .frame(maxWidth: .infinity, maxHeight: .infinity).ignoresSafeArea()
             .preferredColorScheme(theme.isDark ? .dark : .light)
             .animation(motion, value: store.visibleRecentTabSwitcher != nil)
@@ -284,7 +284,7 @@ struct BrowserUI: View {
             .menuStyle(.borderlessButton).fixedSize().help("Split Controls")
         }
         .padding(.horizontal, 9).frame(height: 28)
-        .foregroundStyle(theme.ink).background(theme.gradient)
+        .foregroundStyle(theme.ink).background { theme.surface }
     }
 
     private func splitContent(_ layout: BrowserSplitLayout) -> some View {
@@ -313,7 +313,7 @@ struct BrowserUI: View {
                     .fixedSize().accessibilityLabel("Switch Tabs")
             }
         }.padding(.horizontal, 8).frame(height: max(34, chrome.height))
-            .background(theme.gradient).background(NativeChromeReader(chrome: chrome))
+            .background { theme.surface }.background(NativeChromeReader(chrome: chrome))
     }
     private func sidebar(width: Double, windowHeight: Double) -> some View {
         let columns = appearance.columns(for: width)

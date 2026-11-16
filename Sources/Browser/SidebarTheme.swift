@@ -41,13 +41,42 @@ struct AppearanceTheme {
     let foreground: ThemeColor
     init(palette: CustomTheme) {
         self.palette = palette
-        display = palette.resolvedForDisplay
-        foreground = ThemeColor.readableForeground(over: palette.useGradient ? [palette.background, palette.secondary] : [palette.background])
+        let resolved = palette.resolvedForDisplay
+        display = resolved
+        foreground = ThemeColor.readableForeground(over: palette.useGradient ? [resolved.background, resolved.secondary] : [resolved.background])
     }
     var isDark: Bool { foreground == .white }
     var ink: Color { foreground.color.opacity(isDark ? 0.90 : 0.88) }
     var background: Color { display.background.color }
     var gradient: LinearGradient { LinearGradient(colors: [background, palette.useGradient ? display.secondary.color : background], startPoint: .topLeading, endPoint: .bottomTrailing) }
+    var surface: some View {
+        gradient.overlay {
+            if palette.grainOpacity > 0, let texture = Self.grainTexture {
+                texture.resizable(resizingMode: .tile)
+                    .interpolation(.none)
+                    .opacity(palette.grainOpacity)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private static let grainTexture: Image? = {
+        let side = 97
+        var seed: UInt32 = 73
+        let pixels = Data((0..<(side * side)).map { _ in
+            seed = 1_664_525 &* seed &+ 1_013_904_223
+            return UInt8(truncatingIfNeeded: seed >> 24)
+        })
+        guard let provider = CGDataProvider(data: pixels as CFData),
+              let image = CGImage(width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 8,
+                                  bytesPerRow: side, space: CGColorSpaceCreateDeviceGray(),
+                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+                                  provider: provider, decode: nil, shouldInterpolate: false,
+                                  intent: .defaultIntent) else { return nil }
+        return Image(decorative: image, scale: 1)
+    }()
+
     var accent: Color { display.accent.color }
     var tile: Color { isDark ? .white.opacity(0.08) : .white.opacity(0.28) }
     var selected: Color { isDark ? .white.opacity(0.13) : .white.opacity(0.56) }
