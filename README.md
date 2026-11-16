@@ -22,7 +22,8 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 - Experimental native extension manager for reviewed Chrome Web Store packages, CRX3, ZIPs and folders. Native APIs require macOS 15.4+; compatibility varies. Full uBlock Origin is unsupported.
 - Manual GitHub update checks, stable/preview channels and optional daily checks. Downloads and installation remain explicit actions.
 - Favorites, Pinned and Today scroll separately, keeping saved pages visible while you browse daily tabs. Bookmarking also pins the original page without reloading it.
-- Create empty folders from the Pinned header, File menu or command bar. Move tabs into folders using their context menu or drag-and-drop; rename folders or remove them while keeping their tabs pinned. Folder definitions survive relaunch.
+- Create folders from the Pinned header, File menu or command bar. Create a subfolder from a folder’s menu or drag a folder into its new parent. Moving or removing a folder keeps its contents pinned.
+- Hold Control and press Tab to browse up to five recent tabs in the window. Press Shift-Tab to reverse, release Control to switch, or press Escape to cancel.
 - Drag tabs between sections and into folders. Pinned tabs keep their title and saved home URL when closed. ⌘W closes the focused page (or Peek/panel first), then closes an empty window while leaving Alcove running.
 - Multiple normal windows share tabs and profiles. Each window has its own selected Space, selected tab and sidebar layout. Opening a shared tab in another window moves its live page.
 - Split view with actions targeted to the clicked pane.
@@ -130,7 +131,7 @@ The earlier sidebar checkpoint has [historical verification notes](docs/releases
 
 The 0.9 preview upgrades metadata to format 5 for extension identities and permissions. Public 0.8 downloads use format 4 and cannot read format 5. Keep a backup and quit Alcove before replacing its bundle. This source also adds a skippable opening greeting before setup; turning interface animations off or using Reduce Motion bypasses it.
 
-Alcove 0.10 upgrades the encrypted metadata to format 6 to save window layouts and selections. Quit Alcove and keep a backup before installing the new preview. Earlier versions refuse newer metadata and preserve the saved file.
+Alcove 0.10 introduced encrypted metadata format 6 to save window layouts and selections. Alcove 0.11 advances to format 7 to preserve nested folders. Existing tabs and window layouts carry forward. Quit Alcove and keep a backup before installing the new preview. Earlier versions refuse newer metadata and preserve the saved file.
 
 The extension manager is available from **Alcove → Extensions…**, Settings, the command bar, the sidebar and Quick Browse. Choose **Browse Chrome Web Store** to search the official storefront. Open an extension listing and select **Review Extension** in Alcove’s toolbar. You can also review a store link or ID, extension folder, ZIP or CRX3. Reviews show the code version, source, supported API/site access and unavailable capabilities. Enable/disable, permission editing, options, explicit package updates and removal use the selected profile. Private windows cannot edit the catalog or grants. Their explicit reload controls can attach an already-open approved profile or detach its extensions after consent; private access is off by default and only spanning extensions can be approved for it. Permission and installation changes remain bound to their initiating browser window and reviewed profile.
 

@@ -114,11 +114,15 @@ jobs:
 
           File uploads, device permissions and extension actions stay tied to their original page and window. A moved tab can open a fresh request from its new window.
 
-          Open Alcove → Extensions → Browse Chrome Web Store to find extensions. Alcove’s Review Extension button opens publisher, compatibility and permission details for the selected profile. Compatible extensions can open regular browser windows, including background windows.
+          Pinned folders can contain subfolders. Create one from a folder’s menu, or move a folder by dropping it onto its destination. Removing a folder keeps its tabs and subfolders. Pinned and Favorites receive more room when Today has few or no tabs.
+
+          Hold Control and press Tab to browse up to five recent tabs in the active window and profile. Release Control to switch, press Escape to cancel, or press Control-W to close the highlighted tab.
+
+          Open Alcove → Extensions → Browse Chrome Web Store to find extensions. Alcove’s Review Extension button opens publisher, compatibility and permission details for the selected profile. Compatible extensions can open regular and compact popup windows, including background windows.
 
           The preview includes a skippable opening greeting, saved-tab folders and an experimental native extension manager. Full uBlock Origin is unsupported; uBlock Origin Lite is separate and has limited tested compatibility. Native extension APIs need macOS 15.4+. Private request-blocking extensions additionally need a fixed system WebKit (624.1.16 or later); affected systems keep private browsing available and refuse that extension association.
 
-          Alcove 0.10 upgrades encrypted metadata from format 5 to format 6 to save window layouts and selections. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt. The metadata stays encrypted.
+          Alcove 0.11 writes encrypted metadata format 7 to protect nested folders from older versions that would flatten them. Existing saved tabs and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
 
           SHA256SUMS.txt contains checksums for both installers. Checksums detect changed bytes; they do not establish developer identity.
           NOTE

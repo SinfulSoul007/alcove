@@ -153,8 +153,8 @@ import CryptoKit
         try storage.save(legacy)
         var migrated = try storage.load(BrowserDocument.self)!
         try migrated.repairProfiles()
-        check(migrated.formatVersion == 6 && migrated.windowRestore == nil && migrated.session == original && migrated.preferences.archiveAfterDays == 3,
-              "An encrypted format-5 document migrates to format 6 with its tabs and preferences intact")
+        check(migrated.formatVersion == BrowserDocument.currentFormatVersion && migrated.windowRestore == nil && migrated.session == original && migrated.preferences.archiveAfterDays == 3,
+              "An encrypted format-5 document migrates with its tabs and preferences intact")
 
         let bounds = CGRect(x: -1400, y: 24, width: 1400, height: 850)
         let outside = BrowserWindowFrame(x: -10_000, y: 10_000, width: 4000, height: 600)
@@ -185,6 +185,13 @@ import CryptoKit
         check(windows.records[0].sidebarWidth == nil && windows.records[0].sidebarVisible == nil &&
               windows.records[1].sidebarWidth == 308 && windows.records[1].sidebarVisible == false,
               "Older records default their sidebar layout and new records preserve width and visibility through encryption")
+        var versionSix = restoredDocument
+        versionSix.formatVersion = 6
+        try storage.save(versionSix)
+        var upgraded = try storage.load(BrowserDocument.self)!
+        try upgraded.repairProfiles()
+        check(upgraded.formatVersion == 7 && upgraded.windowRestore == windows && upgraded.session == versionSix.session,
+              "Format-6 migration preserves window restoration and advances the format past older readers")
         let canonicalEncoder = JSONEncoder()
         canonicalEncoder.outputFormatting = [.sortedKeys]
         let canonical = try canonicalEncoder.encode(windows)
