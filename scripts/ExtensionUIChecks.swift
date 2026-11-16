@@ -160,6 +160,51 @@ actor OwnedExtensionUITransport {
             privateModel.close()
             privateManager.close();privateWindow.close();privateStore.shutdown()
 
+            let replacementWindow = window(store)
+            defer { replacementWindow.close() }
+            let replacementManager = try ExtensionManagerSession(store:store,sourceWindow:replacementWindow,profileID:profile)
+            defer { replacementManager.close() }
+            try store.setExtensionEnabled(id, profileID: profile, enabled: false)
+            let disabled = store.extensionRecords(profileID: profile).first!
+            var exclusions = disabled.grants!
+            exclusions.deniedPermissions = ["tabs"]
+            exclusions.deniedHostPatterns = ["https://example.com/private/*"]
+            try store.setExtensionGrants(id, profileID: profile, grants: exclusions)
+            let replacement = try await replacementManager.reviewFile(source, replacing: id)
+            let replacementModel = ExtensionManagerModel(session: replacementManager)
+            replacementModel.prepareChoices(manifest: replacement.manifest, supported: replacement.supportedPermissions,
+                                            previous: replacement.previous)
+            check(!replacementModel.permissions.contains("tabs"), "An update does not preselect a previously denied optional API")
+            var unapproved = disabled
+            unapproved.revokeApproval()
+            replacementModel.prepareChoices(manifest: replacement.manifest, supported: replacement.supportedPermissions,
+                                            previous: unapproved)
+            check(replacementModel.permissions.isEmpty && replacementModel.sites.isEmpty,
+                  "An unapproved extension starts a replacement review without selected access")
+            var narrowed = disabled
+            narrowed.grants?.hostPatterns = ["https://example.com/help/*", "https://example.com/private/*", "https://old.example/*"]
+            narrowed.grants?.deniedHostPatterns = ["https://example.com/private/*"]
+            narrowed.grants?.permissions.append("tabs")
+            narrowed.grants?.deniedPermissions = ["tabs"]
+            replacementModel.prepareChoices(manifest: replacement.manifest, supported: replacement.supportedPermissions,
+                                            previous: narrowed)
+            check(replacementModel.sites == ["https://example.com/help/*"] &&
+                  replacementModel.websiteChoices.contains("https://example.com/help/*") &&
+                  !replacementModel.websiteChoices.contains("https://old.example/*") && !replacementModel.permissions.contains("tabs"),
+                  "Replacement review exposes surviving site access without preselecting denied or removed access")
+            let approvedReplacement = try await replacementManager.approve(replacement, permissions: ["storage"],
+                                                                           hostPatterns: ["https://example.com/*"], allowPrivate: false)
+            let updated = store.extensionRecords(profileID: profile).first!
+            check(approvedReplacement == id && updated.version == "2" && !updated.enabled && disabled.enabled == false,
+                  "Approving a reviewed update keeps the previously disabled extension disabled")
+            check(updated.grants?.deniedPermissions == ["tabs"] && updated.grants?.deniedHostPatterns == ["https://example.com/private/*"],
+                  "A reviewed replacement retains exclusions inside a previously approved site")
+            let updateRights = try await replacementManager.reviewInstalled(id)
+            try await replacementManager.savePermissions(updateRights, permissions: ["storage"], hostPatterns: ["https://example.com/*"], allowPrivate: false)
+            check(store.extensionRecords(profileID: profile).first == updated,
+                  "Saving unchanged permissions after an update preserves the exclusions and disabled state")
+            replacementModel.close()
+
             let gate=OwnedExtensionUITransport()
             let waiting=BrowserStore(dataRoot:root.appendingPathComponent("waiting"),keyProvider:{_ in key})
             let waitingProfile=try waiting.createProfile(name:"Owned Closing Review")

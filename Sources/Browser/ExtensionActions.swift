@@ -2,7 +2,7 @@ import Foundation
 import BrowserCore
 
 enum ExtensionActionError:LocalizedError {
-    case missing, stale, approvalRequired, invalidApproval, busy, identityChanged
+    case missing, stale, approvalRequired, invalidApproval, busy, identityChanged, currentStoreVersion, olderStoreVersion, unknownStoreVersion
     var errorDescription:String? {
         switch self {
         case .missing: return "This extension no longer exists."
@@ -11,6 +11,9 @@ enum ExtensionActionError:LocalizedError {
         case .invalidApproval: return "Choose permissions declared by this extension and supported by Alcove."
         case .busy: return "An extension installation is still finishing. Try again shortly."
         case .identityChanged:return "This package identifies a different extension. Install it separately so the original extension and its data can still be removed safely."
+        case .currentStoreVersion: return "This extension is up to date."
+        case .olderStoreVersion: return "The Chrome Web Store is offering an older version. Your installed version was kept."
+        case .unknownStoreVersion: return "Alcove couldn’t compare the installed and store versions. Your installed version was kept."
         }
     }
 }
@@ -77,8 +80,12 @@ extension BrowserStore {
         record.signerID = package.signerID; record.storeID = package.storeID; record.publisherVerified = package.publisherVerified
         if let previous,previous.runtimeIdentifier != record.runtimeIdentifier {throw ExtensionActionError.identityChanged}
         if allowPrivate,BrowserExtensionCompatibility.privateAccessIssue(for:record) != nil {throw ExtensionHostError.unsupportedPrivateRequestBlocking}
-        if enable || !permissions.isEmpty || !hostPatterns.isEmpty || allowPrivate {
-            record.grants = ExtensionGrantSet(profileID:profileID,recordID:id,controllerID:profile.extensionControllerID!,packageDigest:package.digest,permissions:permissions,hostPatterns:hostPatterns,allowPrivate:allowPrivate)
+        let priorGrants = previous?.grants
+        let hasDenials = priorGrants?.deniedPermissions?.isEmpty == false || priorGrants?.deniedHostPatterns?.isEmpty == false
+        if enable || !permissions.isEmpty || !hostPatterns.isEmpty || allowPrivate || hasDenials {
+            var grants = ExtensionGrantSet(profileID:profileID,recordID:id,controllerID:profile.extensionControllerID!,packageDigest:package.digest,permissions:permissions,hostPatterns:hostPatterns,allowPrivate:allowPrivate)
+            grants.preserveDenials(from: priorGrants)
+            record.grants = grants
             record.enabled = enable
             record = try validatedExtensionRecord(record,profile:profile)
         }

@@ -108,6 +108,9 @@ import BrowserCore
         do {
             let package=try await withTaskCancellationHandler(operation:{try await worker.value},onCancel:{worker.cancel()});staged=package
             try validate(generation: generation,profileID:profileID,controller:controller,epoch:epoch,previous:previous)
+            if let previous, package.source == .webStore {
+                try validateStoreUpdate(package, replacing: previous)
+            }
             guard #available(macOS 15.4,*) else {throw ExtensionHostError.unavailable}
             // Native parsing is inspection only: no context, controller or code is loaded.
             let native=try await WKWebExtension(resourceBaseURL:package.stagingURL)
@@ -126,6 +129,18 @@ import BrowserCore
             throw error
         }
     }
+    private func validateStoreUpdate(_ package: PreparedExtensionPackage, replacing previous: BrowserExtensionRecord) throws {
+        guard previous.source == .webStore, previous.hasValidIdentity, previous.pendingRemoval != true,
+              package.publisherVerified, package.storeID == previous.storeID, package.signerID == previous.signerID else {
+            throw ExtensionActionError.identityChanged
+        }
+        switch ExtensionManifest.compareVersions(package.manifest.version, previous.version) {
+        case .orderedDescending: return
+        case .orderedSame: throw ExtensionActionError.currentStoreVersion
+        case .orderedAscending: throw ExtensionActionError.olderStoreVersion
+        case nil: throw ExtensionActionError.unknownStoreVersion
+        }
+    }
     private func validate(generation:UUID,profileID:UUID,controller:UUID,epoch:UUID,previous:BrowserExtensionRecord?) throws {
         try Task.checkCancellation();let store=try managementStore()
         guard self.generation==generation,self.profileID==profileID,
@@ -133,13 +148,14 @@ import BrowserCore
               store.extensionReviewEpoch(for:profileID)==epoch else {throw ExtensionActionError.stale}
         if let previous {guard store.extensionRecords(profileID:profileID).first(where:{$0.id==previous.id})==previous else {throw ExtensionActionError.stale}}
     }
-    @discardableResult func approve(_ review:ExtensionInstallPreview,permissions:[String],hostPatterns:[String],allowPrivate:Bool,enable:Bool=true) async throws -> UUID {
+    @discardableResult func approve(_ review:ExtensionInstallPreview,permissions:[String],hostPatterns:[String],allowPrivate:Bool,enable:Bool?=nil) async throws -> UUID {
         let store=try managementStore()
         guard currentReview === review,!review.consumed else {throw ExtensionActionError.stale}
         try validate(generation:review.generation,profileID:review.profileID,controller:review.controllerID,epoch:review.epoch,previous:review.previous)
         // Invalid choices can be corrected without consuming the valid review.
         guard Set(permissions).isSubset(of:Set(review.supportedPermissions)) else {throw ExtensionActionError.invalidApproval}
-        let approval=try store.extensionInstallApproval(for:review.package,profileID:review.profileID,replacing:review.previous?.id,permissions:permissions,hostPatterns:hostPatterns,allowPrivate:allowPrivate,enable:enable)
+        let enabled = enable ?? review.previous?.enabled ?? true
+        let approval=try store.extensionInstallApproval(for:review.package,profileID:review.profileID,replacing:review.previous?.id,permissions:permissions,hostPatterns:hostPatterns,allowPrivate:allowPrivate,enable:enabled)
         review.consumed=true
         let task=Task {@MainActor in try await store.installExtension(review.package,replacing:review.previous?.id,approval:approval)}
         installation=task
@@ -176,7 +192,8 @@ import BrowserCore
         let worker=Task.detached {try ExtensionPackage.inspectInstalled(record:record,profileID:profile,packagesRoot:root)}
         _ = try await withTaskCancellationHandler(operation:{try await worker.value},onCancel:{worker.cancel()})
         try validate(generation:review.generation,profileID:review.profileID,controller:review.controllerID,epoch:review.epoch,previous:review.record)
-        let grants=ExtensionGrantSet(profileID:profile,recordID:record.id,controllerID:review.controllerID,packageDigest:record.packageDigest,permissions:permissions,hostPatterns:hostPatterns,allowPrivate:allowPrivate)
+        var grants=ExtensionGrantSet(profileID:profile,recordID:record.id,controllerID:review.controllerID,packageDigest:record.packageDigest,permissions:permissions,hostPatterns:hostPatterns,allowPrivate:allowPrivate)
+        grants.preserveDenials(from: record.grants)
         try store.setExtensionGrants(record.id,profileID:profile,grants:grants)
         review.consumed=true;currentPermissions=nil
     }

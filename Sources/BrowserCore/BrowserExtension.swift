@@ -19,6 +19,17 @@ public struct ExtensionGrantSet:Codable,Equatable,Sendable {
         self.profileID = profileID; self.recordID = recordID; self.controllerID = controllerID; self.packageDigest = packageDigest
         self.permissions = Array(Set(permissions)).sorted(); self.hostPatterns = Array(Set(hostPatterns)).sorted(); self.allowPrivate = allowPrivate
     }
+
+    public mutating func preserveDenials(from previous: ExtensionGrantSet?) {
+        let approvedPermissions = Set(permissions)
+        deniedPermissions = previous?.deniedPermissions?.filter { !approvedPermissions.contains($0) }
+        let approvedSites = hostPatterns.compactMap(ExtensionMatchPattern.init)
+        // Selecting a wider site leaves a previously denied narrower scope in place.
+        deniedHostPatterns = previous?.deniedHostPatterns?.filter { raw in
+            guard let denied = ExtensionMatchPattern(raw) else { return false }
+            return !approvedSites.contains(denied)
+        }
+    }
 }
 
 public struct BrowserExtensionRecord:Codable,Identifiable,Equatable,Sendable {

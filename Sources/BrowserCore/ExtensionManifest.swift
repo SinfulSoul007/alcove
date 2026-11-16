@@ -43,6 +43,24 @@ public struct ExtensionManifest:Equatable,Sendable {
     public let incognito:String
     public let warnings:[String]
 
+    /// The Chrome Web Store compares up to four numeric components, padding with zeroes.
+    public static func compareVersions(_ candidate: String, _ installed: String) -> ComparisonResult? {
+        guard let candidate = versionComponents(candidate), let installed = versionComponents(installed) else { return nil }
+        if candidate == installed { return .orderedSame }
+        return candidate.lexicographicallyPrecedes(installed) ? .orderedAscending : .orderedDescending
+    }
+
+    private static func versionComponents(_ version: String) -> [UInt16]? {
+        guard version.utf8.count <= 23 else { return nil }
+        let parts = version.split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...4).contains(parts.count), parts.allSatisfy({
+            !$0.isEmpty && $0.utf8.allSatisfy({ 48...57 ~= $0 }) && ($0.count == 1 || !$0.hasPrefix("0"))
+        }) else { return nil }
+        let numbers = parts.compactMap { UInt16($0) }
+        guard numbers.count == parts.count, numbers.contains(where: { $0 != 0 }) else { return nil }
+        return numbers + Array(repeating: 0, count: 4 - numbers.count)
+    }
+
     /// Inspection only. Resource code is neither evaluated nor loaded by this reader.
     public static func parse(_ data:Data,readResource:(String)throws -> Data? = {_ in nil}) throws -> Self {
         let manifest = try ExtensionJSON.object(data,limit:1_048_576)
@@ -66,10 +84,7 @@ public struct ExtensionManifest:Equatable,Sendable {
         guard let number = manifest["manifest_version"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), [2.0,3.0].contains(number.doubleValue) else { throw invalid("supported manifest versions are 2 and 3") }
         let manifestVersion = number.intValue
         let version = try string(manifest["version"],"version",required:true)!
-        let components = version.split(separator:".",omittingEmptySubsequences:false)
-        guard (1...4).contains(components.count), components.allSatisfy({
-            !$0.isEmpty && $0.utf8.allSatisfy({48...57 ~= $0}) && ($0.count == 1 || !$0.hasPrefix("0")) && UInt16($0) != nil
-        }), components.contains(where:{$0 != "0"}) else { throw invalid("version must contain one to four integers from 0 to 65535") }
+        guard versionComponents(version) != nil else { throw invalid("version must contain one to four integers from 0 to 65535") }
         let locale = try string(manifest["default_locale"],"default_locale")
         var resources = Set<String>(), messages:[String:String] = [:], warnings = Set<String>()
         if let locale {

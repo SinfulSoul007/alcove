@@ -5,6 +5,14 @@ func runExtensionManifestChecks(_ check:(Bool,String)->Void) throws {
     func data(_ object:[String:Any]) throws -> Data { try JSONSerialization.data(withJSONObject:object) }
     let minimal:[String:Any] = ["manifest_version":3,"name":"Owned Fixture","version":"1.2.3"]
     func rejects(_ object:[String:Any]) -> Bool { do { _ = try ExtensionManifest.parse(data(object)); return false } catch { return true } }
+    check(ExtensionManifest.compareVersions("1.10", "1.9.65535") == .orderedDescending &&
+          ExtensionManifest.compareVersions("1.9.65535", "1.10") == .orderedAscending,
+          "Store extension updates compare each component numerically")
+    check(ExtensionManifest.compareVersions("3.1", "3.1.0.0") == .orderedSame,
+          "Trailing zero components do not create a new store version")
+    check(ExtensionManifest.compareVersions("1.01", "1.1") == nil &&
+          ExtensionManifest.compareVersions("0.0", "1") == nil,
+          "Invalid manifest versions cannot be ordered as store updates")
     var complete = minimal
     complete["permissions"] = ["storage","activeTab"]; complete["optional_permissions"] = ["tabs"]
     complete["host_permissions"] = ["https://example.com/*"]; complete["optional_host_permissions"] = ["https://*.example.org/*"]

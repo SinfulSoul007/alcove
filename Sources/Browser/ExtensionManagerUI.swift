@@ -12,6 +12,7 @@ import BrowserCore
     @Published var notice:String?
     @Published var permissions=Set<String>()
     @Published var sites=Set<String>()
+    @Published private(set) var websiteChoices: [String] = []
     @Published var allowPrivate=false
     @Published var privateProfileID:UUID?
     @Published private(set) var marketplace: ExtensionMarketplaceBrowser?
@@ -113,17 +114,34 @@ import BrowserCore
             if let self,self.operationID==id {self.busy=false;self.task=nil}
         }
     }
-    func prepareChoices(manifest:ExtensionManifest,supported:[String],grants:ExtensionGrantSet?=nil) {
-        permissions=Set(grants?.permissions ?? manifest.requestedPermissions).intersection(supported)
-        sites=Set(grants?.hostPatterns ?? manifest.hostPermissions)
-        allowPrivate=grants?.allowPrivate==true && manifest.incognito=="spanning"
+    func prepareChoices(manifest: ExtensionManifest, supported: [String], previous: BrowserExtensionRecord? = nil) {
+        let grants = previous?.grants
+        let declared = (manifest.hostPermissions + manifest.optionalHostPermissions).compactMap(ExtensionMatchPattern.init)
+        let initialAPIs = previous == nil ? manifest.requestedPermissions : grants?.permissions ?? []
+        let initialSites = previous == nil ? manifest.hostPermissions : grants?.hostPatterns ?? []
+        permissions = Set(initialAPIs).intersection(supported).subtracting(grants?.deniedPermissions ?? [])
+        let deniedSites = (grants?.deniedHostPatterns ?? []).compactMap(ExtensionMatchPattern.init)
+        sites = Set(initialSites.compactMap(ExtensionMatchPattern.init).filter { pattern in
+            declared.contains { $0.covers(pattern) } && !deniedSites.contains { $0.covers(pattern) }
+        }.map(\.string))
+        websiteChoices = Set(declared.map(\.string)).union(sites).sorted()
+        let privateIssue = BrowserExtensionCompatibility.privateAccessIssue(
+            permissions: manifest.requestedPermissions + manifest.optionalPermissions,
+            webKitBuild: BrowserExtensionCompatibility.webKitBuild
+        )
+        allowPrivate = grants?.allowPrivate == true && manifest.incognito == "spanning" && privateIssue == nil
     }
     func reviewStore(replacing:BrowserExtensionRecord?=nil, location: ExtensionStoreLocation? = nil) {
         let input=replacing?.storeID ?? location?.id ?? storeInput
         run {[weak self] in
             guard let self else {return}
-            let review=try await self.session.reviewWebStore(input,replacing:replacing?.id)
-            self.prepareChoices(manifest:review.manifest,supported:review.supportedPermissions,grants:replacing?.grants)
+            do {
+                let review = try await self.session.reviewWebStore(input, replacing: replacing?.id)
+                self.prepareChoices(manifest: review.manifest, supported: review.supportedPermissions, previous: review.previous)
+            } catch ExtensionActionError.currentStoreVersion {
+                try Task.checkCancellation()
+                self.notice = ExtensionActionError.currentStoreVersion.localizedDescription
+            }
         }
     }
     func chooseFile(replacing:BrowserExtensionRecord?=nil) {
@@ -138,7 +156,7 @@ import BrowserCore
             self.run {[weak self] in
                 guard let self else {return}
                 let review=try await self.session.reviewFile(url,replacing:replacing?.id)
-                self.prepareChoices(manifest:review.manifest,supported:review.supportedPermissions,grants:replacing?.grants)
+                self.prepareChoices(manifest: review.manifest, supported: review.supportedPermissions, previous: review.previous)
             }
         }
     }
@@ -146,7 +164,7 @@ import BrowserCore
         run {[weak self] in
             guard let self else {return}
             let review=try await self.session.reviewInstalled(record.id)
-            self.prepareChoices(manifest:review.manifest,supported:review.supportedPermissions,grants:record.grants)
+            self.prepareChoices(manifest: review.manifest, supported: review.supportedPermissions, previous: review.record)
         }
     }
     func save() {
@@ -160,7 +178,8 @@ import BrowserCore
             }
             else if let existing {try await self.session.savePermissions(existing,permissions:permissions,hostPatterns:sites,allowPrivate:allowPrivate)}
             else {throw ExtensionActionError.stale}
-            self.notice=install==nil ? "Permissions saved.":"Extension installed."
+            if let install { self.notice = install.previous == nil ? "Extension installed." : "Extension updated." }
+            else { self.notice = "Permissions saved." }
             await self.activate()
         }
     }
@@ -331,13 +350,17 @@ private struct ExtensionManagerView:View {
                 HStack {
                     Text("Only the access you select is approved.").font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Button(session.currentPermissions==nil ? "Approve and Install":"Save Permissions",action:model.save).buttonStyle(.borderedProminent).disabled(model.busy || !session.canManage)
+                    Button(approvalTitle, action: model.save).buttonStyle(.borderedProminent).disabled(model.busy || !session.canManage)
                 }.padding(16)
             }
         }.frame(minWidth:480,minHeight:300)
         .confirmationDialog("Remove \(removing?.name ?? "extension") and its saved data?",isPresented:Binding(get:{removing != nil},set:{if !$0 {removing=nil}}),titleVisibility:.visible) {
             if let removing {Button("Remove Extension",role:.destructive){model.remove(removing);self.removing=nil}}
         } message:{Text("This removes the extension’s local settings and website data from this profile. It cannot be undone.")}
+    }
+    private var approvalTitle: String {
+        if session.currentPermissions != nil { return "Save Permissions" }
+        return session.currentReview?.previous == nil ? "Approve and Install" : "Approve and Update"
     }
     private var catalog:some View {
         VStack(alignment:.leading,spacing:16) {
@@ -373,7 +396,7 @@ private struct ExtensionManagerView:View {
                             Button("Permissions…"){model.reviewPermissions(record)}
                             Button("Options…"){model.options(record)}.disabled(!record.enabled)
                             Menu("Update") {
-                                if record.source == .webStore {Button("Review Latest Store Version"){model.reviewStore(replacing:record)}}
+                                if record.source == .webStore {Button("Check for Store Update"){model.reviewStore(replacing:record)}}
                                 Button("Choose Updated Package…"){model.chooseFile(replacing:record)}
                             }.fixedSize()
                             Spacer()
@@ -405,7 +428,7 @@ private struct ExtensionManagerView:View {
             }
             Text("Website access").font(.headline)
             Text("Approved sites may be read or changed by this extension. All-sites access covers HTTP and HTTPS; local files are excluded.").font(.caption).foregroundStyle(.secondary)
-            ForEach(Array(Set(manifest.hostPermissions+manifest.optionalHostPermissions)).sorted(),id:\.self) {value in
+            ForEach(model.websiteChoices,id:\.self) {value in
                 Toggle(isOn:choice(value,in:$model.sites)) {Text(value).textSelection(.enabled)}
             }
             let privateIssue=BrowserExtensionCompatibility.privateAccessIssue(permissions:manifest.requestedPermissions+manifest.optionalPermissions,webKitBuild:BrowserExtensionCompatibility.webKitBuild)
