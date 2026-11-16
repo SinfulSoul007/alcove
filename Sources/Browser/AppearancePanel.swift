@@ -52,6 +52,14 @@ struct AppearancePanel: View {
                             ColorPicker("Accent", selection: customColor(\.accent), supportsOpacity: false)
                         }.font(.system(size: 12))
                         Toggle("Use a gradient", isOn: Binding(get: { store.activeTheme.palette.useGradient }, set: { var palette = store.activeTheme.palette; palette.useGradient = $0; store.setCustomTheme(palette) }))
+                        HStack(spacing: 20) {
+                            Slider(value: themeEffect(\.intensity, reading: \.intensityValue, defaultValue: 1), in: 0...1.5, step: 0.05) {
+                                Text("Color intensity")
+                            }
+                            Slider(value: themeEffect(\.grain, reading: \.grainValue, defaultValue: 0), in: 0...1, step: 0.05) {
+                                Text("Grain")
+                            }
+                        }
                         Text("Colors adapt to keep tab text and accents readable.").font(.caption).foregroundStyle(.secondary)
                     }
                     Divider()
@@ -92,6 +100,18 @@ struct AppearancePanel: View {
     private func customColor(_ path: WritableKeyPath<CustomTheme, ThemeColor>) -> Binding<Color> {
         Binding(get: { store.activeTheme.palette[keyPath: path].color }, set: { var palette = store.activeTheme.palette; palette[keyPath: path] = ThemeColor($0); store.setCustomTheme(palette) })
     }
+
+    private func themeEffect(_ path: WritableKeyPath<CustomTheme, Double?>,
+                             reading normalized: KeyPath<CustomTheme, Double>, defaultValue: Double) -> Binding<Double> {
+        let spaceID = store.space.id
+        return Binding(get: { store.activeTheme.palette[keyPath: normalized] }, set: { value in
+            guard store.space.id == spaceID, store.canManageSpace(spaceID) else { return }
+            var palette = store.activeTheme.palette
+            guard value != palette[keyPath: normalized] else { return }
+            palette[keyPath: path] = value == defaultValue ? nil : value
+            store.setCustomTheme(palette)
+        })
+    }
 }
 
 struct AppearancePreview: View {
@@ -109,6 +129,6 @@ struct AppearancePreview: View {
                 Spacer(minLength: 0)
             }.padding(10).frame(width: 140)
             RoundedRectangle(cornerRadius: settings.cornerRadius).fill(theme.isDark ? Color(white: 0.1) : .white).overlay(Image(systemName: "sun.horizon").font(.system(size: 28, weight: .ultraLight)).foregroundStyle(theme.accent.opacity(0.5))).padding([.trailing, .vertical], 7)
-        }.background(theme.gradient).foregroundStyle(theme.ink).clipShape(RoundedRectangle(cornerRadius: 13)).overlay(RoundedRectangle(cornerRadius: 13).stroke(.primary.opacity(0.06)))
+        }.background { theme.surface }.foregroundStyle(theme.ink).clipShape(RoundedRectangle(cornerRadius: 13)).overlay(RoundedRectangle(cornerRadius: 13).stroke(.primary.opacity(0.06)))
     }
 }

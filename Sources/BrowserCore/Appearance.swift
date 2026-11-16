@@ -22,6 +22,12 @@ public struct ThemeColor: Codable, Equatable, Hashable {
         let amount = min(1, max(0, fraction))
         return ThemeColor(red + (other.red - red) * amount, green + (other.green - green) * amount, blue + (other.blue - blue) * amount)
     }
+    fileprivate func withSaturation(_ amount: Double) -> ThemeColor {
+        guard amount != 1 else { return self }
+        let gray = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        return ThemeColor(gray + (red - gray) * amount, gray + (green - gray) * amount,
+                          gray + (blue - gray) * amount)
+    }
     public func contrast(with other: ThemeColor) -> Double { (max(luminance, other.luminance) + 0.05) / (min(luminance, other.luminance) + 0.05) }
     public var luminance: Double {
         func linear(_ value: Double) -> Double { value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4) }
@@ -39,19 +45,38 @@ public struct CustomTheme: Codable, Equatable {
     public var secondary: ThemeColor
     public var accent: ThemeColor
     public var useGradient: Bool
+    public var intensity: Double?
+    public var grain: Double?
     public init(background: ThemeColor, secondary: ThemeColor, accent: ThemeColor, useGradient: Bool = true) { self.background = background; self.secondary = secondary; self.accent = accent; self.useGradient = useGradient }
+    public var intensityValue: Double {
+        guard let intensity, intensity.isFinite else { return 1 }
+        return min(1.5, max(0, intensity))
+    }
+    public var grainValue: Double {
+        guard let grain, grain.isFinite else { return 0 }
+        return min(1, max(0, grain))
+    }
+    public var grainOpacity: Double { grainValue * 0.08 }
+
     /// Retain the user's colors in storage while keeping text and accents legible on screen.
     public var resolvedForDisplay: CustomTheme {
+        let start = background.withSaturation(intensityValue)
+        let end = secondary.withSaturation(intensityValue)
         var resolved = self
-        let foreground = ThemeColor.readableForeground(over: useGradient ? [background, secondary] : [background])
+        let foreground = ThemeColor.readableForeground(over: useGradient ? [start, end] : [start])
         let shade: ThemeColor = foreground == .white ? .black : .white
         func samples(_ palette: CustomTheme) -> [ThemeColor] {
-            (0...16).map { palette.background.mixed(with: palette.useGradient ? palette.secondary : palette.background, fraction: Double($0) / 16) }
+            let colors = (0...16).map {
+                palette.background.mixed(with: palette.useGradient ? palette.secondary : palette.background, fraction: Double($0) / 16)
+            }
+            let grain = palette.grainOpacity
+            guard grain > 0 else { return colors }
+            return colors.flatMap { [$0.mixed(with: .black, fraction: grain), $0.mixed(with: .white, fraction: grain)] }
         }
         for step in 0...20 {
             let amount = Double(step) / 20
-            resolved.background = background.mixed(with: shade, fraction: amount)
-            resolved.secondary = secondary.mixed(with: shade, fraction: amount)
+            resolved.background = start.mixed(with: shade, fraction: amount)
+            resolved.secondary = end.mixed(with: shade, fraction: amount)
             if samples(resolved).allSatisfy({ foreground.contrast(with: $0) >= 7 }) { break }
         }
         let backgrounds = samples(resolved)

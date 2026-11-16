@@ -185,7 +185,7 @@ struct RecentTabPanel: View {
             }
         }.padding(10)
             .foregroundStyle(theme.ink)
-            .background(theme.gradient, in: RoundedRectangle(cornerRadius: 14))
+            .background { theme.surface.clipShape(RoundedRectangle(cornerRadius: 14)) }
             .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(theme.ink.opacity(0.16)) }
             .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
             .accessibilityElement(children: .contain)

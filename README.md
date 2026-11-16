@@ -13,7 +13,7 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 ## Features
 
 - Compact, resizable Arc-style sidebar with Favorites tiles, pinned tabs/folders, Today and named Spaces.
-- Twelve per-Space themes, custom gradients/accent colors, Space icons and a live appearance preview.
+- Twelve per-Space themes, custom gradients and accent colors, color intensity, grain, Space icons, and a live appearance preview.
 - Tab density, text size, corner rounding, responsive Favorite columns, icon/close-button visibility and reduced-motion support.
 - A bottom Space dock and delayed collapsed-sidebar edge reveal; sidebar drag width saves on release.
 - Themed Spaces overview, rename/icons/reordering, and encrypted Recently Deleted/Undo recovery.

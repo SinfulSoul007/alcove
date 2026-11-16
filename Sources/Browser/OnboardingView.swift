@@ -23,7 +23,7 @@ struct OnboardingView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                store.activeTheme.gradient
+                store.activeTheme.surface
                     .overlay {
                         Circle().fill(store.activeTheme.accent.opacity(0.1)).frame(width: 520, height: 520)
                             .blur(radius: 90).offset(x: 240, y: -140).accessibilityHidden(true)

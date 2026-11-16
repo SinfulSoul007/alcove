@@ -23,6 +23,50 @@ let gradientSamples = (0...100).map { displayed.background.mixed(with: displayed
 check(gradientSamples.allSatisfy { foreground.contrast(with: $0) >= 7 }, "Opposite-brightness custom gradient stays readable across its full width")
 check(gradientSamples.allSatisfy { displayed.accent.contrast(with: $0) >= 3 }, "Matching accent and background cannot hide folder icons")
 check(extremes.background == .black && extremes.secondary == .white, "Display contrast adjustment preserves the chosen colors")
+let legacyData = Data("""
+    {"background":{"red":0.9,"green":0.36,"blue":0.18},"secondary":{"red":0.2,"green":0.75,"blue":0.34},
+     "accent":{"red":0.75,"green":0.2,"blue":0.4},"useGradient":true}
+    """.utf8)
+let originalTheme = try JSONDecoder().decode(CustomTheme.self, from: legacyData)
+check(originalTheme.intensityValue == 1 && originalTheme.grainValue == 0,
+      "Older custom themes keep full color and render without grain")
+let legacyDisplay = originalTheme.resolvedForDisplay
+func sameColor(_ actual: ThemeColor, _ expected: ThemeColor) -> Bool {
+    abs(actual.red - expected.red) < 1e-12 && abs(actual.green - expected.green) < 1e-12 &&
+      abs(actual.blue - expected.blue) < 1e-12
+}
+check(sameColor(legacyDisplay.background, ThemeColor(0.915, 0.456, 0.303)) &&
+      sameColor(legacyDisplay.secondary, ThemeColor(0.32, 0.7875, 0.439)) &&
+      sameColor(legacyDisplay.accent, ThemeColor(0.4875, 0.13, 0.26)) &&
+      ThemeColor.readableForeground(over: [legacyDisplay.background, legacyDisplay.secondary]) == .black,
+      "Older custom gradients retain the same resolved colors and foreground")
+var muted = originalTheme
+muted.intensity = 0
+muted.grain = 1
+let mutedDisplay = muted.resolvedForDisplay
+check(mutedDisplay.background.red == mutedDisplay.background.green &&
+      mutedDisplay.background.green == mutedDisplay.background.blue &&
+      mutedDisplay.secondary.red == mutedDisplay.secondary.blue && muted.background == originalTheme.background,
+      "Zero intensity desaturates both stops without overwriting the chosen colors")
+let foregroundWithGrain = ThemeColor.readableForeground(over: [mutedDisplay.background, mutedDisplay.secondary])
+let surfaceSamples = (0...100).flatMap { step in
+    let color = mutedDisplay.background.mixed(with: mutedDisplay.secondary, fraction: Double(step) / 100)
+    return [color.mixed(with: .black, fraction: muted.grainOpacity),
+            color.mixed(with: .white, fraction: muted.grainOpacity)]
+}
+check(surfaceSamples.allSatisfy { foregroundWithGrain.contrast(with: $0) >= 7 &&
+      mutedDisplay.accent.contrast(with: $0) >= 3 },
+      "Text and folder accents stay readable between stops with the strongest grain")
+var malformed = muted
+malformed.intensity = -.infinity
+malformed.grain = 2
+check(malformed.intensityValue == 1 && malformed.grainValue == 1,
+      "Non-finite or out-of-range theme controls normalize before rendering")
+var workspace = Space(name: "Owned appearance test")
+workspace.customTheme = muted
+let restoredSpace = try JSONDecoder().decode(Space.self, from: JSONEncoder().encode(workspace))
+check(restoredSpace.customTheme == muted && restoredSpace.customTheme?.grainValue == 1,
+      "Intensity and grain round-trip with the Space palette")
 check(OnboardingPolicy.shouldPresent(isPrivate: false, savingEnabled: true, completed: false, hasSavedDocument: false), "A fresh install receives the welcome experience")
 check(!OnboardingPolicy.shouldPresent(isPrivate: true, savingEnabled: true, completed: false, hasSavedDocument: false), "Private windows never run or persist onboarding")
 check(!OnboardingPolicy.shouldPresent(isPrivate: false, savingEnabled: true, completed: nil, hasSavedDocument: true), "Upgrading an existing session does not replay first-launch setup")
