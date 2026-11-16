@@ -330,10 +330,45 @@ import BrowserCore
         let bytes = try Data(contentsOf:reopened.sessionURL)
         check(bytes.range(of:Data("Research".utf8)) == nil,"Saved folder names remain inside encrypted metadata")
         reopened.shutdown()
+        let namedRoot = root.appendingPathComponent("sidebar-names")
+        let named = BrowserStore(dataRoot: namedRoot, keyProvider: { _ in key })
+        let namedID = named.newTab(url: URL(string: "about:blank#named-tab"))
+        let namedWeb = named.view(for: namedID)
+        let firstName = try named.beginSidebarRename(namedID)
+        try named.renameSidebarTab(firstName, to: "  Project notes  ")
+        named.update(namedID) { $0.title = "Updated website title" }
+        check(named.tab(namedID)?.sidebarTitle == "Project notes" && named.tab(namedID)?.title == "Updated website title" &&
+              named.views[namedID] === namedWeb, "A sidebar name survives a website title change and keeps the live page mounted")
+        named.showCommand(new: true)
+        named.command = "Project notes"
+        check(CommandPanel.options(for: named).contains { $0.id == namedID.uuidString && $0.title == "Switch to Project notes" } &&
+              named.availableCommands.contains(.renameTab) && BrowserCommand.renameTab.matches("rename tab"),
+              "Command search recognizes user names and the keyboard-accessible rename action")
+        named.dismissCommand()
+        rejects("Sidebar labels cannot contain a line separator") {
+            try named.renameSidebarTab(named.beginSidebarRename(namedID), to: "First\u{2028}Second")
+        }
+        rejects("A stale tab editor cannot overwrite a newer sidebar name") {
+            try named.renameSidebarTab(firstName, to: "Stale")
+        }
+        let nameEdit = try named.beginSidebarRename(namedID)
+        named.toggleFavorite(namedID)
+        check(named.favorites.first(where: { $0.id == namedID })?.sidebarTitle == "Project notes", "Promoting a tab to Favorites retains its custom name")
+        try named.renameSidebarTab(nameEdit, to: "Reference")
+        check(named.tab(namedID)?.sidebarTitle == "Reference" && named.favorites.first(where: { $0.id == namedID })?.sidebarTitle == "Reference",
+              "Renaming synchronizes the Space tab and Favorites entry")
+        named.shutdown()
+        let restoredName = BrowserStore(dataRoot: namedRoot, keyProvider: { _ in key })
+        check(restoredName.tab(namedID)?.sidebarTitle == "Reference", "Encrypted metadata restores the tab name")
+        try restoredName.renameSidebarTab(restoredName.beginSidebarRename(namedID), to: "")
+        check(restoredName.tab(namedID)?.customTitle == nil && restoredName.tab(namedID)?.sidebarTitle == "Updated website title",
+              "Clearing the custom name restores the original pinned title")
+        restoredName.shutdown()
         var legacy = Space(name:"Legacy"),legacyTab = BrowserCore.Tab(title:"Legacy pin",url:"https://example.invalid/legacy",pinned:true)
         legacyTab.folder = "Imported";legacy.tabs = [legacyTab]
         let legacyRoundTrip = try JSONDecoder().decode(Space.self,from:JSONEncoder().encode(legacy))
         check(legacyRoundTrip.folderNames == ["Imported"],"Legacy tab memberships remain visible without explicit folder definitions")
+        check(legacyRoundTrip.tabs.first?.sidebarTitle == "Legacy pin", "Legacy tabs use their website-derived titles without migration")
         check(legacyRoundTrip.pinnedShelfCollapsed != true, "Legacy Spaces start with Pinned expanded")
         let topologyFixture = Space(name: "Hierarchy")
         var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(topologyFixture)) as! [String: Any]
@@ -413,6 +448,9 @@ import BrowserCore
         var privateKeys = 0
         let privateRoot = root.appendingPathComponent("private-folders"),temporary = BrowserStore(isPrivate:true,dataRoot:privateRoot,keyProvider:{_ in privateKeys += 1;return key})
         let target = temporary.space.id,id = temporary.newTab(url:URL(string:"https://example.invalid/folder")!),web = temporary.view(for:id)
+        try temporary.renameSidebarTab(temporary.beginSidebarRename(id), to: "Temporary notes")
+        check(temporary.tab(id)?.sidebarTitle == "Temporary notes" && privateKeys == 0 &&
+              !FileManager.default.fileExists(atPath: temporary.sessionURL.path), "Private sidebar names stay in memory")
         try temporary.setPinnedShelfCollapsed(true, in: target)
         check(temporary.space.pinnedShelfCollapsed == true && privateKeys == 0 && !FileManager.default.fileExists(atPath: temporary.sessionURL.path),
               "Private Pinned disclosure stays in memory")

@@ -18,6 +18,7 @@ extension BrowserStore {
             case .newSpace,.renameSpace,.deleteSpace,.newFolder: return canManageSpace(space.id)
             case .collapsePinned: return space.pinnedShelfCollapsed != true && canManageSpace(space.id)
             case .expandPinned: return space.pinnedShelfCollapsed == true && canManageSpace(space.id)
+            case .renameTab: return focusedID.map { (try? beginSidebarRename($0)) != nil } ?? false
             case .restoreSpace: return canUndoSpaceDeletion
             case .splitLeft, .splitRight, .splitTop, .splitBottom:
                 return !isShuttingDown && !awaitingInitialMetadata &&
@@ -52,6 +53,7 @@ extension BrowserStore {
         case .newFolder: requestNewTabFolder()
         case .collapsePinned: requestPinnedShelfCollapsed(true, in: space.id)
         case .expandPinned: requestPinnedShelfCollapsed(false, in: space.id)
+        case .renameTab: if let id = focusedID { requestRenameSidebarTab(id) }
         case .renameSpace: requestRenameSpace(space.id)
         case .deleteSpace: requestDeleteSpace(space.id)
         case .restoreSpace: undoSpaceDeletion()

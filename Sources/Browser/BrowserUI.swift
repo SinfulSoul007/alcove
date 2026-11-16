@@ -370,7 +370,16 @@ struct BrowserUI: View {
                         ForEach(store.favorites) { tab in
                             Button { store.selectAny(tab.id) } label: {
                                 SiteBadge(url: tab.homeURL ?? tab.url, large: true, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil).frame(maxWidth: .infinity).frame(height: 48).background(store.focusedID == tab.id ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: 10))
-                            }.buttonStyle(.plain).help(tab.pinnedTitle ?? tab.title).onDrag { store.beginSidebarTabDrag(tab.id) }.contextMenu { TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id); Button("Remove from Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata); Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) }.disabled(!store.canModifyLocalMetadata) }
+                            }.buttonStyle(.plain).help(tab.sidebarTitle).accessibilityLabel(tab.sidebarTitle)
+                                .onDrag { store.beginSidebarTabDrag(tab.id) }.contextMenu {
+                                    Button("Rename Tab…") { store.requestRenameSidebarTab(tab.id) }.disabled(!store.canModifyLocalMetadata)
+                                    if tab.customTitle != nil {
+                                        Button("Restore Tab Name") { store.restoreSidebarTabName(tab.id) }.disabled(!store.canModifyLocalMetadata)
+                                    }
+                                    TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id)
+                                    Button("Remove from Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata)
+                                    Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) }.disabled(!store.canModifyLocalMetadata)
+                                }
                         }
                     }
                     }.frame(height: favoritesHeight).accessibilityLabel("Favorites").padding(.horizontal, 8).padding(.bottom, 8).onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .favorites))
@@ -501,31 +510,44 @@ struct SidebarTabRow: View {
     @State private var hovered = false
     @State private var rowWidth: CGFloat = 0
     @State private var splitHover: SidebarSplitHover?
+    @State private var rename: SidebarTabRename?
+    @State private var renameText = ""
     @StateObject private var extensionMenuAnchor=ExtensionTabMenuAnchor()
     var body: some View {
         let split = store.splitGroup(containing: tab.id)
         let hasSplitPane = store.splitLayout?.tabIDs.contains(tab.id) == true
         let fullSplit = store.visiblePaneIDs.count >= BrowserSplitLayout.maximumPanes
         return HStack(spacing: 7) {
-            Button { store.select(tab.id) } label: {
+            if let rename {
                 HStack(spacing: 9) {
                     SiteBadge(url: tab.homeURL ?? tab.url, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil)
-                    Text(tab.pinned ? (tab.pinnedTitle ?? tab.title) : tab.title)
-                        .font(.system(size: 12 * appearance.textScale, weight: store.focusedID == tab.id ? .semibold : .medium)).lineLimit(1)
-                    Spacer(minLength: 0)
-                    if let split {
-                        Image(systemName: split.axis == .columns ? "rectangle.split.2x1" : "rectangle.split.1x2")
-                            .font(.system(size: 10)).foregroundStyle(.secondary).accessibilityHidden(true)
-                    }
-                }.contentShape(Rectangle())
-            }.buttonStyle(.plain)
-                .accessibilityHint(split == nil ? "" : "Opens this page in its split group")
+                    FocusedInput(text: $renameText, placeholder: "Tab name", size: 12 * appearance.textScale,
+                                 selectAll: true, onSubmit: { saveRename(rename) }, onCancel: { self.rename = nil },
+                                 onEndEditing: { if self.rename?.id == rename.id { self.rename = nil } })
+                        .frame(height: max(18, appearance.rowHeight - 8))
+                }.padding(.trailing, 6)
+            } else {
+                Button { store.select(tab.id) } label: {
+                    HStack(spacing: 9) {
+                        SiteBadge(url: tab.homeURL ?? tab.url, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil)
+                        Text(tab.sidebarTitle)
+                            .font(.system(size: 12 * appearance.textScale, weight: store.focusedID == tab.id ? .semibold : .medium)).lineLimit(1)
+                        Spacer(minLength: 0)
+                        if let split {
+                            Image(systemName: split.axis == .columns ? "rectangle.split.2x1" : "rectangle.split.1x2")
+                                .font(.system(size: 10)).foregroundStyle(.secondary).accessibilityHidden(true)
+                        }
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                    .accessibilityHint(split == nil ? "" : "Opens this page in its split group")
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { startRename() })
+                    .onDrag { store.beginSidebarTabDrag(tab.id) }
+            }
             Button { store.close(tab.id) } label: { Image(systemName: "xmark").font(.system(size: 9)).frame(width: 18, height: 22) }.buttonStyle(.plain).opacity(hovered || appearance.alwaysShowCloseButtons ? 0.65 : 0).help(tab.pinned ? "Close page and keep pin" : "Close tab").accessibilityLabel(tab.pinned ? "Close pinned page" : "Close tab")
         }.padding(.horizontal, 10).frame(height: appearance.rowHeight)
         .background(store.focusedID == tab.id ? theme.selected : (hovered || hasSplitPane ? theme.tile : .clear),
                     in: RoundedRectangle(cornerRadius: appearance.cornerRadius))
         .onHover { hovered = $0 }.animation(motion, value: hovered)
-        .onDrag { store.beginSidebarTabDrag(tab.id) }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rowWidth = $0 }
         .overlay(alignment: splitHover?.edge == .left ? .leading : .trailing) {
             if splitHover?.valid == true {
@@ -537,6 +559,10 @@ struct SidebarTabRow: View {
                                                                before: tab.id, folder: tab.folder, rowWidth: rowWidth, hover: $splitHover))
         .background(ExtensionTabAnchorReader(anchor:extensionMenuAnchor))
         .contextMenu {
+            Button("Rename Tab") { startRename() }.disabled(!store.canModifyLocalMetadata || tab.url.isEmpty)
+            if tab.customTitle != nil {
+                Button("Restore Tab Name") { store.restoreSidebarTabName(tab.id) }.disabled(!store.canModifyLocalMetadata)
+            }
             Button(tab.pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id) }.disabled(!store.canModifyLocalMetadata)
             Button("Add to Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata)
             TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id)
@@ -561,6 +587,19 @@ struct SidebarTabRow: View {
             Divider()
             Button(tab.pinned ? "Remove from Sidebar" : "Close Tab") { if tab.pinned { store.removeFromSidebar(tab.id) } else { store.close(tab.id) } }.disabled(tab.pinned && !store.canModifyLocalMetadata)
         }
+    }
+
+    private func startRename() {
+        guard let snapshot = try? store.beginSidebarRename(tab.id) else { return }
+        renameText = snapshot.displayedName
+        rename = snapshot
+    }
+
+    private func saveRename(_ snapshot: SidebarTabRename) {
+        do {
+            try store.renameSidebarTab(snapshot, to: renameText)
+            rename = nil
+        } catch { store.message = error.localizedDescription }
     }
 }
 
@@ -587,9 +626,9 @@ struct SidebarTabRow: View {
                 results.append(CommandResult(id: command.rawValue, title: command.title, icon: "command", run: { store.runCommand(command) }))
             }
             if store.commandOpensNewTab || !query.contains("://") {
-                for tab in store.profileTabs.filter({ !$0.url.isEmpty && ($0.title.localizedCaseInsensitiveContains(query) || $0.url.localizedCaseInsensitiveContains(query)) }).prefix(5) {
+                for tab in store.profileTabs.filter({ !$0.url.isEmpty && ($0.sidebarTitle.localizedCaseInsensitiveContains(query) || $0.title.localizedCaseInsensitiveContains(query) || $0.url.localizedCaseInsensitiveContains(query)) }).prefix(5) {
                     let quick = store.quickPage(tab.id) != nil
-                    results.append(CommandResult(id: tab.id.uuidString, title: "\(quick ? "Quick Browse" : "Switch to") \(tab.pinnedTitle ?? tab.title)", icon: quick ? "arrow.up.forward.square" : "rectangle.on.rectangle", run: { store.selectAny(tab.id); store.dismissCommand() }))
+                    results.append(CommandResult(id: tab.id.uuidString, title: "\(quick ? "Quick Browse" : "Switch to") \(tab.sidebarTitle)", icon: quick ? "arrow.up.forward.square" : "rectangle.on.rectangle", run: { store.selectAny(tab.id); store.dismissCommand() }))
                 }
             }
         }

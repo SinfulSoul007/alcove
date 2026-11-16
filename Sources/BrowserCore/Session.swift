@@ -28,10 +28,12 @@ public struct Tab: Codable, Identifiable, Equatable {
     public var favorite: Bool?
     public var homeURL: String?
     public var pinnedTitle: String?
+    public var customTitle: String?
     public var folder: String?
     public var lastAccessed: Date?
     public var archiveSource: String?
     public var archivedSpaceID: UUID?
+    public var sidebarTitle: String { customTitle ?? (pinned ? pinnedTitle ?? title : title) }
     public init(title: String = "New Tab", url: String = "", pinned: Bool = false) {
         self.title = title; self.url = url; self.pinned = pinned; self.lastAccessed = Date()
     }

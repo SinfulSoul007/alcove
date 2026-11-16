@@ -13,6 +13,7 @@ struct FocusedInput: NSViewRepresentable {
     var onMove: (Int) -> Void = { _ in }
     var onTab: () -> Bool = { false }
     var onEmptyDelete: () -> Bool = { false }
+    var onEndEditing: (() -> Void)?
     final class Field: NSTextField {
         var focusOnAttach = true
         var selectAllOnAttach = false
@@ -25,8 +26,10 @@ struct FocusedInput: NSViewRepresentable {
         func requestFocus(selectAll: Bool) {
             DispatchQueue.main.async { [weak self] in
                 guard let self, let window = self.window else { return }
-                window.makeFirstResponder(self)
-                if selectAll { self.selectText(nil) }
+                if self.currentEditor().map({ window.firstResponder === $0 }) != true {
+                    guard window.makeFirstResponder(self) else { return }
+                }
+                if selectAll { self.currentEditor()?.selectAll(nil) }
             }
         }
     }
@@ -36,6 +39,10 @@ struct FocusedInput: NSViewRepresentable {
         init(_ parent: FocusedInput) { self.parent = parent; lastFocusRequest = parent.focusRequest }
         func controlTextDidChange(_ notification: Notification) {
             if let field = notification.object as? NSTextField { parent.text = field.stringValue }
+        }
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard let action = parent.onEndEditing else { return }
+            DispatchQueue.main.async(execute: action)
         }
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             guard !textView.hasMarkedText() else { return false }

@@ -106,7 +106,7 @@ extension BrowserStore {
             space.tabs.compactMap { tab -> RecentTabEntry? in
                 guard !tab.url.isEmpty else { return nil }
                 return RecentTabEntry(id: tab.id, spaceID: space.id, spaceName: space.name,
-                                      title: tab.pinnedTitle ?? tab.title, url: tab.url,
+                                      title: tab.sidebarTitle, url: tab.url,
                                       lastAccessed: tab.lastAccessed)
             }
         }

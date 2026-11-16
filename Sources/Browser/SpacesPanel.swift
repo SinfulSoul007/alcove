@@ -201,7 +201,7 @@ struct SpacePreview: View {
         }
     }
     @ViewBuilder private func preview(_ tab:BrowserCore.Tab) -> some View {
-        let row = HStack(spacing:8) { Image(systemName:tab.pinned ? "pin.fill" : "globe").font(.system(size:11)).opacity(0.6); Text(tab.pinnedTitle ?? tab.title).font(.system(size:12 * store.appearance.textScale)).lineLimit(1); Spacer(minLength:0) }.padding(.vertical,7).contentShape(Rectangle())
+        let row = HStack(spacing:8) { Image(systemName:tab.pinned ? "pin.fill" : "globe").font(.system(size:11)).opacity(0.6); Text(tab.sidebarTitle).font(.system(size:12 * store.appearance.textScale)).lineLimit(1); Spacer(minLength:0) }.padding(.vertical,7).contentShape(Rectangle())
         if interactive {
             Button { store.selectSpace(space.id); store.select(tab.id); store.presentedPanel = nil } label: { row }
                 .buttonStyle(.plain).help(tab.url).disabled(store.isShuttingDown || store.profileUnavailable(space.effectiveProfileID))
