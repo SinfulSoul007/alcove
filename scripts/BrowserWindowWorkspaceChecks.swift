@@ -225,6 +225,37 @@ import CryptoKit
         check(readBack.windowRestore?.records[1].splitGroups == [valid] && readBack.windowRestore?.records[1].frame == outside,
               "Split restore skips malformed groups, foreign tabs and duplicates and retains the valid ordered group")
 
+        var resized = valid
+        check(resized.rememberPaneSizes([120, 280]), "A split records relative pane sizes from a completed resize")
+        check(resized.paneFractions == [0.3, 0.7], "A split stores proportions independently of the old window width")
+        let widened = resized.fittedPaneLengths(available: 800, minimum: 120)
+        check(widened == [240, 560], "A wider window restores the requested split proportions")
+        let constrained = resized.fittedPaneLengths(available: 360, minimum: 160)
+        check(constrained == [160, 200] && resized.paneFractions == [0.3, 0.7],
+              "A temporarily narrow split respects minimum pane sizes without changing its saved proportions")
+        check(!resized.rememberPaneSizes([.infinity, 200]) && !resized.rememberPaneSizes([200]) &&
+              resized.paneFractions == [0.3, 0.7], "Invalid native samples cannot overwrite a saved split size")
+        var resizedDocument = latest
+        let repairedWindowState = latest.windowRestore!
+        let resizedRecord = BrowserWindowRestoreRecord(selection: repairedWindowState.records[1].selection, frame: outside, splitGroups: [resized])
+        resizedDocument.windowRestore = BrowserWindowRestoreState(records: [repairedWindowState.records[0], resizedRecord],
+                                                                 focusedWindowID: repairedWindowState.focusedWindowID,
+                                                                 assignments: repairedWindowState.assignments)
+        try storage.save(resizedDocument)
+        var restoredSizes = try storage.load(BrowserDocument.self)!
+        try restoredSizes.repairProfiles()
+        check(restoredSizes.windowRestore?.records[1].splitGroups?.first?.paneFractions == [0.3, 0.7],
+              "Split proportions survive the existing encrypted window restoration path")
+        var malformedSize = try JSONSerialization.jsonObject(with: JSONEncoder().encode(resized)) as! [String: Any]
+        malformedSize["paneFractions"] = "bad size"
+        let recoveredGroup = try JSONDecoder().decode(BrowserSplitLayout.self, from: JSONSerialization.data(withJSONObject: malformedSize))
+        check(recoveredGroup.id == resized.id && recoveredGroup.tabIDs == resized.tabIDs && recoveredGroup.paneFractions == nil,
+              "An unreadable size field loses only the divider positions")
+        resized.tabIDs = [first, second.id]
+        check(resized.paneFractions == nil && resized.fittedPaneLengths(available: 800, minimum: 120) == nil,
+              "A changed pane topology resets saved sizes and uses native default layout")
+        check(valid.paneFractions == nil, "Older saved groups continue to use native default sizing")
+
         let encoded = try JSONEncoder().encode(migrated)
         var malformed = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
         var restoreObject = malformed["windowRestore"] as! [String: Any]

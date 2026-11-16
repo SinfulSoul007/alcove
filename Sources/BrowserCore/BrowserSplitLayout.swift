@@ -11,8 +11,13 @@ public struct BrowserSplitLayout: Codable, Equatable, Identifiable {
     public let id: UUID
     public let spaceID: UUID
     public var axis: BrowserSplitAxis
-    public var tabIDs: [UUID]
+    public var tabIDs: [UUID] {
+        didSet {
+            if tabIDs != oldValue { paneFractions = nil }
+        }
+    }
     public var focusedTabID: UUID?
+    public private(set) var paneFractions: [Double]?
 
     public init(id: UUID = UUID(), spaceID: UUID, axis: BrowserSplitAxis, tabIDs: [UUID], focusedTabID: UUID? = nil) {
         self.id = id
@@ -20,6 +25,54 @@ public struct BrowserSplitLayout: Codable, Equatable, Identifiable {
         self.axis = axis
         self.tabIDs = tabIDs
         self.focusedTabID = focusedTabID
+    }
+
+    private enum CodingKeys: CodingKey { case id, spaceID, axis, tabIDs, focusedTabID, paneFractions }
+
+    public init(from decoder: Decoder) throws {
+        let source = try decoder.container(keyedBy: CodingKeys.self)
+        id = try source.decode(UUID.self, forKey: .id)
+        spaceID = try source.decode(UUID.self, forKey: .spaceID)
+        axis = try source.decode(BrowserSplitAxis.self, forKey: .axis)
+        tabIDs = try source.decode([UUID].self, forKey: .tabIDs)
+        focusedTabID = try source.decodeIfPresent(UUID.self, forKey: .focusedTabID)
+        if let fractions = try? source.decode([Double].self, forKey: .paneFractions),
+           (2...Self.maximumPanes).contains(fractions.count),
+           fractions.count == tabIDs.count, fractions.allSatisfy({ $0.isFinite && $0 > 0 && $0 <= 1 }),
+           abs(fractions.reduce(0, +) - 1) < 1e-8 {
+            paneFractions = fractions
+        }
+    }
+
+    @discardableResult
+    public mutating func rememberPaneSizes(_ lengths: [Double]) -> Bool {
+        let total = lengths.reduce(0, +)
+        guard lengths.count == tabIDs.count, (2...Self.maximumPanes).contains(lengths.count),
+              total.isFinite, lengths.allSatisfy({ $0.isFinite && $0 > 0 }) else { return false }
+        let fractions = lengths.map { $0 / total }
+        guard fractions.allSatisfy({ $0 > 0 }) else { return false }
+        paneFractions = fractions
+        return true
+    }
+
+    public func fittedPaneLengths(available: Double, minimum: Double) -> [Double]? {
+        guard let fractions = paneFractions, !fractions.isEmpty,
+              available.isFinite, available > 0, minimum.isFinite else { return nil }
+        let minimumLength = min(max(0, minimum), available / Double(fractions.count))
+        var remaining = available
+        var indices = Array(fractions.indices)
+        var lengths = Array(repeating: minimumLength, count: fractions.count)
+        while !indices.isEmpty {
+            let weight = indices.reduce(0) { $0 + fractions[$1] }
+            let fitted = indices.filter { remaining * (fractions[$0] / weight) >= minimumLength }
+            if fitted == indices {
+                for index in fitted { lengths[index] = remaining * (fractions[index] / weight) }
+                break
+            }
+            remaining -= Double(indices.count - fitted.count) * minimumLength
+            indices = fitted
+        }
+        return lengths
     }
 
     public func neighbor(of removed: UUID, keeping available: (UUID) -> Bool) -> UUID? {
@@ -42,12 +95,13 @@ public struct BrowserSplitLayout: Codable, Equatable, Identifiable {
             guard !usedGroups.contains(source.id), let local = tabsBySpace[source.spaceID] else { return nil }
             var group = source
             var unique: Set<UUID> = []
-            group.tabIDs = []
+            var tabs: [UUID] = []
             for id in source.tabIDs where local.contains(id) && !usedTabs.contains(id) && owned(id) && unique.insert(id).inserted {
-                group.tabIDs.append(id)
-                if group.tabIDs.count == maximumPanes { break }
+                tabs.append(id)
+                if tabs.count == maximumPanes { break }
             }
-            guard group.tabIDs.count >= 2 else { return nil }
+            guard tabs.count >= 2 else { return nil }
+            group.tabIDs = tabs
             if let focus = group.focusedTabID, !group.tabIDs.contains(focus) { group.focusedTabID = nil }
             usedGroups.insert(group.id)
             usedTabs.formUnion(group.tabIDs)

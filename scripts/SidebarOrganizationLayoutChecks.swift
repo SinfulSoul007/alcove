@@ -196,6 +196,40 @@ import BrowserCore
             check(abs(moved - before) >= 8 && abs(split.arrangedSubviews[0].frame.maxX - moved) <= 2,
                   "The native divider resizes the panes and keeps its position after a focus change")
         } else { check(false, "Four columns expose a native, movable divider") }
+        if var savedSizes = store.splitLayout {
+            func matchesSavedSizes(_ axis: BrowserSplitAxis) -> Bool {
+                let columns = axis == .columns
+                guard let split = descendants(hosting, NSSplitView.self).first(where: {
+                    $0.isVertical == columns && $0.arrangedSubviews.count == 4
+                }) else { return false }
+                let extent = columns ? split.bounds.width : split.bounds.height
+                let available = extent - 3 * split.dividerThickness
+                let minimum = min(columns ? 160.0 : 112.0, max(0, available / 4 - 1))
+                let actual = split.arrangedSubviews.map { columns ? $0.frame.width : $0.frame.height }
+                guard let expected = savedSizes.fittedPaneLengths(available: available, minimum: minimum) else { return false }
+                let matches = zip(actual, expected).allSatisfy { abs($0 - $1) <= 3 }
+                if !matches { print("Split \(axis) size restoration. Expected \(expected), got \(actual)") }
+                return matches
+            }
+            check(savedSizes.paneFractions == nil, "Programmatic native divider adjustment does not record a user resize")
+            savedSizes.rememberPaneSizes([320, 180, 260, 240])
+            store.splitLayout = savedSizes
+            await settle(); hosting.layoutSubtreeIfNeeded()
+            check(matchesSavedSizes(.columns), "Four live native columns apply unequal proportions from the model")
+            store.select(pageID)
+            await settle(); hosting.layoutSubtreeIfNeeded()
+            store.select(splitTabs[0])
+            await settle(); hosting.layoutSubtreeIfNeeded()
+            check(matchesSavedSizes(.columns), "Selecting a saved split again restores all three divider positions")
+            window.setContentSize(NSSize(width: 760, height: 400)); await settle(); hosting.layoutSubtreeIfNeeded()
+            check(matchesSavedSizes(.columns) && store.splitLayout?.paneFractions == savedSizes.paneFractions,
+                  "A narrow window temporarily fits four panes without changing the saved proportions")
+            window.setContentSize(NSSize(width: 1260, height: 820)); await settle(); hosting.layoutSubtreeIfNeeded()
+            check(matchesSavedSizes(.columns), "Widening the window recovers the user’s divider proportions")
+            store.flipSplit()
+            await settle(); hosting.layoutSubtreeIfNeeded()
+            check(matchesSavedSizes(.rows), "Four stacked panes restore the same proportions along the new axis")
+        } else { check(false, "Split size restoration can find the selected split group") }
         var drafts: [String] = []
         for page in pages {
             let draft = try await page.evaluateJavaScript("document.getElementById('split-note').value") as? String
