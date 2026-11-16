@@ -267,9 +267,9 @@ struct ExtensionMultiWindowChecks {
             let survivingTab = try popupStore.createExtensionTab(url: popupURL, profileID: profile, activate: true)
             popupStore.openInSplit(tabA)
             popupStore.focusPane(tabA)
-            let hadFocusedSplit = popupStore.splitID == tabA && popupStore.focusedID == tabA
+            let hadFocusedSplit = popupStore.splitLayout?.tabIDs.contains(tabA) == true && popupStore.focusedID == tabA
             let returned = try await createWindow(options, arguments: ["tabId": oldTabID ?? -1, "focused": false])
-            check(hadFocusedSplit && popupStore.splitID == nil && popupStore.focusedID == survivingTab,
+            check(hadFocusedSplit && popupStore.splitLayout == nil && popupStore.focusedID == survivingTab,
                   "Moving a focused popup split keeps its remaining tab selected")
             let current = try await query(options).first { ($0["id"] as? NSNumber) == oldTabID }
             check(returned["id"] != nil && (current?["windowId"] as? NSNumber) == (returned["id"] as? NSNumber) &&

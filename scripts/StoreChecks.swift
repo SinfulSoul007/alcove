@@ -66,9 +66,9 @@ struct StoreChecks {
         check(try Data(contentsOf: normal.sessionURL) == bytes, "Keychain failure preserves existing metadata")
         let second = normal.newTab(url: URL(string: "https://example.com"))
         let first = normal.session.spaces[0].tabs[0].id
-        normal.splitID = first
+        normal.splitLayout = BrowserSplitLayout(spaceID: normal.space.id, axis: .columns, tabIDs: [second, first])
         normal.close(second)
-        check(normal.splitID == nil && normal.selectedID == first, "Closing primary split pane keeps a single live tab")
+        check(normal.splitLayout == nil && normal.selectedID == first, "Closing primary split pane keeps a single live tab")
         normal.reopenClosed()
         check(normal.selectedTab?.url == "https://example.com" && normal.selectedID != second, "Reopen restores closed URL with fresh tab identity")
         for i in 0..<501 {
@@ -101,10 +101,18 @@ struct StoreChecks {
         check(!normal.favorites.contains(where: { $0.id == favoriteID }) && normal.tab(favoriteID)?.pinned == true, "Unfavorite keeps the tab pinned in its owning Space")
         let primaryID = normal.selectedID!
         let side = normal.newTab(url: URL(string: "https://example.com/side"))
-        normal.select(primaryID); normal.splitID = side; normal.focusPane(side)
+        normal.select(primaryID); normal.openInSplit(side); normal.focusPane(side)
         check(normal.selectedID == primaryID && normal.selectedTab?.id == side, "Focusing split pane routes actions without replacing the main pane")
         normal.close(side)
-        check(normal.focusedID == primaryID && normal.splitID == nil, "Closing active split pane returns focus to the main page")
+        check(normal.focusedID == primaryID && normal.splitLayout == nil, "Closing active split pane returns focus to the main page")
+        let archiveCandidates = (0..<4).map { normal.newTab(url: URL(string: "about:blank#archive-pane-\($0)")) }
+        normal.select(primaryID)
+        for id in archiveCandidates.prefix(3) { normal.openInSplit(id) }
+        for id in archiveCandidates { normal.update(id) { $0.lastAccessed = .distantPast } }
+        normal.archiveOldTabs()
+        check(archiveCandidates.prefix(3).allSatisfy { normal.tab($0) != nil } && normal.tab(archiveCandidates[3]) == nil,
+              "Automatic archiving protects every displayed split pane")
+        normal.clearSplit()
         let current = normal.view(for: primaryID)
         let orderBeforeRender = normal.accessOrder
         let renderedAgain = normal.view(for: primaryID)

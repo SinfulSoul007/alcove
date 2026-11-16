@@ -57,7 +57,7 @@ extension BrowserStore {
         var candidate = makeDocument()
         var target = Space(name: profiles.first { $0.id == profile }?.name ?? "Personal")
         target.profileID = profile; candidate.session.spaces.append(target); candidate.session.activateSpace(target.id)
-        try commitQuickDocument(candidate, beforePublish: { self.closePrimaryPeek(); self.splitID = nil; self.activePaneID = nil })
+        try commitQuickDocument(candidate, beforePublish: { self.closePrimaryPeek(); self.clearSplit() })
     }
     func bookmarkWebsite(_ web: WKWebView) throws {
         guard !isPrivate else { throw ProfileError.privateMode }

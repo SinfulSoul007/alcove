@@ -38,6 +38,29 @@ struct BrowserWindowHandoffChecks {
             if condition { passed += 1 } else { failed += 1 }
         }
 
+        do {
+            let anchor = root.newTab(url: URL(string: "about:blank#unmounted-anchor"))
+            let neighbor = root.newTab(url: URL(string: "about:blank#unmounted-neighbor"))
+            root.select(anchor); root.openInSplit(neighbor); root.select(anchor)
+            let wasUnloaded = root.views[anchor] == nil
+            let additional = try owner.acquirePrimaryStore(copying: root)
+            check(wasUnloaded && root.selectedID == neighbor && root.splitLayout == nil && additional.store.selectedID == anchor,
+                  "Opening another window with an unloaded split anchor keeps the other pane in the source")
+            owner.release(additional.lease)
+            root.close(anchor); root.close(neighbor)
+        }
+        do {
+            let target = Space(name: "Other split Space")
+            root.session.spaces.append(target)
+            let ids = (0..<3).map { root.newTab(url: URL(string: "about:blank#shared-space-\($0)")) }
+            root.select(ids[0]); root.openInSplit(ids[1]); root.openInSplit(ids[2])
+            let moved = child.requestMoveTab(ids[0], to: target.id)
+            check(moved && root.selectedID == ids[1] && root.visiblePaneIDs == Array(ids.dropFirst()),
+                  "A Space move from another window promotes the neighbor in the source split")
+            root.clearSplit()
+            for id in ids { root.close(id) }
+        }
+
         let movingTab = root.newTab()
         let independentTab = child.newTab()
         let source = root.view(for: movingTab)
@@ -59,15 +82,32 @@ struct BrowserWindowHandoffChecks {
               "Rendering the same tab from another window creates no second WebKit view")
         root.update(movingTab) { $0.url = "about:blank" }
         child.openInSplit(movingTab)
-        check(child.splitID == movingTab && child.selectedID == independentTab && child.primaryPageView(for: movingTab) === source &&
+        check(child.splitLayout?.tabIDs == [independentTab, movingTab] && child.selectedID == independentTab && child.primaryPageView(for: movingTab) === source &&
                 root.views[movingTab] == nil && child.documentIdentity(for: source) === identity,
               "Open in Split View brings over the exact live tab and keeps the existing primary pane")
-        child.splitID = nil
-        _ = group.claimPresentation(tabID: movingTab, in: root)
+        let leftOver = child.newTab(url: URL(string: "about:blank#left-over"))
+        let attached = child.newTab(url: URL(string: "about:blank#attached"))
+        child.select(independentTab)
+        for id in [leftOver, movingTab, attached] { child.openInSplit(id) }
+        child.select(independentTab)
+        let claimedAnchor = group.claimPresentation(tabID: independentTab, in: root)
+        check(claimedAnchor && child.visiblePaneIDs == [leftOver, movingTab, attached] && child.focusedID == leftOver &&
+                root.views[independentTab] === independent && root.documentIdentity(for: independent) === independentIdentity,
+              "Transferring a focused anchor promotes its neighbor and leaves the other split panes mounted")
+        _ = group.claimPresentation(tabID: independentTab, in: child)
+        child.focusPane(movingTab)
+        let claimed = group.claimPresentation(tabID: movingTab, in: root)
+        check(claimed && child.visiblePaneIDs == [leftOver, attached] && child.focusedID == leftOver &&
+                root.views[movingTab] === source && root.documentIdentity(for: source) === identity,
+              "Moving a focused split pane to another window preserves its live page and the panes it leaves behind")
+        child.clearSplit()
         WebPane(webView: source, store: root).mount(in: originalHost)
         child.select(movingTab)
         check(child.selectedID == movingTab && group.presentation(tabID: movingTab, in: child) == .owned,
               "The ordinary tab selection action claims the page")
+        root.openInSplit(independentTab)
+        check(root.selectedID == movingTab && root.splitLayout == nil && child.views[independentTab] === independent,
+              "A placeholder in another window cannot be used as a split anchor")
         check(root.views[movingTab] == nil && child.views[movingTab] === source &&
               source.navigationDelegate === child && source.uiDelegate === child,
               "The original view and delegates move to the destination with one live instance")

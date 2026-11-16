@@ -82,8 +82,7 @@ extension BrowserStore {
         guard let switcher, let entry = switcher.entries.first(where: { $0.id == (id ?? switcher.selected.id) }),
               canSelectRecentTab(entry), entry.id != focusedID else { return }
         if entry.spaceID != space.id { selectSpace(entry.spaceID, recordingVisit: false) }
-        if splitID == entry.id { focusPane(entry.id) }
-        else { select(entry.id) }
+        select(entry.id)
         if let view = views[entry.id], let window = view.window, window === NSApp.keyWindow {
             window.makeFirstResponder(view)
         }

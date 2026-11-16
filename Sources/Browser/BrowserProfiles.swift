@@ -145,7 +145,7 @@ extension BrowserStore {
             records.quickPages = []; records.favoriteTabs = []; records.history = []; records.archive = []; records.closedTabs = []; records.deletedSpaces = []
         }
         candidate.setLibrary(records, for: id)
-        if isPrivate { try commitQuickDocument(candidate, discarding: affected, beforePublish: { self.splitID = nil; self.activePaneID = nil }) }
+        if isPrivate { try commitQuickDocument(candidate, discarding: affected, beforePublish: { self.clearSplit() }) }
         else { try commitProfileDocument(candidate, discarding: affected, resetting: activeProfileID == id ? space.id : nil) }
         closeProfilePages(id)
         clearingData = true; clearingProfileID = id
@@ -263,10 +263,11 @@ extension BrowserStore {
         let retained = Set(prepared.session.spaces.flatMap(\.tabs).map(\.id))
         let nextQuick = Set((prepared.profileLibraries ?? []).flatMap { $0.library.quickPages ?? [] }.map(\.id))
         let removedQuick = Set(allQuickPages.map(\.id)).subtracting(nextQuick).subtracting(retained)
-        for id in Set(ids).union(removedQuick) { discardView(id) }
+        let discarded = Set(ids).union(removedQuick)
+        for id in discarded { discardView(id) }
         beforePublish?()
         reconcilePeeks(in: prepared, resetting: spaceID)
-        if spaceID == space.id || ids.contains(where: { $0 == splitID || $0 == selectedID }) { splitID = nil; activePaneID = nil }
+        resetSplitIfDiscardingPages(discarded, in: prepared.session)
         try applyDocument(prepared); hasSavedDocument = true
     }
     @discardableResult func createProfile(name: String) throws -> UUID {
@@ -275,7 +276,7 @@ extension BrowserStore {
         candidate.setLibrary(BrowserLibrary(), for: profile.id)
         var newSpace = Space(name: profile.name); newSpace.profileID = profile.id
         candidate.session.spaces.append(newSpace); candidate.session.activateSpace(newSpace.id)
-        try commitProfileDocument(candidate); closePrimaryPeek(); splitID = nil; activePaneID = nil
+        try commitProfileDocument(candidate); closePrimaryPeek(); clearSplit()
         return profile.id
     }
     func assignProfile(_ id: UUID, to spaceID: UUID) throws {
@@ -297,6 +298,7 @@ extension BrowserStore {
         var candidate = makeDocument()
         if source == nil, let index = candidate.session.spaces.firstIndex(where: { $0.id == destination }) { candidate.session.spaces[index].tabs.append(original) }
         candidate.session.placeTab(id, in: destination, section: section, before: target)
+        if windowGroup == nil { _ = retainSplitSelection(in: &candidate.session) }
         guard let s = candidate.session.spaces.firstIndex(where: { $0.id == destination }), let t = candidate.session.spaces[s].tabs.firstIndex(where: { $0.id == id }) else { return false }
         if let folder {
             candidate.session.spaces[s].tabs[t].folder = folder
@@ -315,7 +317,6 @@ extension BrowserStore {
             if changingProfile {try commitProfileDocument(candidate,discarding:[id],resetting:source?.id)}
             else {try commitQuickDocument(candidate)}
         } catch {message = error.localizedDescription;return false}
-        if source?.id != dest.id { splitID = nil; activePaneID = nil }
         return true
     }
     func websiteDataStore(forProfile id: UUID) -> WKWebsiteDataStore {

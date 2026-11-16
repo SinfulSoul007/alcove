@@ -190,7 +190,7 @@ import BrowserCore
         check(menuBoundary.prints.count == 1 && menuBoundary.prints[0].0 === menuFixture.web, "The File print action reaches the visible private document")
         menuBoundary.prints[0].2(false)
         let originalID = menuFixture.store.selectedID!, splitID = menuFixture.store.newTab()
-        menuFixture.store.select(originalID); menuFixture.store.splitID = splitID; menuFixture.store.activePaneID = splitID
+        menuFixture.store.select(originalID); menuFixture.store.splitLayout = BrowserSplitLayout(spaceID: menuFixture.store.space.id, axis: .columns, tabIDs: [originalID, splitID]); menuFixture.store.activePaneID = splitID
         let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
         let splitWeb = OutputFixtureWebView(frame: menuFixture.web.frame, configuration: config)
         menuFixture.store.registerView(splitWeb, for: splitID, profile: BrowserProfile.defaultID)

@@ -95,10 +95,15 @@ extension BrowserStore {
     }
     func activateExtensionTab(_ id:UUID,profileID:UUID) throws {
         var (document,owner,_)=try extensionTabDocument(id,profileID:profileID)
+        if splitLayout?.tabIDs.contains(id) == true, space.id == document.session.spaces[owner].id,
+           (windowGroup?.presentation(tabID: id, in: self) ?? .owned) == .owned {
+            dismissCommand(); closePrimaryPeek(); focusPane(id)
+            return
+        }
         document.session.activateSpace(document.session.spaces[owner].id)
         document.session.spaces[owner].selected=id
         try commitQuickDocument(document)
-        dismissCommand();closePrimaryPeek();activePaneID=nil;splitID=nil
+        dismissCommand();closePrimaryPeek();clearSplit()
     }
     @discardableResult func openExtensionOptions(_ id:UUID,profileID:UUID) async throws -> UUID {
         try await prepareExtensions(profileID:profileID)

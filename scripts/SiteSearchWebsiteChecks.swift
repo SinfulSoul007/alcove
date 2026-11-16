@@ -62,7 +62,7 @@ enum SiteSearchWebsiteError: Error { case missingFixture, timedOut, invalidPage,
         let rightID = store.newTab(url: URL(string: origin + "start?pane=right"))
         let right = store.view(for: rightID); right.frame = webA.frame
         try await ready(right, origin + "start?pane=right")
-        store.session.spaces[store.spaceIndex].selected = tabA; store.splitID = rightID; store.activePaneID = rightID
+        store.session.spaces[store.spaceIndex].selected = tabA; store.openInSplit(rightID)
         store.showCommand(); _ = store.activateCommandSiteSearch(site); store.command = "right"; store.navigate(store.command)
         try await ready(right, origin + "search?q=right&kind=site")
         let split = try await record(right)

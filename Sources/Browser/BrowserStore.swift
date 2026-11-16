@@ -16,6 +16,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var metadataWriter: BrowserStore { windowGroup?.root ?? self }
     @Published var session = Session() {
         didSet {
+            reconcileSplitLayout()
             windowGroup?.sessionDidChange(from: self)
             if boostPicker != nil { reconcileBoostPicker() }
             extensionBrowserStateChanged()
@@ -82,7 +83,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func setCustomTheme(_ theme: CustomTheme) { session.spaces[spaceIndex].customTheme = theme; save() }
     func finishOnboarding() { preferences.onboardingCompleted = true; onboardingVisible = false; flush(); onboardingDidFinish?() }
 
-    @Published var splitID: UUID? { didSet { if boostPicker != nil { reconcileBoostPicker() };extensionBrowserStateChanged() } }
+    @Published var splitLayout: BrowserSplitLayout? { didSet { if boostPicker != nil { reconcileBoostPicker() };extensionBrowserStateChanged() } }
     @Published var activePaneID: UUID? { didSet { if boostPicker != nil { reconcileBoostPicker() };extensionBrowserStateChanged() } }
     @Published var message: String?
     @Published var revision = 0 {didSet {extensionBrowserStateChanged()}}
@@ -244,14 +245,18 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var spaceIndex: Int { session.spaces.firstIndex { $0.id == session.selectedSpace } ?? 0 }
     var space: Space { session.spaces[spaceIndex] }
     var selectedID: UUID? { space.selected }
-    var focusedID: UUID? { activePaneID == splitID && splitID != nil ? splitID : selectedID }
+    var focusedID: UUID? {
+        if let activePaneID, visiblePaneIDs.contains(activePaneID) { return activePaneID }
+        return selectedID
+    }
     var selectedTab: BrowserCore.Tab? { space.tabs.first { $0.id == focusedID } }
     var currentView: WKWebView? { focusedID.flatMap { views[$0] } }
     func focusPane(_ id: UUID) {
-        guard id == selectedID || id == splitID else { return }
+        guard visiblePaneIDs.contains(id), (windowGroup?.presentation(tabID: id, in: self) ?? .owned) == .owned else { return }
         let previous = focusedID
         activePaneID = id
         if focusedID != previous {
+            dismissCommand()
             cancelRecentTabSwitcher()
             recordTabVisit(id)
         }
@@ -339,16 +344,19 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func closePrimaryWindowPages() {
         closePrimaryPeek()
         for id in Array(views.keys) where quickProfileID(id) == nil { discardView(id) }
-        splitID = nil; activePaneID = nil; presentedPanel = nil; commandVisible = false; findVisible = false
+        clearSplit(); presentedPanel = nil; commandVisible = false; findVisible = false
     }
     func select(_ id: UUID) {
         guard session.spaces[spaceIndex].tabs.contains(where: { $0.id == id }) else { return }
         if focusedID != id { dismissCommand(); cancelRecentTabSwitcher() }
         if let windowGroup, !windowGroup.claimPresentation(tabID: id, in: self) { return }
-        session.spaces[spaceIndex].selected = id; activePaneID = nil
+        if splitLayout?.tabIDs.contains(id) == true {
+            focusPane(id)
+            return
+        }
+        session.spaces[spaceIndex].selected = id
+        activePaneID = nil
         recordTabVisit(id)
-        if activePaneID == id { activePaneID = nil }
-        if splitID == id { splitID = nil }
         save()
     }
     private func recordTabVisit(_ id: UUID) {
@@ -361,7 +369,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         guard session.spaces.contains(where: { $0.id == id && (extensionPopupProfileID == nil || $0.effectiveProfileID == extensionPopupProfileID) }) else { return }
         let switching = session.selectedSpace != id
         if switching { dismissCommand(); cancelRecentTabSwitcher() }
-        closePrimaryPeek(); activePaneID = nil; splitID = nil
+        closePrimaryPeek()
+        if switching { clearSplit() }
         session.activateSpace(id)
         if switching, recordingVisit, let selectedID { recordTabVisit(selectedID) }
         save()
@@ -395,7 +404,6 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             update(id) { $0.url = $0.homeURL ?? $0.url; $0.title = $0.pinnedTitle ?? $0.title }
             discardSharedView(id)
             if activePaneID == id { activePaneID = nil }
-        if splitID == id { splitID = nil }
             if let s = session.spaces.firstIndex(where: { $0.id == owner }), session.spaces[s].selected == id {
                 if let next = session.spaces[s].tabs.first(where: { $0.id != id && !$0.pinned }) { session.spaces[s].selected = next.id }
                 else { let empty = BrowserCore.Tab(); session.spaces[s].tabs.append(empty); session.spaces[s].selected = empty.id }
@@ -407,10 +415,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             mutateLibrary(for: profile) { value in value.closedTabs.insert(tab, at: 0); value.closedTabs = Array(value.closedTabs.prefix(30)) }
         }
         if activePaneID == id { activePaneID = nil }
-        if splitID == id { splitID = nil }
         discardSharedView(id)
         session.close(id, in: owner)
-        if splitID == selectedID { splitID = nil }
         save()
     }
     func togglePin(_ id: UUID) {
@@ -545,7 +551,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             else {web.load(URLRequest(url:url))}
         }
         // Keep active and split panes alive; suspended tabs retain their last URL, but lose in-memory page state.
-        while preferences.suspendTabs && views.count > 6, let victim = accessOrder.first(where: { $0 != id && $0 != selectedID && $0 != splitID && quickPage($0) == nil && views[$0]?.isLoading == false }) {
+        while preferences.suspendTabs && views.count > 6, let victim = accessOrder.first(where: { $0 != id && !visiblePaneIDs.contains($0) && quickPage($0) == nil && views[$0]?.isLoading == false }) {
             discardView(victim)
         }
         return web
@@ -579,24 +585,6 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             web.observe(\.isLoading, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.revision += 1 } }
         ]
         extensionBrowserStateChanged()
-    }
-    func openInSplit(_ id: UUID) {
-        guard !isShuttingDown, id != selectedID, space.tabs.contains(where: { $0.id == id && !$0.url.isEmpty }),
-              !profileUnavailable(activeProfileID) else { return }
-        if let windowGroup, !windowGroup.claimPresentation(tabID: id, in: self) { return }
-        splitID = id
-    }
-    func toggleSplit() {
-        if splitID != nil { splitID = nil; return }
-        let available = space.tabs.first {
-            $0.id != selectedID && !$0.url.isEmpty &&
-                (extensionPopupProfileID == nil || windowGroup?.presentation(tabID: $0.id, in: self) == .owned)
-        }
-        guard let id = available?.id else {
-            message = "Open a second website, then choose Split View."
-            return
-        }
-        openInSplit(id)
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if action.targetFrame?.isMainFrame != false {beginExtensionMainNavigation(webView)}

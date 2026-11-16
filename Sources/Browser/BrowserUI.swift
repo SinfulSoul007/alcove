@@ -248,9 +248,42 @@ struct BrowserUI: View {
             if store.isPrivate { Text("PRIVATE WINDOW · History is not saved. Downloads stay on disk.").font(.system(size: 10)).foregroundStyle(.white).frame(maxWidth: .infinity).padding(6).background(.indigo) }
             if store.findVisible { FindBar(store: store) }
             if let web = store.currentView, web.isLoading { ProgressView(value: web.estimatedProgress).progressViewStyle(.linear).tint(.purple).frame(height: 2) }
-            HSplitView { pane(store.selectedID); if let split = store.splitID { pane(split) } }
+            if let layout = store.splitLayout {
+                splitControls(layout)
+                splitContent(layout)
+            } else { pane(store.selectedID) }
         }.background(theme.isDark ? Color(red: 0.095, green: 0.09, blue: 0.12) : .white)
             .clipShape(RoundedRectangle(cornerRadius: appearance.cornerRadius))
+    }
+    private func splitControls(_ layout: BrowserSplitLayout) -> some View {
+        let candidates = store.availableSplitTabs
+        return HStack {
+            Spacer()
+            Menu {
+                Menu("Add Pane") {
+                    ForEach(candidates, id: \.self) { id in
+                        if let tab = store.tab(id) { Button(tab.title) { store.openInSplit(id) } }
+                    }
+                }.disabled(layout.tabIDs.count >= BrowserSplitLayout.maximumPanes || candidates.isEmpty)
+                Button(layout.axis == .columns ? "Stack Panes" : "Arrange Side by Side") { store.flipSplit() }
+                if let focused = store.focusedID { Button("Remove Focused Pane") { store.removeFromSplit(focused) } }
+                Button("Separate Split View") { store.separateSplit() }
+            } label: {
+                Label("Split Controls", systemImage: layout.axis == .columns ? "rectangle.split.2x1" : "rectangle.split.1x2")
+                    .labelStyle(.iconOnly)
+            }
+            .menuStyle(.borderlessButton).fixedSize().help("Split Controls")
+        }
+        .padding(.horizontal, 9).frame(height: 28)
+        .foregroundStyle(theme.ink).background(theme.gradient)
+    }
+
+    private func splitContent(_ layout: BrowserSplitLayout) -> some View {
+        GeometryReader { geometry in
+            NativeBrowserSplit(layout: layout, size: geometry.size) { id in
+                pane(id).foregroundStyle(theme.ink)
+            }
+        }
     }
     private var popupControls: some View {
         let address = store.currentView?.url?.absoluteString ?? store.selectedTab?.url ?? ""
@@ -392,7 +425,7 @@ struct BrowserUI: View {
         }
         else if let id, let tab = store.tab(id), !tab.url.isEmpty,
                 let webView = store.primaryPageView(for: id) {
-            WebPane(webView: webView, store: store).id(id).frame(minWidth: 160)
+            WebPane(webView: webView, store: store).id(id)
         }
         else {
             VStack(spacing: 10) {
@@ -429,12 +462,17 @@ struct SidebarTabRow: View {
     @State private var hovered = false
     @StateObject private var extensionMenuAnchor=ExtensionTabMenuAnchor()
     var body: some View {
-        HStack(spacing: 7) {
+        let hasSplitPane = store.splitLayout?.tabIDs.contains(tab.id) == true
+        let fullSplit = store.visiblePaneIDs.count >= BrowserSplitLayout.maximumPanes
+        return HStack(spacing: 7) {
             Button { store.select(tab.id) } label: {
                 HStack(spacing: 9) { SiteBadge(url: tab.homeURL ?? tab.url, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil); Text(tab.pinned ? (tab.pinnedTitle ?? tab.title) : tab.title).font(.system(size: 12 * appearance.textScale, weight: store.focusedID == tab.id ? .semibold : .medium)).lineLimit(1); Spacer(minLength: 0) }.contentShape(Rectangle())
             }.buttonStyle(.plain)
             Button { store.close(tab.id) } label: { Image(systemName: "xmark").font(.system(size: 9)).frame(width: 18, height: 22) }.buttonStyle(.plain).opacity(hovered || appearance.alwaysShowCloseButtons ? 0.65 : 0).help(tab.pinned ? "Close page and keep pin" : "Close tab").accessibilityLabel(tab.pinned ? "Close pinned page" : "Close tab")
-        }.padding(.horizontal, 10).frame(height: appearance.rowHeight).background(store.focusedID == tab.id ? theme.selected : (hovered ? theme.tile : .clear), in: RoundedRectangle(cornerRadius: appearance.cornerRadius)).onHover { hovered = $0 }.animation(motion, value: hovered)
+        }.padding(.horizontal, 10).frame(height: appearance.rowHeight)
+        .background(store.focusedID == tab.id ? theme.selected : (hovered || hasSplitPane ? theme.tile : .clear),
+                    in: RoundedRectangle(cornerRadius: appearance.cornerRadius))
+        .onHover { hovered = $0 }.animation(motion, value: hovered)
         .onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }
         .onDrop(of: [.text], delegate: TabDrop(store: store, section: tab.pinned ? .pinned : .today, before: tab.id, folder: tab.folder))
         .background(ExtensionTabAnchorReader(anchor:extensionMenuAnchor))
@@ -442,7 +480,16 @@ struct SidebarTabRow: View {
             Button(tab.pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id) }.disabled(!store.canModifyLocalMetadata)
             Button("Add to Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata)
             TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id)
-            if tab.id != store.selectedID && !tab.url.isEmpty { Button("Open in Split View") { store.openInSplit(tab.id) } }
+            if hasSplitPane {
+                Button("Remove from Split View") { store.removeFromSplit(tab.id) }
+            } else if tab.id != store.selectedID && !tab.url.isEmpty {
+                Button("Open in Split View") { store.openInSplit(tab.id) }.disabled(fullSplit)
+                Menu("Place in Split View") {
+                    ForEach(BrowserSplitEdge.allCases) { edge in
+                        Button(edge.title) { store.openInSplit(tab.id, at: edge) }
+                    }
+                }.disabled(fullSplit)
+            }
             Menu("Move to Space") {
                 ForEach(store.session.spaces.filter { $0.id != store.space.id }) { s in
                     Button(store.isPrivate ? s.name : "\(s.name) · \(store.profiles.first(where: { $0.id == s.effectiveProfileID })?.name ?? "Profile")") { store.requestMoveTab(tab.id, to: s.id) }

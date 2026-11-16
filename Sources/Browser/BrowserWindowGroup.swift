@@ -172,11 +172,16 @@ final class BrowserWindowGroup {
             guard previous.moveView(tabID, profile: profile, to: store) else { return false }
         }
         let claimed = workspace.claim(tabID, for: id)
+        if claimed {
+            // A new window can already have the assignment before its first view is mounted.
+            for member in stores where member !== store { member.removeFromSplit(tabID) }
+        }
         if claimed && (previousID != id || live == nil) {
             for member in stores { member.revision += 1 }
             if previousID != id {
-                if let previousID, let previous = members[previousID]?.store,
-                   previous.recentTabSwitcher?.sourceTabID == tabID { previous.cancelRecentTabSwitcher() }
+                if let previousID, let previous = members[previousID]?.store {
+                    if previous.recentTabSwitcher?.sourceTabID == tabID { previous.cancelRecentTabSwitcher() }
+                }
                 if store.extensionPopupProfileID != nil ||
                    previousID.flatMap({ members[$0]?.store?.extensionPopupProfileID }) != nil {
                     publishWorkspace(workspace)
@@ -202,12 +207,12 @@ final class BrowserWindowGroup {
     }
 
     var protectedPaneIDs: Set<UUID> {
-        Set(stores.filter { $0.windowGroupID != nil }.flatMap { [$0.selectedID, $0.splitID].compactMap { $0 } })
+        Set(stores.filter { $0.windowGroupID != nil }.flatMap(\.visiblePaneIDs))
     }
 
     func discardPage(_ id: UUID) {
         for store in stores {
-            if store.splitID == id { store.splitID = nil }
+            store.removeFromSplit(id)
             if store.activePaneID == id { store.activePaneID = nil }
             if store.views[id] != nil {
                 store.discardView(id)
@@ -228,7 +233,7 @@ final class BrowserWindowGroup {
         let survivors = workspace.windows.compactMap { members[$0.id]?.store }.filter { $0.extensionPopupProfileID == nil }
         for tabID in Array(closing.views.keys) {
             guard let profile = spaceProfile(forTab: tabID), !closing.profileUnavailable(profile) else { continue }
-            let destination = survivors.first { $0.selectedID == tabID || $0.splitID == tabID }
+            let destination = survivors.first { $0.visiblePaneIDs.contains(tabID) }
                 ?? survivors.first { $0.windowGroupID == workspace.focusedWindowID }
             if let destination, let id = destination.windowGroupID,
                closing.moveView(tabID, profile: profile, to: destination) {
@@ -361,10 +366,7 @@ final class BrowserWindowGroup {
         beforePublish?()
         for store in recipients {
             store.reconcilePeeks(in: prepared, resetting: spaceID)
-            if spaceID == store.space.id || discarded.contains(where: { $0 == store.splitID || $0 == store.selectedID }) {
-                store.splitID = nil
-                store.activePaneID = nil
-            }
+            store.resetSplitIfDiscardingPages(discarded, in: prepared.session)
         }
         root.hasSavedDocument = true
         root.persistedProfileIDs = Set((prepared.profiles ?? []).map(\.id))
@@ -382,6 +384,14 @@ final class BrowserWindowGroup {
         var next = workspace
         if let id = source.windowGroupID { try next.apply(session, from: id) }
         else { try next.applySharedSession(session) }
+        for store in stores where store.splitLayout != nil {
+            guard let id = store.windowGroupID, let anchor = store.selectedID,
+                  let space = next.session.spaces.first(where: { $0.id == store.space.id }),
+                  !space.tabs.contains(where: { $0.id == anchor }), var projection = next.session(for: id) else { continue }
+            if store.retainSplitSelection(in: &projection, keeping: { next.assignedWindow(for: $0) == id }) {
+                try next.apply(projection, from: id)
+            }
+        }
         return next
     }
 
@@ -395,10 +405,10 @@ final class BrowserWindowGroup {
         let recipients = stores
         broadcasting = true
         for store in recipients {
-            if store.extensionPopupProfileID != nil, let splitID = store.splitID,
-               presentation(tabID: splitID, in: store) != .owned {
-                store.splitID = nil
-                store.activePaneID = nil
+            if store.extensionPopupProfileID != nil {
+                for id in store.visiblePaneIDs where id != store.selectedID && presentation(tabID: id, in: store) != .owned {
+                    store.removeFromSplit(id)
+                }
             }
             let selectedSession = projectedSession(for: store)
             if let document { store.installDocumentFields(document, projecting: selectedSession) }

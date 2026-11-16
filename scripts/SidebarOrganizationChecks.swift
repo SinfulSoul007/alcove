@@ -107,7 +107,7 @@ import BrowserCore
             store.update(b) { $0.lastAccessed = .distantPast }
             store.update(c) { $0.lastAccessed = Date(timeIntervalSinceNow: -30) }
             store.select(a)
-            store.splitID = b
+            store.openInSplit(b)
             store.focusPane(b); store.focusPane(a)
             check(store.advanceRecentTab(1) && store.visibleRecentTabSwitcher?.selected.id == b,
                   "A focused split pane outranks an unvisited hidden tab")
@@ -155,8 +155,61 @@ import BrowserCore
         inWindow {store,window,delegate in
             let first = store.newTab(url:URL(string:"https://example.invalid/main")!)
             let split = store.newTab(url:URL(string:"https://example.invalid/split")!)
-            store.select(first);store.splitID = split;store.activePaneID = split;delegate.closeTab()
+            store.select(first);store.openInSplit(split);store.activePaneID = split;delegate.closeTab()
             check(store.tab(split) == nil && store.tab(first) != nil && window.closeRequests == 0,"Cmd-W closes the focused split without closing its other regular pane")
+        }
+        inWindow { store, window, delegate in
+            let tabs = (0..<5).map { store.newTab(url: URL(string: "about:blank#pane-\($0)")) }
+            store.select(tabs[0]); store.openInSplit(tabs[1]); store.openInSplit(tabs[2])
+            check(store.focusedID == tabs[2], "Adding a pane routes commands to the newly added tab")
+            store.focusPane(tabs[1])
+            check(store.focusedID == tabs[1], "Adding a third pane preserves the earlier split pane and its focus")
+            store.openInSplit(tabs[3]); store.openInSplit(tabs[4])
+            check(store.focusedID == tabs[3], "Rejecting a fifth pane keeps focus on the fourth pane")
+            store.focusPane(tabs[3])
+            check(store.focusedID == tabs[3], "The four-pane limit leaves the existing fourth pane intact")
+            delegate.closeTab()
+            store.focusPane(tabs[2])
+            check(store.tab(tabs[3]) == nil && store.focusedID == tabs[2] && window.closeRequests == 0,
+                  "Cmd-W closes only the focused pane and leaves the other split pages available")
+            store.openInSplit(tabs[4], at: .top)
+            check(store.splitLayout?.axis == .rows && store.visiblePaneIDs == [tabs[0], tabs[1], tabs[4], tabs[2]],
+                  "Adding a top split inserts before the focused page and stacks the panes")
+            store.runCommand(.flipSplit)
+            check(store.splitLayout?.axis == .columns && store.visiblePaneIDs == [tabs[0], tabs[1], tabs[4], tabs[2]],
+                  "Flipping the split keeps the pane order")
+            store.select(tabs[0]); delegate.closeTab()
+            check(store.selectedID == tabs[1] && store.visiblePaneIDs == [tabs[1], tabs[4], tabs[2]] && window.closeRequests == 0,
+                  "Closing the anchor promotes its neighboring pane and keeps the split")
+            store.select(tabs[4]); store.separateSplit()
+            check(store.splitLayout == nil && store.selectedID == tabs[4] && store.tab(tabs[1]) != nil,
+                  "Separating a split keeps its focused page selected and leaves the other tabs open")
+        }
+        inWindow { store, window, delegate in
+            let tabs = (0..<3).map { store.newTab(url: URL(string: "about:blank#split-with-pins-\($0)")) }
+            store.togglePin(tabs[0]); store.togglePin(tabs[1])
+            store.select(tabs[0]); store.openInSplit(tabs[1]); store.openInSplit(tabs[2]); store.select(tabs[2])
+            delegate.closeTab()
+            check(window.closeRequests == 0 && store.visiblePaneIDs == Array(tabs.prefix(2)),
+                  "Cmd-W preserves the split window when two pinned panes are still open")
+        }
+        inWindow { store, _, _ in
+            let destination = Space(name: "Another Space")
+            store.session.spaces.append(destination)
+            let tabs = (0..<5).map { store.newTab(url: URL(string: "about:blank#split-move-\($0)")) }
+            store.select(tabs[0]); for id in tabs[1...3] { store.openInSplit(id) }
+            let movedUnrelated = store.requestMoveTab(tabs[4], to: destination.id)
+            check(movedUnrelated && store.visiblePaneIDs == Array(tabs.prefix(4)),
+                  "Moving an unrelated tab to a Space keeps all split panes open")
+            let movedMember = store.requestMoveTab(tabs[2], to: destination.id)
+            check(movedMember && store.visiblePaneIDs == [tabs[0], tabs[1], tabs[3]],
+                  "Moving a split member to another Space keeps the other panes open")
+            let movedAnchor = store.requestMoveTab(tabs[0], to: destination.id)
+            check(movedAnchor && store.selectedID == tabs[1] && store.visiblePaneIDs == [tabs[1], tabs[3]],
+                  "Moving a split anchor to another Space selects its neighbor and keeps the split")
+            try! store.activateExtensionTab(tabs[3], profileID: BrowserProfile.defaultID)
+            check(store.focusedID == tabs[3] && store.visiblePaneIDs == [tabs[1], tabs[3]],
+                  "Activating an owned split pane through the extension adapter keeps the group open")
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer {try? FileManager.default.removeItem(at:root)}

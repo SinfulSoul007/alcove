@@ -26,7 +26,7 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 - Hold Control and press Tab to browse up to five recent tabs in the window. Press Shift-Tab to reverse, release Control to switch, or press Escape to cancel.
 - Drag tabs between sections and into folders. Pinned tabs keep their title and saved home URL when closed. ⌘W closes the focused page (or Peek/panel first), then closes an empty window while leaving Alcove running.
 - Multiple normal windows share tabs and profiles. Each window has its own selected Space, selected tab and sidebar layout. Opening a shared tab in another window moves its live page.
-- Split view with actions targeted to the clicked pane.
+- Split View with up to four live pages, native dividers, and side-by-side or stacked layouts. Page commands follow the focused pane.
 - Keyboard-driven command bar with tab switching, Pin/Favorite commands and no empty tab created on cancellation.
 - Shift-click Peek previews in their originating main or compact window, with close and open-in-Space controls.
 - Quick Browse compact external-link windows, exact-host profile memory, same-link resurfacing and live page handoff into a Space. Forms, scroll and navigation history survive a same-profile handoff.

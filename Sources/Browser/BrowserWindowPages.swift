@@ -26,6 +26,6 @@ extension BrowserStore {
 
     func discardSharedView(_ id: UUID) {
         if let windowGroup { windowGroup.discardPage(id) }
-        else { discardView(id) }
+        else { removeFromSplit(id); discardView(id) }
     }
 }

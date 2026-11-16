@@ -143,6 +143,70 @@ import BrowserCore
                 store.cancelRecentTabSwitcher()
             }
         }
+        let splitTabs = (1...4).map { index in
+            store.newTab(url: URL(string: "about:blank#split-layout-\(index)"))
+        }
+        store.select(splitTabs[0])
+        for id in splitTabs.dropFirst() { store.openInSplit(id) }
+        await settle(); hosting.layoutSubtreeIfNeeded()
+        let pages = splitTabs.compactMap { store.views[$0] }
+        let pageTitles = ["Field Notes", "Project Plan", "Reference", "Reading List"]
+        for (index, page) in pages.enumerated() {
+            let title = pageTitles[index]
+            page.loadHTMLString("""
+                <!doctype html><meta name="viewport" content="width=device-width"><title>\(title)</title>
+                <style>body { background: #f7f4ee; color: #202031; font: 16px system-ui; margin: 20px; }
+                h1 { font-size: clamp(16px, 6vw, 27px); font-weight: 600; } input { width: min(100%, 14em); box-sizing: border-box; }</style>
+                <h1>\(title)</h1><input id="split-note" aria-label="Note">
+                """, baseURL: nil)
+        }
+        for (index, page) in pages.enumerated() {
+            for _ in 0..<100 {
+                if (try? await page.evaluateJavaScript("document.getElementById('split-note') !== null")) as? Bool == true { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            _ = try await page.evaluateJavaScript("document.getElementById('split-note').value = 'Draft \(index + 1)'")
+        }
+        for (size, axis) in [(NSSize(width: 760, height: 400), BrowserSplitAxis.columns),
+                             (NSSize(width: 960, height: 540), BrowserSplitAxis.rows)] {
+            if store.splitLayout?.axis != axis { store.flipSplit() }
+            window.setContentSize(size); await settle(); hosting.layoutSubtreeIfNeeded()
+            let frames = pages.map { $0.convert($0.bounds, to: hosting) }
+            check(pages.count == 4 && zip(splitTabs, pages).allSatisfy { id, page in
+                store.views[id] === page && page.window === window && page.isDescendant(of: hosting)
+            }, "Four \(axis) use the same mounted WebKit views after resizing and rotation")
+            let ordered = zip(frames, frames.dropFirst()).allSatisfy { a, b in
+                if axis == .columns { return a.maxX <= b.minX + 1 }
+                return hosting.isFlipped ? a.maxY <= b.minY + 1 : b.maxY <= a.minY + 1
+            }
+            let hostedBounds = hosting.bounds.insetBy(dx: -1, dy: -1)
+            let allVisible = frames.allSatisfy { $0.width >= 64 && $0.height >= 64 && hostedBounds.contains($0) }
+            if !ordered || !allVisible { print("Split \(axis) frames: \(frames), host: \(hostedBounds)") }
+            check(frames.count == 4 && ordered && allVisible, "Four \(axis) remain visible inside the window at \(Int(size.width))×\(Int(size.height))")
+        }
+        store.flipSplit()
+        window.setContentSize(NSSize(width: 1260, height: 820)); await settle(); hosting.layoutSubtreeIfNeeded()
+        if let split = descendants(hosting, NSSplitView.self).first(where: { $0.isVertical && $0.arrangedSubviews.count == 4 }) {
+            let before = split.arrangedSubviews[0].frame.maxX
+            split.setPosition(before + 20, ofDividerAt: 0)
+            await settle(); hosting.layoutSubtreeIfNeeded()
+            let moved = split.arrangedSubviews[0].frame.maxX
+            store.focusPane(splitTabs[2])
+            await settle(); hosting.layoutSubtreeIfNeeded()
+            check(abs(moved - before) >= 8 && abs(split.arrangedSubviews[0].frame.maxX - moved) <= 2,
+                  "The native divider resizes the panes and keeps its position after a focus change")
+        } else { check(false, "Four columns expose a native, movable divider") }
+        var drafts: [String] = []
+        for page in pages {
+            let draft = try await page.evaluateJavaScript("document.getElementById('split-note').value") as? String
+            drafts.append(draft ?? "")
+        }
+        check(drafts == ["Draft 1", "Draft 2", "Draft 3", "Draft 4"], "All four unsaved forms survive two orientation changes and divider resizing")
+        if let output = ProcessInfo.processInfo.environment["ALCOVE_SIDEBAR_SCREENSHOT_DIR"],
+           let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
+            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output).appendingPathComponent("four-pane.png"))
+        }
         print("Sidebar organization layout checks: \(failures) failures");exit(failures == 0 ? 0 : 1)
     }
 }

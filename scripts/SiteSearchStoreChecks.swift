@@ -52,9 +52,9 @@ enum SiteSearchStoreCheckError: Error { case failed, fixtureMissing }
 
         let split = try fixture(), splitStore = split.store
         try splitStore.saveSiteSearch(site)
-        let leftID = splitStore.selectedID!, rightID = splitStore.newTab()
+        let leftID = splitStore.selectedID!, rightID = splitStore.newTab(url: URL(string: "http://127.0.0.1:9/right"))
         let right = split.anotherWeb(rightID)
-        splitStore.session.spaces[splitStore.spaceIndex].selected = leftID; splitStore.splitID = rightID; splitStore.activePaneID = rightID
+        splitStore.session.spaces[splitStore.spaceIndex].selected = leftID; splitStore.openInSplit(rightID)
         right.fixtureURL = URL(string: "http://127.0.0.1:9/right")!
         splitStore.showCommand()
         check(splitStore.command == "http://127.0.0.1:9/right", "Command-L displays the actual focused split pane's URL")
@@ -169,7 +169,7 @@ enum SiteSearchStoreCheckError: Error { case failed, fixtureMissing }
         state.requestLocation(currentURL: "", context: peekScope); _ = state.activateSiteSearch(site, context: peekScope); state.showFind()
         check(state.siteSearch == nil && state.locationContext == nil, "Switching to compact Find cannot retain a navigation draft")
         let foreignTab = qs.session.spaces.first { $0.effectiveProfileID == b }!.tabs[0].id
-        qs.splitID = foreignTab; qs.activePaneID = foreignTab
+        qs.splitLayout = BrowserSplitLayout(spaceID: qs.space.id, axis: .columns, tabIDs: [qs.selectedID!, foreignTab]); qs.activePaneID = foreignTab
         check(qs.searchInputContext() == nil, "A stale split id from another profile cannot authorize primary search input")
         if failures > 0 { throw SiteSearchStoreCheckError.failed }
     }

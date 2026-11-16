@@ -169,7 +169,7 @@ extension BrowserStore {
             if !crossing { self.views[id]?.removeFromSuperview() }
             if crossing { presenter.closePrimaryPeek(); self.closeQuickPeek(id) }
             else { self.adoptQuickPeek(id, into: spaceID, in: presenter) }
-            presenter.splitID = nil; presenter.activePaneID = nil
+            presenter.clearSplit()
         })
         if presenter !== self { windowGroup?.claimPresentation(tabID: id, in: presenter) }
         if focusedQuickPageID == id { focusedQuickPageID = nil }

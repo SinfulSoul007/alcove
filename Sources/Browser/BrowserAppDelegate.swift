@@ -599,7 +599,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         func isLocal(_ id: UUID) -> Bool {
             (store.windowGroup?.presentation(tabID: id, in: store) ?? .owned) == .owned
         }
-        if let id = store.focusedID, isLocal(id) { store.close(id) }
+        let closingID = store.focusedID
+        let splitSurvivors = store.splitLayout?.tabIDs.filter { $0 != closingID } ?? []
+        if let closingID, isLocal(closingID) { store.close(closingID) }
+        if splitSurvivors.contains(where: { store.visiblePaneIDs.contains($0) && store.tab($0)?.url.isEmpty == false && isLocal($0) }) {
+            return
+        }
         let visibleTabs = store.extensionPopupProfileID == nil ? store.space.tabs : store.extensionPopupTabs
         guard let next = visibleTabs.first(where: { !$0.pinned && !$0.url.isEmpty && isLocal($0.id) }) else {
             window.performClose(nil)

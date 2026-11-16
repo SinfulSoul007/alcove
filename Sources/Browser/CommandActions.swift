@@ -17,6 +17,10 @@ extension BrowserStore {
             case .spaces,.deletedSpaces: return !isShuttingDown && !awaitingInitialMetadata
             case .newSpace,.renameSpace,.deleteSpace,.newFolder: return canManageSpace(space.id)
             case .restoreSpace: return canUndoSpaceDeletion
+            case .splitLeft, .splitRight, .splitTop, .splitBottom:
+                return !isShuttingDown && !awaitingInitialMetadata &&
+                    visiblePaneIDs.count < BrowserSplitLayout.maximumPanes && !availableSplitTabs.isEmpty
+            case .flipSplit: return splitLayout != nil
             default: return true
             }
         }
@@ -31,6 +35,11 @@ extension BrowserStore {
         case .unfavorite: if let tab = selectedTab, tab.favorite == true { toggleFavorite(tab.id) }
         case .sidebar: sidebarVisible.toggle()
         case .split: toggleSplit()
+        case .splitLeft: addSplit(at: .left)
+        case .splitRight: addSplit(at: .right)
+        case .splitTop: addSplit(at: .top)
+        case .splitBottom: addSplit(at: .bottom)
+        case .flipSplit: flipSplit()
         case .library: libraryVisible = true
         case .settings: settingsVisible = true
         case .extensions: requestExtensionManager()
