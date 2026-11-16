@@ -47,5 +47,18 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Websites may ask to use your microphone. Alcove asks before allowing access.</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>dev.openbrowser.mac.sidebar-tab</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Alcove Sidebar Tab</string>
+		</dict>
+	</array>
 </dict>
 </plist>

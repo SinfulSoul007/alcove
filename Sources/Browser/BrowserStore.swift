@@ -547,7 +547,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         config.websiteDataStore = websiteDataStore(forProfile: profile)
         configureExtensions(config,profileID:profile)
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
-        let web = WKWebView(frame: .zero, configuration: config)
+        let web = SplitDropWebView(frame: .zero, configuration: config)
         registerView(web, for: id, profile: profile)
         if !profileUnavailable(profile), let value = tab(id)?.url, !value.isEmpty, let url = URL(string: value) {
             if configuration == nil,url.scheme?.lowercased() == "webkit-extension" {restoreSavedExtensionTab(id,url:url,placeholder:web,profileID:profile)}

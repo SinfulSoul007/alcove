@@ -35,7 +35,7 @@ extension BrowserStore {
         closePeek(in: context)
         let config = WKWebViewConfiguration(); config.websiteDataStore = websiteDataStore(forProfile: profile)
         configureExtensions(config,profileID:profile)
-        let web = WKWebView(frame: .zero, configuration: config)
+        let web = SplitDropWebView(frame: .zero, configuration: config)
         let page = PeekState(web: web, profileID: profile, spaceID: targetSpace, requestedURL: url)
         peekPages[context] = page;installPeek(page)
         web.load(URLRequest(url: url))

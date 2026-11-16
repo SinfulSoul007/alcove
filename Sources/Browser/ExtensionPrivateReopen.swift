@@ -100,7 +100,7 @@ struct PrivateExtensionReopenReview {
                     let configuration = WKWebViewConfiguration();configuration.websiteDataStore = client.privateDataStore!
                     configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
                     client.configureExtensions(configuration,profileID:BrowserProfile.defaultID)
-                    let web = WKWebView(frame:page.frame,configuration:configuration)
+                    let web = SplitDropWebView(frame:page.frame,configuration:configuration)
                     client.registerView(web,for:id,profile:BrowserProfile.defaultID)
                     if let url = page.url {web.load(URLRequest(url:url))}
                 }

@@ -62,7 +62,7 @@ extension BrowserStore {
         destination.websiteDataStore = websiteDataStore(forProfile:profileID)
         destination.preferences.javaScriptCanOpenWindowsAutomatically = false
         configureExtensions(destination,profileID:profileID)
-        let replacement = WKWebView(frame:existing.frame,configuration:destination)
+        let replacement = SplitDropWebView(frame:existing.frame,configuration:destination)
         registerView(replacement,for:id,profile:profileID)
         replacement.load(request ?? URLRequest(url:url));revision += 1;extensionHosting?.refresh()
     }

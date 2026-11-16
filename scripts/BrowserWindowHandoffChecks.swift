@@ -148,25 +148,34 @@ struct BrowserWindowHandoffChecks {
         check(nativeHost.registeredDraggedTypes == [SidebarTabDrag.pasteboardType] && nativeHost.draggingEntered(regular).isEmpty,
               "A mounted native WebKit host registers its internal drop type and leaves ordinary text drags alone")
         nativeHost.draggingExited(regular)
+        guard let splitSurface = independent as? SplitDropWebView else { throw CocoaError(.coderInvalidValue) }
+        check(splitSurface.registeredDraggedTypes.contains(SidebarTabDrag.pasteboardType),
+              "The live WKWebView receives Alcove’s owned drag type directly")
         let sender = OwnedTabDraggingInfo(window: dragWindow, sequence: 2)
         sender.draggingPasteboard.setData(data, forType: SidebarTabDrag.pasteboardType)
         let subviews = nativeHost.subviews.count
         sender.draggingLocation = nativeHost.convert(NSPoint(x: 400, y: 300), to: nil)
-        check(nativeHost.draggingEntered(sender).isEmpty && nativeHost.subviews.count == subviews,
+        check(splitSurface.draggingEntered(sender).isEmpty && nativeHost.subviews.count == subviews,
               "The center of a native page does not create a split target or highlight")
         sender.draggingLocation = nativeHost.convert(NSPoint(x: 798, y: 300), to: nil)
-        check(nativeHost.draggingUpdated(sender) == .move && nativeHost.subviews.count == subviews + 1,
+        check(splitSurface.draggingUpdated(sender) == .move && nativeHost.subviews.count == subviews + 1,
               "A typed drag at the native page edge adds a directional highlight")
-        nativeHost.draggingEnded(sender)
+        sender.draggingPasteboard.clearContents()
+        splitSurface.draggingEnded(sender)
         check(nativeHost.subviews.count == subviews && child.splitLayout == nil,
-              "Cancelling a native drag inside the target clears the indicator without changing tabs")
-        check(nativeHost.draggingEntered(sender) == .move, "A fresh native drag can preview the same page after cancellation")
-        let accepted = nativeHost.prepareForDragOperation(sender) && nativeHost.performDragOperation(sender)
+              "Ending a typed drag clears its indicator even after the original pasteboard is cleared")
+        sender.draggingPasteboard.setData(data, forType: SidebarTabDrag.pasteboardType)
+        check(splitSurface.draggingEntered(sender) == .move, "A fresh native drag can preview the same page after cancellation")
+        let accepted = splitSurface.prepareForDragOperation(sender) && splitSurface.performDragOperation(sender)
         check(accepted && nativeHost.subviews.count == subviews && !child.validatesSidebarDrag(payload),
               "Dropping on the right edge clears the highlight and invalidates the old window's payload")
         check(child.splitLayout?.tabIDs == [independentTab, movingTab] && child.selectedID == independentTab && child.primaryPageView(for: movingTab) === source &&
                 root.views[movingTab] == nil && child.documentIdentity(for: source) === identity,
               "A page edge split brings over the exact live tab and keeps the existing primary pane")
+        _ = splitSurface.draggingEntered(regular)
+        splitSurface.draggingExited(regular)
+        check(nativeHost.subviews.count == subviews && child.splitLayout?.tabIDs == [independentTab, movingTab],
+              "A normal WebKit drag after a split leaves the split topology and highlight alone")
         child.clearSplit()
         let leftOver = child.newTab(url: URL(string: "about:blank#left-over"))
         let attached = child.newTab(url: URL(string: "about:blank#attached"))

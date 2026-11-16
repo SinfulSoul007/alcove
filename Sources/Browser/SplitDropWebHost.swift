@@ -33,6 +33,76 @@ enum BrowserSplitDropGeometry {
     }
 }
 
+/// WebKit registers drag types of its own. Route Alcove's type from the
+/// actual hit view, which AppKit visits before its container.
+final class SplitDropWebView: WKWebView {
+    private weak var splitDragHost: SplitDropWebHost?
+    private var splitDragSequence: Int?
+
+    override init(frame: CGRect, configuration: WKWebViewConfiguration) {
+        super.init(frame: frame, configuration: configuration)
+        registerForDraggedTypes(registeredDraggedTypes + [SidebarTabDrag.pasteboardType])
+    }
+
+    required init?(coder: NSCoder) { fatalError("Use init(frame:configuration:)") }
+
+    private func isSidebarDrag(_ sender: NSDraggingInfo) -> Bool {
+        sender.draggingPasteboard.types?.contains(SidebarTabDrag.pasteboardType) == true
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        splitDragHost?.draggingExited(nil)
+        splitDragHost = nil
+        splitDragSequence = nil
+        guard isSidebarDrag(sender) else { return super.draggingEntered(sender) }
+        splitDragHost = superview as? SplitDropWebHost
+        splitDragSequence = sender.draggingSequenceNumber
+        return splitDragHost?.draggingEntered(sender) ?? []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if splitDragSequence == sender.draggingSequenceNumber {
+            return splitDragHost?.draggingUpdated(sender) ?? []
+        }
+        return isSidebarDrag(sender) ? [] : super.draggingUpdated(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        if let sequence = splitDragSequence, sender == nil || sender?.draggingSequenceNumber == sequence {
+            splitDragHost?.draggingExited(sender)
+            splitDragHost = nil
+            splitDragSequence = nil
+            return
+        }
+        if sender.map(isSidebarDrag) != true { super.draggingExited(sender) }
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        if splitDragSequence == sender.draggingSequenceNumber {
+            splitDragHost?.draggingEnded(sender)
+            splitDragHost = nil
+            splitDragSequence = nil
+        } else if !isSidebarDrag(sender) {
+            super.draggingEnded(sender)
+        }
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if splitDragSequence == sender.draggingSequenceNumber {
+            return splitDragHost?.prepareForDragOperation(sender) ?? false
+        }
+        return !isSidebarDrag(sender) && super.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if splitDragSequence == sender.draggingSequenceNumber {
+            defer { splitDragHost = nil }
+            return splitDragHost?.performDragOperation(sender) ?? false
+        }
+        return !isSidebarDrag(sender) && super.performDragOperation(sender)
+    }
+}
+
 final class SplitDropWebHost: EdgeToEdgeWebHost {
     private final class Indicator: NSView {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }

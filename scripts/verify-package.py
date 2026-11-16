@@ -13,5 +13,10 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
     assert archive.getinfo(executable).external_attr >> 16 & 0o111, 'App executable lost its executable bit'
     assert info['CFBundleName'] == 'Alcove'
     assert info['LSMinimumSystemVersion'] == '14.0'
+    assert any(
+        declaration.get('UTTypeIdentifier') == 'dev.openbrowser.mac.sidebar-tab'
+        and 'public.data' in declaration.get('UTTypeConformsTo', [])
+        for declaration in info.get('UTExportedTypeDeclarations', [])
+    ), 'macOS requires a bundle declaration for the sidebar tab drag type'
     assert not any(name.endswith(('.sealed', 'session.json', '.key', '.p12')) for name in names)
     print('PASS: ZIP contains an executable Alcove app, icon and macOS version metadata, without local sessions or keys')

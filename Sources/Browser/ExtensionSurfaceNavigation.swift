@@ -21,7 +21,7 @@ extension BrowserStore {
         destination.websiteDataStore = websiteDataStore(forProfile:profileID)
         destination.preferences.javaScriptCanOpenWindowsAutomatically = false
         configureExtensions(destination,profileID:profileID)
-        let replacement = WKWebView(frame:web.frame,configuration:destination)
+        let replacement = SplitDropWebView(frame:web.frame,configuration:destination)
         let next = PeekState(id:page.id,web:replacement,profileID:profileID,spaceID:page.spaceID,requestedURL:url)
         closePeek(in:context);peekPages[context] = next;installPeek(next)
         replacement.load(request ?? URLRequest(url:url));revision += 1;extensionHosting?.refresh()

@@ -91,7 +91,7 @@ extension BrowserStore {
                 configuration.websiteDataStore = self.websiteDataStore(forProfile: owner)
                 self.configureExtensions(configuration,profileID:owner)
                 configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
-                self.registerView(WKWebView(frame: .zero, configuration: configuration), for: page.id, profile: owner)
+                self.registerView(SplitDropWebView(frame: .zero, configuration: configuration), for: page.id, profile: owner)
             }
         })
         startArchiveTimer(); quickPageRequested?(page.id); return page.id
