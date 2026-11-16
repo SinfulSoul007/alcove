@@ -36,50 +36,66 @@ struct SidebarSavedTabs: View {
     let motion: Animation?
     let height: Double
     let layout: SidebarSavedLayout
+    let collapsed: Bool
 
     var body: some View {
         let spaceID = store.space.id
-        let empty = layout.topLevelTabs.isEmpty && layout.folders.isEmpty
         VStack(spacing: 0) {
             HStack {
-                Text("Pinned").font(.system(size: 11, weight: .semibold)).opacity(0.5)
-                Spacer()
+                Button { store.requestPinnedShelfCollapsed(!collapsed, in: spaceID) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                            .font(.system(size: 8, weight: .semibold)).frame(width: 8)
+                            .accessibilityHidden(true)
+                        Text("Pinned").font(.system(size: 11, weight: .semibold))
+                        Spacer(minLength: 0)
+                    }.opacity(0.65).frame(height: 26).contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityLabel("Pinned")
+                    .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
+                    .help(collapsed ? "Expand Pinned" : "Collapse Pinned")
+                    .disabled(!store.canManageSpace(spaceID))
                 Button { store.requestNewTabFolder(in: spaceID) } label: {
                     Image(systemName: "folder.badge.plus").font(.system(size: 12)).frame(width: 26, height: 26)
                 }.buttonStyle(.plain).help("New Folder").accessibilityLabel("New Folder")
                     .disabled(!store.canManageSpace(spaceID))
-            }.padding(.horizontal, 16).frame(height: 26)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 3) {
-                    ForEach(layout.topLevelTabs) { tab in savedRow(tab) }
-                    ForEach(layout.folders) { folder in
-                        folderHeader(folder, in: spaceID)
-                        if folder.expanded {
-                            let tabs = layout.tabsByFolder[folder.name, default: []]
-                            ForEach(tabs) { tab in
-                                savedRow(tab).padding(.leading, indentation(folder.depth + 1))
-                            }
-                            if tabs.isEmpty && layout.tree.children(of: folder.name).isEmpty {
-                                Text("Drop tabs here").font(.system(size: 11))
-                                    .foregroundStyle(theme.ink.opacity(0.4)).frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.leading, indentation(folder.depth + 1) + 12).frame(height: 21)
-                                    .onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .pinned, folder: folder.name))
-                            }
+            }.padding(.horizontal, 16).frame(height: 26).contentShape(Rectangle())
+                .onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .pinned))
+            if !collapsed { pinnedList(in: spaceID) }
+        }
+    }
+
+    private func pinnedList(in spaceID: UUID) -> some View {
+        let empty = layout.topLevelTabs.isEmpty && layout.folders.isEmpty
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 3) {
+                ForEach(layout.topLevelTabs) { tab in savedRow(tab) }
+                ForEach(layout.folders) { folder in
+                    folderHeader(folder, in: spaceID)
+                    if folder.expanded {
+                        let tabs = layout.tabsByFolder[folder.name, default: []]
+                        ForEach(tabs) { tab in
+                            savedRow(tab).padding(.leading, indentation(folder.depth + 1))
+                        }
+                        if tabs.isEmpty && layout.tree.children(of: folder.name).isEmpty {
+                            Text("Drop tabs here").font(.system(size: 11))
+                                .foregroundStyle(theme.ink.opacity(0.4)).frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.leading, indentation(folder.depth + 1) + 12).frame(height: 21)
+                                .onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .pinned, folder: folder.name))
                         }
                     }
-                    if empty {
-                        Text("Drag tabs here to keep them").font(.system(size: 11))
-                            .foregroundStyle(theme.ink.opacity(0.35)).padding(.horizontal, 10)
-                            .frame(maxWidth: .infinity, alignment: .leading).frame(height: height)
-                    } else {
-                        Color.clear.frame(height: 8).contentShape(Rectangle())
-                    }
-                }.padding(.horizontal, 8)
-            }.frame(height: height).scrollDisabled(empty)
-                .scrollIndicators(empty ? .hidden : .automatic)
-                .accessibilityLabel("Pinned tabs")
-                .onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .pinned))
-        }
+                }
+                if empty {
+                    Text("Drag tabs here to keep them").font(.system(size: 11))
+                        .foregroundStyle(theme.ink.opacity(0.35)).padding(.horizontal, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading).frame(height: height)
+                } else {
+                    Color.clear.frame(height: 8).contentShape(Rectangle())
+                }
+            }.padding(.horizontal, 8)
+        }.frame(height: height).scrollDisabled(empty)
+            .scrollIndicators(empty ? .hidden : .automatic)
+            .accessibilityLabel("Pinned tabs")
+            .onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .pinned))
     }
 
     private func indentation(_ depth: Int) -> Double { Double(min(depth, 4)) * 11 }

@@ -42,6 +42,7 @@ public struct Space: Codable, Identifiable, Equatable {
     public var theme: String?
     public var customTheme: CustomTheme?
     public var icon: String?
+    public var pinnedShelfCollapsed: Bool?
     public var collapsedFolders: [String]?
     public var folders: [String]?
     public var folderParents: [String: String]?

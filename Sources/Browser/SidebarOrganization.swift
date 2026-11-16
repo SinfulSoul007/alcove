@@ -62,12 +62,26 @@ extension BrowserStore {
         let cleaned = try uniqueFolderName(name, in: source)
         var candidate = makeDocument()
         candidate.session.spaces[index].folders = tree.names + [cleaned]
+        candidate.session.spaces[index].pinnedShelfCollapsed = nil
         if let parent {
             candidate.session.spaces[index].folderParents = tree.parents.merging([cleaned: parent]) { _, new in new }
         }
         if let id { try placeFolderTab(id, folder: cleaned, in: spaceID, candidate: &candidate) }
         try commitQuickDocument(candidate)
         return cleaned
+    }
+
+    func setPinnedShelfCollapsed(_ collapsed: Bool, in spaceID: UUID) throws {
+        let index = try requireManagedSpace(spaceID)
+        guard (session.spaces[index].pinnedShelfCollapsed == true) != collapsed else { return }
+        var candidate = makeDocument()
+        candidate.session.spaces[index].pinnedShelfCollapsed = collapsed ? true : nil
+        try commitQuickDocument(candidate)
+    }
+
+    func requestPinnedShelfCollapsed(_ collapsed: Bool, in spaceID: UUID) {
+        do { try setPinnedShelfCollapsed(collapsed, in: spaceID) }
+        catch { message = error.localizedDescription }
     }
 
     func moveTabFolder(_ name: String, under parent: String?, in spaceID: UUID) throws {

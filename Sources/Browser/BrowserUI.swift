@@ -336,7 +336,8 @@ struct BrowserUI: View {
         let pool = max(0, windowHeight - chrome.height - 197 - (store.favorites.isEmpty ? 0 : 8))
         let savedLayout = SidebarSavedLayout(space: store.space)
         let rowHeight = appearance.rowHeight + 3
-        let pinnedDemand = max(32, savedLayout.height(rowHeight: appearance.rowHeight))
+        let pinnedCollapsed = store.space.pinnedShelfCollapsed == true
+        let pinnedDemand = pinnedCollapsed ? 0 : max(32, savedLayout.height(rowHeight: appearance.rowHeight))
         let todayDemand = max(32, Double(today.count) * rowHeight)
         let favoriteDemand = min(224, max(0, favoriteRows * 55 - 7))
         let favoriteBudget = max(pool * 0.30, pool - pinnedDemand - todayDemand)
@@ -390,7 +391,8 @@ struct BrowserUI: View {
                         spaceProfileMenu
                     } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("Space settings")
                 }.padding(.horizontal, 16).frame(height: 36)
-                SidebarSavedTabs(store: store, theme: theme, appearance: appearance, motion: motion, height: pinnedHeight, layout: savedLayout)
+                SidebarSavedTabs(store: store, theme: theme, appearance: appearance, motion: motion,
+                                 height: pinnedHeight, layout: savedLayout, collapsed: pinnedCollapsed)
                 Rectangle().fill(theme.ink.opacity(0.12)).frame(height: 1).padding(.horizontal, 18).padding(.vertical, 6)
                 HStack {
                     Text("Today").font(.system(size: 11, weight: .semibold)).opacity(0.5)
@@ -401,7 +403,7 @@ struct BrowserUI: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 3) { ForEach(today) { row($0) } }.padding(.horizontal, 8)
                 }.accessibilityLabel("Today tabs").onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .today))
-            }.modifier(SidebarSpaceSwipeRegion(
+            }.animation(motion, value: pinnedCollapsed).modifier(SidebarSpaceSwipeRegion(
                 spaces: swipeSpaces,
                 reveal: reveal,
                 enabled: canSwipeSpaces,
