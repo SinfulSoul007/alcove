@@ -175,6 +175,8 @@ final class BrowserWindowGroup {
         if claimed && (previousID != id || live == nil) {
             for member in stores { member.revision += 1 }
             if previousID != id {
+                if let previousID, let previous = members[previousID]?.store,
+                   previous.recentTabSwitcher?.sourceTabID == tabID { previous.cancelRecentTabSwitcher() }
                 if store.extensionPopupProfileID != nil ||
                    previousID.flatMap({ members[$0]?.store?.extensionPopupProfileID }) != nil {
                     publishWorkspace(workspace)

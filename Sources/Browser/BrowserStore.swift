@@ -23,7 +23,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     @Published var commandVisible = false {
         didSet {
-            if !commandVisible {
+            if commandVisible { cancelRecentTabSwitcher() }
+            else {
                 if commandSiteSearch != nil { commandSiteSearch = nil }
                 commandContext = nil
                 if commandError != nil { commandError = nil }
@@ -44,7 +45,9 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var windowSidebarWidth: Double? {
         didSet { if oldValue != windowSidebarWidth { windowGroup?.sidebarLayoutDidChange(in: self) } }
     }
-    @Published var presentedPanel: BrowserPanel?
+    @Published var presentedPanel: BrowserPanel? {
+        didSet { if presentedPanel != nil { cancelRecentTabSwitcher() } }
+    }
     @Published var boostPicker: BoostPickerSession?
     @Published var boostEditor: BoostEditor?
     var boostApprovalJobs: [ObjectIdentifier: BoostApprovalJob] = [:]
@@ -52,6 +55,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var updatesVisible: Bool { get { presentedPanel == .updates } set { if newValue { presentedPanel = .updates } else if updatesVisible { presentedPanel = nil } } }
     var profilesVisible: Bool { get { presentedPanel == .profiles } set { if newValue { presentedPanel = .profiles } else if profilesVisible { presentedPanel = nil } } }
     @Published var onboardingVisible = false
+    @Published var recentTabSwitcher: RecentTabSwitcher?
     var hasSavedDocument = false
     @Published var lastSpaceDeletion: DeletedSpaceReference?
     @Published var spacesShowingDeleted = false
@@ -243,7 +247,15 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var focusedID: UUID? { activePaneID == splitID && splitID != nil ? splitID : selectedID }
     var selectedTab: BrowserCore.Tab? { space.tabs.first { $0.id == focusedID } }
     var currentView: WKWebView? { focusedID.flatMap { views[$0] } }
-    func focusPane(_ id: UUID) { if id == selectedID || id == splitID { activePaneID = id } }
+    func focusPane(_ id: UUID) {
+        guard id == selectedID || id == splitID else { return }
+        let previous = focusedID
+        activePaneID = id
+        if focusedID != previous {
+            cancelRecentTabSwitcher()
+            recordTabVisit(id)
+        }
+    }
 
     init(isPrivate: Bool = false, dataRoot: URL? = nil, keyProvider: ((Bool) throws -> SymmetricKey)? = nil,
          metadataKeyAccess: MetadataKeyAccess? = nil, windowGroup: BrowserWindowGroup? = nil) {
@@ -318,6 +330,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func shutdown() {
         guard !isShuttingDown else { return }
         closeExtensionManagers()
+        cancelRecentTabSwitcher()
         flush(); isShuttingDown = true; privateExtensionReopenJob?.finish(.failure(ExtensionHostError.closed)); cancelAllExtensionNavigations(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
@@ -330,19 +343,28 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func select(_ id: UUID) {
         guard session.spaces[spaceIndex].tabs.contains(where: { $0.id == id }) else { return }
-        if focusedID != id { dismissCommand() }
+        if focusedID != id { dismissCommand(); cancelRecentTabSwitcher() }
         if let windowGroup, !windowGroup.claimPresentation(tabID: id, in: self) { return }
         session.spaces[spaceIndex].selected = id; activePaneID = nil
-        accessOrder.removeAll { $0 == id }; accessOrder.append(id)
-        update(id) { $0.lastAccessed = Date() }
+        recordTabVisit(id)
         if activePaneID == id { activePaneID = nil }
         if splitID == id { splitID = nil }
         save()
     }
-    func selectSpace(_ id: UUID) {
+    private func recordTabVisit(_ id: UUID) {
+        guard (windowGroup?.presentation(tabID: id, in: self) ?? .owned) == .owned else { return }
+        accessOrder.removeAll { $0 == id }; accessOrder.append(id)
+        update(id) { $0.lastAccessed = Date() }
+    }
+
+    func selectSpace(_ id: UUID, recordingVisit: Bool = true) {
         guard session.spaces.contains(where: { $0.id == id && (extensionPopupProfileID == nil || $0.effectiveProfileID == extensionPopupProfileID) }) else { return }
-        if session.selectedSpace != id { dismissCommand() }
-        closePrimaryPeek(); activePaneID = nil; splitID = nil; session.activateSpace(id); save()
+        let switching = session.selectedSpace != id
+        if switching { dismissCommand(); cancelRecentTabSwitcher() }
+        closePrimaryPeek(); activePaneID = nil; splitID = nil
+        session.activateSpace(id)
+        if switching, recordingVisit, let selectedID { recordTabVisit(selectedID) }
+        save()
     }
     func addSpace() {
         let alert = NSAlert(); alert.messageText = "Create a Space"; alert.informativeText = "Give this collection of tabs a name."
@@ -428,7 +450,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         }
         if favorites.contains(where: { $0.id == id }) { if materializeFavorite(id) { select(id) }; return }
         if let owner = session.spaces.first(where: { $0.tabs.contains(where: { $0.id == id }) }) {
-            if owner.id != space.id { selectSpace(owner.id) }; select(id)
+            if owner.id != space.id { selectSpace(owner.id, recordingVisit: false) }; select(id)
         }
     }
     func toggleFavorite(_ id: UUID) {

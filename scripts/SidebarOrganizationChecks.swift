@@ -43,6 +43,87 @@ import BrowserCore
             check(NSApp.mainMenu?.items.first(where:{$0.title == "File"})?.submenu?.items.contains(where:{$0.action == #selector(AppDelegate.newFolder)}) == true && store.availableCommands.contains(.newFolder) && BrowserCommand.newFolder.matches("new fol"),"Folder creation is discoverable in the native File menu and command search")
         }
         inWindow {store,window,delegate in
+            let a = store.newTab(url: URL(string: "https://example.invalid/first-recent")!)
+            let b = store.newTab(url: URL(string: "https://example.invalid/second-recent")!)
+            let c = store.newTab(url: URL(string: "https://example.invalid/third-recent")!)
+            store.select(b)
+            store.select(c)
+            store.select(a)
+            delegate.nextTab()
+            check(store.selectedID == c,
+                  "Switching to the previous recent tab follows last use rather than sidebar order")
+        }
+        inWindow { store, window, delegate in
+            let urls = (1...7).map { URL(string: "https://example.invalid/recent-\($0)")! }
+            let ids = urls.map { store.newTab(url: $0) }
+            let original = ids[6], previous = ids[5], earlier = ids[4]
+            let view = store.view(for: original)
+            @MainActor func key(_ code: UInt16, text: String, flags: NSEvent.ModifierFlags = .control,
+                     type: NSEvent.EventType = .keyDown) -> NSEvent {
+                NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: 0,
+                                 windowNumber: window.windowNumber, context: nil, characters: text,
+                                 charactersIgnoringModifiers: text, isARepeat: false, keyCode: code)!
+            }
+            let tab = key(48, text: "\t"), reverse = key(48, text: "\t", flags: [.control, .shift])
+            let release = key(59, text: "", flags: [], type: .flagsChanged)
+            check(delegate.handleRecentTabInput(tab) && store.visibleRecentTabSwitcher?.entries.map(\.id) == Array(ids.reversed().prefix(5)) &&
+                  store.visibleRecentTabSwitcher?.selected.id == previous && store.selectedID == original && store.views[original] === view,
+                  "Control-Tab highlights the previous of the five recent tabs and preserves the current live page")
+            check(delegate.handleRecentTabInput(tab) && store.visibleRecentTabSwitcher?.selected.id == earlier &&
+                  delegate.handleRecentTabInput(reverse) && store.visibleRecentTabSwitcher?.selected.id == previous,
+                  "A held Control key cycles in both directions through the same five tabs")
+            check(delegate.handleRecentTabInput(key(53, text: "\u{1b}")) && store.visibleRecentTabSwitcher == nil && store.selectedID == original,
+                  "Escape cancels the recent-tab highlight without selecting its page")
+            _ = delegate.handleRecentTabInput(tab)
+            _ = delegate.handleRecentTabInput(release)
+            check(store.selectedID == previous && store.visibleRecentTabSwitcher == nil && store.views[original] === view,
+                  "Releasing Control selects the highlighted tab without replacing the original page")
+            _ = delegate.handleRecentTabInput(tab)
+            let highlighted = store.visibleRecentTabSwitcher?.selected.id
+            check(highlighted == original && delegate.handleRecentTabInput(key(13, text: "w")) &&
+                  store.tab(original) == nil && store.selectedID == previous && window.closeRequests == 0,
+                  "Control-W closes the highlighted tab and leaves its browser window open")
+            _ = delegate.handleRecentTabInput(tab)
+            delegate.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification, object: window))
+            _ = delegate.handleRecentTabInput(release)
+            check(store.selectedID == previous && store.recentTabSwitcher == nil,
+                  "A former key window drops the highlight before Control is released")
+            _ = delegate.handleRecentTabInput(tab)
+            store.showCommand()
+            check(!delegate.handleRecentTabInput(key(36, text: "\r", flags: [])) && store.commandVisible &&
+                  store.recentTabSwitcher == nil, "A hidden recent switcher passes Return to the command field")
+            store.dismissCommand()
+            _ = delegate.handleRecentTabInput(tab)
+            let other = try! store.createSpace(name: "Another Space")
+            store.selectSpace(other)
+            _ = delegate.handleRecentTabInput(release)
+            check(store.space.id == other && store.recentTabSwitcher == nil,
+                  "A Space change cancels an in-progress recent-tab selection")
+        }
+        inWindow { store, _, _ in
+            let a = store.newTab(url: URL(string: "about:blank#primary"))
+            let b = store.newTab(url: URL(string: "about:blank#split"))
+            let c = store.newTab(url: URL(string: "about:blank#hidden"))
+            store.update(b) { $0.lastAccessed = .distantPast }
+            store.update(c) { $0.lastAccessed = Date(timeIntervalSinceNow: -30) }
+            store.select(a)
+            store.splitID = b
+            store.focusPane(b); store.focusPane(a)
+            check(store.advanceRecentTab(1) && store.visibleRecentTabSwitcher?.selected.id == b,
+                  "A focused split pane outranks an unvisited hidden tab")
+            store.cancelRecentTabSwitcher()
+            let firstSpace = store.space.id
+            let secondSpace = try! store.createSpace(name: "Recent other")
+            store.selectSpace(secondSpace)
+            let restored = store.newTab(url: URL(string: "about:blank#restored"))
+            store.update(restored) { $0.lastAccessed = .distantPast }
+            store.selectSpace(firstSpace)
+            store.selectSpace(secondSpace)
+            store.selectSpace(firstSpace)
+            check(store.advanceRecentTab(1) && store.visibleRecentTabSwitcher?.selected.id == restored,
+                  "Returning from a Space ranks its remembered active tab by the actual visit")
+        }
+        inWindow {store,window,delegate in
             let id = store.newTab(url:URL(string:"https://example.invalid/last")!)
             delegate.closeTab()
             check(store.tab(id) == nil && window.closeRequests == 1,"Cmd-W closes the last regular tab and then its empty Space window")

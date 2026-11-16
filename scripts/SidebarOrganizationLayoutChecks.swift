@@ -130,6 +130,17 @@ import BrowserCore
                let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
                 hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
                 try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output).appendingPathComponent("sidebar-nested.png"))
+                for title in ["Research notes", "Project roadmap", "Design review", "Reference library", "Reading list"] {
+                    let id = store.newTab(url: URL(string: "about:blank")!)
+                    store.update(id) { $0.title = title }
+                }
+                _ = store.advanceRecentTab(1)
+                await settle(); hosting.layoutSubtreeIfNeeded()
+                if let switcher = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
+                    hosting.cacheDisplay(in: hosting.bounds, to: switcher)
+                    try switcher.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output).appendingPathComponent("recent-tabs.png"))
+                }
+                store.cancelRecentTabSwitcher()
             }
         }
         print("Sidebar organization layout checks: \(failures) failures");exit(failures == 0 ? 0 : 1)

@@ -94,6 +94,35 @@ struct BrowserMultiWindowNativeChecks {
         application.fixtureKeyWindow = first
         _ = application.sendAction(newWindowAction, to: newWindow.target, from: newWindow)
         if let target = delegate.primaryOwners.keys.first(where: { $0 !== first }), let store = delegate.windows[target] {
+            defer { target.close() }
+            let localSpace = store.space.id
+            let a = store.newTab(url: URL(string: "about:blank#recent-first"))
+            let b = store.newTab(url: URL(string: "about:blank#recent-second"))
+            let remote = root.newTab(url: URL(string: "about:blank#recent-other-window"))
+            _ = try store.createProfile(name: "Other recent profile")
+            let foreign = store.newTab(url: URL(string: "about:blank#recent-other-profile"))
+            store.selectSpace(localSpace)
+            store.select(a)
+            application.fixtureKeyWindow = target
+            check(store.advanceRecentTab(1) &&
+                  Set(store.visibleRecentTabSwitcher?.entries.map(\.id) ?? []) == Set([a, b]),
+                  "Recent-tab candidates exclude another normal window and another profile")
+            let group = root.windowGroup!
+            check(group.claimPresentation(tabID: b, in: root),
+                  "The other window explicitly claims the highlighted recent tab")
+            store.chooseRecentTab()
+            check(store.selectedID == a && group.presentation(tabID: b, in: root) == .owned,
+                  "Recent-tab confirmation cannot reclaim a tab transferred while Ctrl was held")
+            _ = group.claimPresentation(tabID: b, in: store)
+            _ = store.advanceRecentTab(1)
+            _ = group.claimPresentation(tabID: a, in: root)
+            check(store.visibleRecentTabSwitcher == nil, "Moving the original page out of a window invalidates its switcher")
+            for id in [a, b, remote, foreign] { root.close(id) }
+        } else { check(false, "The recent-tab isolation fixture opens a second normal window") }
+
+        application.fixtureKeyWindow = first
+        _ = application.sendAction(newWindowAction, to: newWindow.target, from: newWindow)
+        if let target = delegate.primaryOwners.keys.first(where: { $0 !== first }), let store = delegate.windows[target] {
             let profile = try store.createProfile(name: "Focused link account")
             let original = root.selectedID
             try root.setDefaultLinkDestination(.mostRecentSpace)

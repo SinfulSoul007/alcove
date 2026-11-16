@@ -93,7 +93,8 @@ struct BrowserUI: View {
         reveal.endResize()
     }
     var sidebarInteractionBlocked: Bool {
-        store.commandVisible || store.onboardingVisible || store.primaryPeekView != nil || store.presentedPanel != nil
+        store.commandVisible || store.onboardingVisible || store.primaryPeekView != nil ||
+            store.presentedPanel != nil || store.visibleRecentTabSwitcher != nil
     }
     var sheetPanel: Binding<BrowserPanel?> {
         Binding(get:{ store.presentedPanel == .spaces ? nil : store.presentedPanel },set:{ next in
@@ -174,11 +175,20 @@ struct BrowserUI: View {
                 if let message = store.message,!managerShown {
                     VStack { Spacer(); BrowserStatusBanner(store:store,message:message).shadow(radius:10).padding(24) }.frame(maxWidth:.infinity)
                 }
+                if let switcher = store.visibleRecentTabSwitcher {
+                    Color.black.opacity(0.24).ignoresSafeArea().onTapGesture { store.cancelRecentTabSwitcher() }
+                        .accessibilityHidden(true)
+                    RecentTabPanel(store: store, switcher: switcher, theme: theme)
+                        .frame(width: min(418, geometry.size.width - 32))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .transition(.opacity)
+                }
                 if store.onboardingVisible { OnboardingView(store: store).transition(.opacity).zIndex(10) }
             }
             .background(theme.gradient).foregroundStyle(theme.ink)
             .frame(maxWidth: .infinity, maxHeight: .infinity).ignoresSafeArea()
             .preferredColorScheme(theme.isDark ? .dark : .light)
+            .animation(motion, value: store.visibleRecentTabSwitcher != nil)
             .animation(motion, value: store.commandVisible)
             .animation(motion, value: store.primaryPeekView != nil)
             .onAppear { reveal.setEnabled(floatingAllowed) }

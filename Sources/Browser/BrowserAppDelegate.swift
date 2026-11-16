@@ -79,15 +79,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         updateTimer?.tolerance = 60
         paneFocusMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             guard let self, let window = event.window, let store = self.windows[window],
-                  store.primaryPeekView == nil, !store.commandVisible else { return event }
+                  store.primaryPeekView == nil, !store.commandVisible, store.visibleRecentTabSwitcher == nil else { return event }
             for (id, web) in store.views where web.window === window {
                 if web.convert(web.bounds, to: nil).contains(event.locationInWindow) { store.focusPane(id); break }
             }
             return event
         }
-        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53, let self else { return event }
-            return self.handleEscape(in: event.window) ? nil : event
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+            guard let self else { return event }
+            if self.handleRecentTabInput(event) { return nil }
+            if event.type == .keyDown, event.keyCode == 53, self.handleEscape(in: event.window) { return nil }
+            return event
         }
     }
     func hasMarkedText(in window: NSWindow?) -> Bool {
@@ -345,6 +347,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func checkNormalWindowAutomatically() { if let store = normalOwner?.store { checkAutomaticallyIfNeeded(store) } }
     func applicationDidBecomeActive(_ notification: Notification) { checkNormalWindowAutomatically() }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { openWindow(isPrivate: false); return true }
+    func applicationDidResignActive(_ notification: Notification) {
+        for store in windows.values { store.cancelRecentTabSwitcher() }
+    }
+    func windowDidResignKey(_ notification: Notification) {
+        if let window = notification.object as? NSWindow { windows[window]?.cancelRecentTabSwitcher() }
+    }
     func windowDidBecomeKey(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, let store = windows[window], !store.isPrivate,
               store.extensionPopupProfileID == nil else { return }
@@ -369,6 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         pageOutput.cancel(in: window)
         let owner = primaryOwners.removeValue(forKey: window); let lease = primaryLeases.removeValue(forKey: window)
         let store = windows.removeValue(forKey: window); window.contentView = nil
+        store?.cancelRecentTabSwitcher()
         store?.unregisterExtensionWindow(kind:.primary)
         if normalWindow === window { normalWindow = owner.flatMap { preferredPrimary(of: $0) } }
         guard !terminating else { return }
@@ -449,7 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(view, "Reload", #selector(reload), "r"); add(view, "Toggle Sidebar", #selector(sidebar), "s")
         add(view, "Toggle Split View", #selector(split), "d", [.command, .shift]); add(view, "Pin / Unpin Tab", #selector(pin), "p", [.command, .shift])
         add(view, "Close Peek", #selector(closePeek), "\u{1b}", [])
-        add(view, "Next Tab", #selector(nextTab), "\t", .control); add(view, "Previous Tab", #selector(previousTab), "\t", [.control, .shift])
+        add(view, "Next Recent Tab", #selector(nextTab), "\t", .control); add(view, "Previous Recent Tab", #selector(previousTab), "\t", [.control, .shift])
         add(view, "Next Space", #selector(nextSpace), "\u{f703}", [.command, .option]); add(view, "Previous Space", #selector(previousSpace), "\u{f702}", [.command, .option])
         add(view, "Zoom In", #selector(zoomIn), "="); add(view, "Zoom Out", #selector(zoomOut), "-"); add(view, "Actual Size", #selector(resetZoom), "0")
         spacesMenu = submenu("Spaces"); spacesMenu?.delegate = self
@@ -557,12 +566,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         else { store.closePrimaryPeek() }
     }
     func stepTab(_ delta: Int) {
-        guard activeQuick == nil, let store = activeStore else { return }
-        let tabs = store.extensionPopupProfileID == nil ? store.space.tabs : store.extensionPopupTabs
-        guard let index = tabs.firstIndex(where: { $0.id == store.focusedID }), !tabs.isEmpty else { return }
-        let next = tabs[(index + delta + tabs.count) % tabs.count].id
-        if store.extensionPopupProfileID == nil { store.select(next) }
-        else { store.selectExtensionPopupTab(next) }
+        guard activeQuick == nil, NSApp.keyWindow?.sheetParent == nil,
+              ExtensionManagerWindowController.active == nil,
+              let store = activeStore, store.advanceRecentTab(delta) else { return }
+        store.chooseRecentTab()
     }
     func stepSpace(_ delta: Int) {
         guard activeQuick == nil, let store = activeStore else { return }
