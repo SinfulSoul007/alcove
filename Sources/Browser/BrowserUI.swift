@@ -289,7 +289,7 @@ struct BrowserUI: View {
 
     private func splitContent(_ layout: BrowserSplitLayout) -> some View {
         GeometryReader { geometry in
-            NativeBrowserSplit(layout: layout, size: geometry.size) { id in
+            NativeBrowserSplit(layout: layout, size: geometry.size, onResize: store.rememberSplitPaneSizes) { id in
                 pane(id).foregroundStyle(theme.ink)
             }
         }

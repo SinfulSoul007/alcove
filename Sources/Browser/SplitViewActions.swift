@@ -134,6 +134,15 @@ extension BrowserStore {
         splitLayout = layout
     }
 
+    func rememberSplitPaneSizes(for snapshot: BrowserSplitLayout, lengths: [Double]) {
+        guard !isShuttingDown, !awaitingInitialMetadata, !profileUnavailable(activeProfileID),
+              var layout = splitLayout, layout.id == snapshot.id, layout.axis == snapshot.axis,
+              layout.tabIDs == snapshot.tabIDs, layout.paneFractions == snapshot.paneFractions,
+              layout.tabIDs.allSatisfy({ (windowGroup?.presentation(tabID: $0, in: self) ?? .owned) == .owned }),
+              layout.rememberPaneSizes(lengths) else { return }
+        splitLayout = layout
+    }
+
     func clearSplit() {
         guard splitLayout != nil else { return }
         let previous = focusedID
