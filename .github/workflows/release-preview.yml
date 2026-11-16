@@ -120,9 +120,13 @@ jobs:
 
           Open Alcove → Extensions → Browse Chrome Web Store to find extensions. Alcove’s Review Extension button opens publisher, compatibility and permission details for the selected profile. Compatible extensions can open regular and compact popup windows, including background windows.
 
-          The preview includes a skippable opening greeting, saved-tab folders and an experimental native extension manager. Full uBlock Origin is unsupported; uBlock Origin Lite is separate and has limited tested compatibility. Native extension APIs need macOS 15.4+. Private request-blocking extensions additionally need a fixed system WebKit (624.1.16 or later); affected systems keep private browsing available and refuse that extension association.
+          The first launch opens with a short handwritten Alcove greeting. You can skip it, replay it from the app menu, or use Reduce Motion to go directly to setup.
 
-          Alcove 0.11 writes encrypted metadata format 7 to protect nested folders from older versions that would flatten them. Existing saved tabs and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
+          Split View can show up to four pages side by side or stacked. Drag a tab onto a row edge or the edge of a page in the same Space. Split groups reopen when you select a member and restore with normal windows after Quit.
+
+          The native extension manager has limited tested compatibility with uBlock Origin Lite. Full uBlock Origin support is still in development. Native extension APIs need macOS 15.4+. Private request-blocking extensions need a fixed system WebKit (624.1.16 or later).
+
+          Alcove 0.12 writes encrypted metadata format 8 to preserve saved split groups. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
 
           SHA256SUMS.txt contains checksums for both installers. Checksums detect changed bytes; they do not establish developer identity.
           NOTE
