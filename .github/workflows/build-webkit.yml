@@ -10,7 +10,7 @@ permissions:
 jobs:
   macos:
     runs-on: macos-26
-    timeout-minutes: 180
+    timeout-minutes: 350
     env:
       WEBKIT_REVISION: 26695efdefc6076049ec50713a2c4e54b90b4d47
     steps:
@@ -46,7 +46,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          Tools/Scripts/build-webkit --release
+          # The default scheme also builds developer tools that the engine probe does not use.
+          # Keep progress and compiler diagnostics visible on the long standard-runner build.
+          Tools/Scripts/build-webkit --release --only='Everything up to WebKit' 2>&1 |
+            awk 'NR <= 80 || NR % 4000 == 0 || / (fatal error|error|warning):|BUILD (SUCCEEDED|FAILED)|No space left/ {
+              print substr($0, 1, 700)
+              fflush()
+            }'
           framework=WebKitBuild/Release/WebKit.framework/WebKit
           test -s "$framework"
           file "$framework"
