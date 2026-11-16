@@ -19,6 +19,7 @@ import BrowserCore
     private var windowClosed = false
     private var observations: [NSObjectProtocol] = []
     private var sources = Set<ObjectIdentifier>()
+    var hasTrackingMenu: Bool { !menus.isEmpty }
 
     init(enabled: Bool = false) { self.enabled = enabled }
 

@@ -315,7 +315,21 @@ struct BrowserUI: View {
         }.padding(.horizontal, 8).frame(height: max(34, chrome.height))
             .background(theme.gradient).background(NativeChromeReader(chrome: chrome))
     }
+    private var nearbySpaces: SidebarSpaceSwipeRegion.Spaces {
+        let spaces = store.session.spaces
+        let index = store.spaceIndex
+        return .init(current: store.space.id,
+                     previous: index > spaces.startIndex ? spaces[index - 1].id : nil,
+                     next: index + 1 < spaces.endIndex ? spaces[index + 1].id : nil)
+    }
+
+    private var canSwipeSpaces: Bool {
+        (store.sidebarVisible || reveal.revealed) && !sidebarInteractionBlocked &&
+            store.boostPicker == nil && !store.profileDataOperationInProgress && resize.temporaryWidth == nil
+    }
+
     private func sidebar(width: Double, windowHeight: Double) -> some View {
+        let swipeSpaces = nearbySpaces
         let columns = appearance.columns(for: width)
         let favoriteRows = Double((store.favorites.count + columns - 1) / columns)
         // Reserve chrome, both section headers and the footer before dividing the scrollable space.
@@ -348,44 +362,55 @@ struct BrowserUI: View {
                     Spacer(minLength: 0)
                 }.padding(.horizontal, 12).frame(height: 36).background(theme.tile, in: RoundedRectangle(cornerRadius: 10))
             }.buttonStyle(.plain).padding(.horizontal, 8).padding(.bottom, 8)
-            if !store.favorites.isEmpty {
-                ScrollView(.vertical, showsIndicators: false) {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: columns), spacing: 7) {
-                    ForEach(store.favorites) { tab in
-                        Button { store.selectAny(tab.id) } label: {
-                            SiteBadge(url: tab.homeURL ?? tab.url, large: true, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil).frame(maxWidth: .infinity).frame(height: 48).background(store.focusedID == tab.id ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: 10))
-                        }.buttonStyle(.plain).help(tab.pinnedTitle ?? tab.title).onDrag { store.beginSidebarTabDrag(tab.id) }.contextMenu { TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id); Button("Remove from Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata); Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) }.disabled(!store.canModifyLocalMetadata) }
+            VStack(alignment: .leading, spacing: 0) {
+                if !store.favorites.isEmpty {
+                    ScrollView(.vertical, showsIndicators: false) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: columns), spacing: 7) {
+                        ForEach(store.favorites) { tab in
+                            Button { store.selectAny(tab.id) } label: {
+                                SiteBadge(url: tab.homeURL ?? tab.url, large: true, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil).frame(maxWidth: .infinity).frame(height: 48).background(store.focusedID == tab.id ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: 10))
+                            }.buttonStyle(.plain).help(tab.pinnedTitle ?? tab.title).onDrag { store.beginSidebarTabDrag(tab.id) }.contextMenu { TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id); Button("Remove from Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata); Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) }.disabled(!store.canModifyLocalMetadata) }
+                        }
                     }
+                    }.frame(height: favoritesHeight).accessibilityLabel("Favorites").padding(.horizontal, 8).padding(.bottom, 8).onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .favorites))
                 }
-                }.frame(height: favoritesHeight).accessibilityLabel("Favorites").padding(.horizontal, 8).padding(.bottom, 8).onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .favorites))
-            }
-            HStack {
-                Text(store.space.name.isEmpty ? "Space" : store.space.name).font(.system(size: 12, weight: .semibold)).opacity(0.5)
-                Spacer()
-                Menu {
-                    Button("Manage Spaces…") { store.showSpacesManager() }
-                    Button("Rename Space…") { store.requestRenameSpace(store.space.id) }.disabled(!store.canManageSpace(store.space.id))
-                    Button("New Space…") { store.requestNewSpace() }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(store.activeProfileID)))
-                    Button("Customize…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata)
-                    Button("Boost This Site…") { do { try store.requestBoostEditor(for: store.primaryPeekView ?? store.currentView) } catch { store.message = error.localizedDescription } }
-                    Button("Extensions…") {store.requestExtensionManager()}
-                    Menu("Theme") { ForEach(SidebarTheme.allCases) { choice in Button(choice.name) { withAnimation(motion) { store.setTheme(choice) } } } }.disabled(!store.canModifyLocalMetadata)
-                    Button("Split View") { store.toggleSplit() }
-                    Button("Bookmark Page") { store.addBookmark() }.disabled(store.isPrivate || !store.savingEnabled || store.profileUnavailable(store.activeProfileID))
-                    spaceProfileMenu
-                } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("Space settings")
-            }.padding(.horizontal, 16).frame(height: 36)
-            SidebarSavedTabs(store: store, theme: theme, appearance: appearance, motion: motion, height: pinnedHeight, layout: savedLayout)
-            Rectangle().fill(theme.ink.opacity(0.12)).frame(height: 1).padding(.horizontal, 18).padding(.vertical, 6)
-            HStack {
-                Text("Today").font(.system(size: 11, weight: .semibold)).opacity(0.5)
-                Spacer(minLength: 4)
-                if !today.isEmpty { Button("Clear") { for tab in today { store.close(tab.id) } }.font(.system(size: 10)).buttonStyle(.plain).opacity(0.4).help("Close Today tabs") }
-                Button { store.showCommand(new: true) } label: { Label("New Tab", systemImage: "plus").font(.system(size: 12)).opacity(0.5) }.buttonStyle(.plain)
-            }.padding(.horizontal, 18).frame(height: 32).onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .today))
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 3) { ForEach(today) { row($0) } }.padding(.horizontal, 8)
-            }.accessibilityLabel("Today tabs").onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .today))
+                HStack {
+                    Text(store.space.name.isEmpty ? "Space" : store.space.name).font(.system(size: 12, weight: .semibold)).opacity(0.5)
+                    Spacer()
+                    Menu {
+                        Button("Manage Spaces…") { store.showSpacesManager() }
+                        Button("Rename Space…") { store.requestRenameSpace(store.space.id) }.disabled(!store.canManageSpace(store.space.id))
+                        Button("New Space…") { store.requestNewSpace() }.disabled(!store.canModifyLocalMetadata || store.profileDataOperationInProgress || (!store.isPrivate && store.profileUnavailable(store.activeProfileID)))
+                        Button("Customize…") { store.appearanceVisible = true }.disabled(!store.canModifyLocalMetadata)
+                        Button("Boost This Site…") { do { try store.requestBoostEditor(for: store.primaryPeekView ?? store.currentView) } catch { store.message = error.localizedDescription } }
+                        Button("Extensions…") {store.requestExtensionManager()}
+                        Menu("Theme") { ForEach(SidebarTheme.allCases) { choice in Button(choice.name) { withAnimation(motion) { store.setTheme(choice) } } } }.disabled(!store.canModifyLocalMetadata)
+                        Button("Split View") { store.toggleSplit() }
+                        Button("Bookmark Page") { store.addBookmark() }.disabled(store.isPrivate || !store.savingEnabled || store.profileUnavailable(store.activeProfileID))
+                        spaceProfileMenu
+                    } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("Space settings")
+                }.padding(.horizontal, 16).frame(height: 36)
+                SidebarSavedTabs(store: store, theme: theme, appearance: appearance, motion: motion, height: pinnedHeight, layout: savedLayout)
+                Rectangle().fill(theme.ink.opacity(0.12)).frame(height: 1).padding(.horizontal, 18).padding(.vertical, 6)
+                HStack {
+                    Text("Today").font(.system(size: 11, weight: .semibold)).opacity(0.5)
+                    Spacer(minLength: 4)
+                    if !today.isEmpty { Button("Clear") { for tab in today { store.close(tab.id) } }.font(.system(size: 10)).buttonStyle(.plain).opacity(0.4).help("Close Today tabs") }
+                    Button { store.showCommand(new: true) } label: { Label("New Tab", systemImage: "plus").font(.system(size: 12)).opacity(0.5) }.buttonStyle(.plain)
+                }.padding(.horizontal, 18).frame(height: 32).onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .today))
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 3) { ForEach(today) { row($0) } }.padding(.horizontal, 8)
+                }.accessibilityLabel("Today tabs").onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .today))
+            }.modifier(SidebarSpaceSwipeRegion(
+                spaces: swipeSpaces,
+                reveal: reveal,
+                enabled: canSwipeSpaces,
+                motion: motion,
+                select: { destination in
+                    guard nearbySpaces == swipeSpaces, canSwipeSpaces else { return }
+                    store.selectSpace(destination)
+                }
+            ))
             HStack(spacing: 10) {
                 mini("archivebox", "Library") { store.libraryVisible = true }
                 if updates.offer != nil { mini("arrow.down.circle.fill", "An Alcove update is available") { store.updatesVisible = true }.foregroundStyle(theme.accent) }
@@ -402,7 +427,9 @@ struct BrowserUI: View {
                                     .contextMenu { SpaceActionItems(store:store,spaceID:space.id) }
                             }
                         }.frame(minHeight: 26)
-                    }.onChange(of: store.session.selectedSpace) { _, id in proxy.scrollTo(id, anchor: .center) }
+                    }.onChange(of: store.session.selectedSpace) { _, id in
+                        withAnimation(motion) { proxy.scrollTo(id, anchor: .center) }
+                    }
                         .onChange(of:store.session.spaces.map(\.id)) { _,_ in proxy.scrollTo(store.session.selectedSpace,anchor:.center) }
                 }
                 Spacer(minLength: 0)

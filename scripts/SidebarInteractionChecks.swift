@@ -50,6 +50,34 @@ import BrowserCore
         check(await waitUntil({ !congested.revealed }), "A queued main-executor stall does not make the hide assertion premature")
         congested.reset()
 
+        var swipe = SidebarSpaceSwipe()
+        check(swipe.update(.began, x: -3, y: 0) == .passThrough &&
+              swipe.update(.changed, x: -22, y: 1) == .track(-25),
+              "A horizontal movement commits to a sidebar swipe once its intent is clear")
+        check(swipe.update(.changed, x: -70, y: 0) == .track(-95) &&
+              swipe.update(.ended) == .switchSpace(.next) &&
+              swipe.update(.changed, x: -70, y: 0) == .passThrough,
+              "A left swipe switches once on release, and later samples cannot switch again")
+        _ = swipe.update(.began, x: 28, y: 1)
+        _ = swipe.update(.changed, x: 70, y: 2)
+        check(swipe.update(.ended) == .switchSpace(.previous),
+              "A right swipe returns to the previous Space")
+        _ = swipe.update(.began, x: -25, y: 1)
+        check(swipe.update(.ended) == .reset,
+              "Releasing an incomplete swipe restores the sidebar without switching")
+        _ = swipe.update(.began, x: 85, y: 1)
+        check(swipe.update(.cancelled) == .reset &&
+              swipe.update(.ended) == .passThrough,
+              "Cancelling a horizontal swipe restores the sidebar and revokes its switch")
+        check(swipe.update(.began, x: -2, y: 24) == .passThrough &&
+              swipe.update(.changed, x: -90, y: 10) == .passThrough &&
+              swipe.update(.ended) == .passThrough,
+              "Vertical sidebar scrolling remains vertical for the entire gesture")
+        _ = swipe.update(.began, x: -30, y: 1)
+        _ = swipe.update(.changed, x: 20, y: 1)
+        check(swipe.update(.ended) == .reset,
+              "Reversing horizontal movement before release can cancel the switch")
+
         let hover = SidebarRevealController(enabled: true)
         hover.edgeEntered(); hover.edgeExited(); await pause(130)
         check(!hover.revealed, "Leaving before the reveal deadline cancels the pending sidebar")

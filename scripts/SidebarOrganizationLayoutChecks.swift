@@ -3,6 +3,11 @@ import SwiftUI
 import WebKit
 import BrowserCore
 
+@MainActor private final class SidebarGestureFixtureWindow: NSWindow {
+    var claimsKeyForGestures = false
+    override var isKeyWindow: Bool { claimsKeyForGestures || super.isKeyWindow }
+}
+
 @main struct SidebarOrganizationLayoutChecks {
     @MainActor static func main() async throws {
         NSApplication.shared.setActivationPolicy(.prohibited);setbuf(stdout,nil)
@@ -45,7 +50,7 @@ import BrowserCore
         try store.setTabFolderExpanded("Projects", expanded: true, in: store.space.id)
         let hosting = NSHostingView(rootView:BrowserUI(store:store,sidebarDefaults:defaults).environmentObject(UpdateController(installedTag:"test")))
         hosting.safeAreaRegions = [];hosting.sizingOptions = []
-        let window = NSWindow(contentRect:NSRect(x:0,y:0,width:1260,height:820),styleMask:[.titled,.closable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
+        let window = SidebarGestureFixtureWindow(contentRect:NSRect(x:0,y:0,width:1260,height:820),styleMask:[.titled,.closable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
         window.isReleasedWhenClosed = false;window.titlebarAppearsTransparent = true;window.titleVisibility = .hidden;window.contentView = hosting
         defer {window.contentView = nil;window.close()}
         for scale in [1.0,1.35] {
@@ -142,6 +147,105 @@ import BrowserCore
                 }
                 store.cancelRecentTabSwitcher()
             }
+        }
+
+        if let gesture = descendants(hosting, SidebarSpaceSwipeRegion.Host.self).first,
+           let first = store.session.spaces.first?.id, store.space.id != first {
+            let second = store.space.id
+            let originalTab = store.selectedID
+            window.claimsKeyForGestures = true
+            store.selectSpace(first)
+            await settle()
+            hosting.layoutSubtreeIfNeeded()
+            let frame = gesture.convert(gesture.bounds.intersection(gesture.visibleRect), to: nil)
+            check(frame.width > 100 && frame.height > 120 && frame.minY > 28 && frame.maxX < 245,
+                  "The mounted Space gesture covers the sidebar tab shelves and excludes the footer and page")
+            let shelf = NSPoint(x: frame.midX, y: frame.midY)
+            let footer = NSPoint(x: frame.midX, y: frame.minY - 16)
+            let page = NSPoint(x: frame.maxX + 90, y: frame.midY)
+            func send(_ phase: CGScrollPhase, x: Int32 = 0, y: Int32 = 0,
+                      at point: NSPoint, units: CGScrollEventUnit = .pixel) -> Bool {
+                guard let cgEvent = CGEvent(scrollWheelEvent2Source: nil, units: units, wheelCount: 2,
+                                            wheel1: y, wheel2: x, wheel3: 0) else { return false }
+                cgEvent.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+                let expected: NSEvent.Phase
+                switch phase {
+                case .began: expected = .began
+                case .changed: expected = .changed
+                case .ended: expected = .ended
+                case .cancelled: expected = .cancelled
+                case .mayBegin: expected = .mayBegin
+                @unknown default: return false
+                }
+                guard let event = NSEvent(cgEvent: cgEvent), event.phase == expected,
+                      event.hasPreciseScrollingDeltas == (units == .pixel) else {
+                    check(false, "Core Graphics preserves the fixture's scroll phase and precision")
+                    return false
+                }
+                return gesture.route(event, in: window, at: point) == nil
+            }
+            check(!send(.began, x: -22, at: footer) &&
+                  !send(.changed, x: -95, at: shelf) && !send(.ended, at: shelf) && store.space.id == first,
+                  "A gesture starting on the footer retains footer scrolling after crossing into the tab list")
+            check(!send(.began, x: -25, at: page) &&
+                  !send(.changed, x: -95, at: shelf) && !send(.ended, at: shelf) && store.space.id == first,
+                  "A gesture starting on the webpage cannot switch Spaces by crossing the sidebar")
+            check(!send(.began, y: -30, at: shelf) &&
+                  !send(.changed, x: -110, y: -14, at: shelf) && !send(.ended, at: shelf) && store.space.id == first,
+                  "Native vertical scrolling passes through the shelf without selecting a Space")
+            check(!send(.began, x: -24, at: shelf, units: .line) &&
+                  !send(.changed, x: -100, at: shelf, units: .line) && store.space.id == first,
+                  "Coarse wheel events leave Space navigation untouched")
+            check(send(.began, x: -20, at: shelf) && send(.changed, x: -88, at: shelf) &&
+                  store.space.id == first, "A mounted horizontal gesture tracks without switching before release")
+            check(send(.ended, at: shelf) && store.space.id == second && store.selectedID == originalTab,
+                  "Releasing a sidebar swipe selects the adjacent Space and its saved tab")
+            await settle()
+            check(send(.began, x: 24, at: shelf) && send(.changed, x: 89, at: shelf) &&
+                  send(.cancelled, at: shelf) && store.space.id == second,
+                  "Cancelling a native reverse swipe leaves the current Space selected")
+            check(send(.began, x: 32, at: shelf) && send(.changed, x: 92, at: shelf) &&
+                  send(.ended, at: shelf) && store.space.id == first,
+                  "Swiping back across the mounted sidebar returns to the original Space")
+            await settle()
+            check(send(.began, x: -74, at: shelf), "A mounted sidebar can begin a swipe before its Space order changes")
+            try store.moveSpace(second, to: 0)
+            _ = send(.ended, at: shelf)
+            check(store.space.id == first, "A swipe cannot select a Space moved to the opposite side before the next render")
+            try store.moveSpace(second, to: 1)
+            store.selectSpace(first)
+            await settle()
+            check(send(.began, x: -74, at: shelf), "A fresh stable sidebar can begin another native swipe")
+            store.showCommand()
+            await settle()
+            check(!send(.ended, at: shelf) && store.space.id == first,
+                  "Opening the command overlay cancels a pending Space switch")
+            store.dismissCommand()
+            await settle()
+            let menu = NSMenu(title: "Owned sidebar menu")
+            check(send(.began, x: -75, at: shelf), "A mounted native menu fixture begins with an active swipe")
+            NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+            check(!send(.changed, x: -22, at: shelf) && !send(.began, x: -82, at: shelf),
+                  "Native menu tracking cancels the active swipe and rejects new gestures")
+            NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: menu)
+            check(!send(.ended, at: shelf) && store.space.id == first,
+                  "Ending native menu tracking cannot commit a swipe started before the menu")
+            if let current = store.currentView, let source = try? BoostEditSource(store: store, web: current) {
+                check(send(.began, x: -74, at: shelf), "A fresh swipe can start after the menu stops tracking")
+                let boost = SiteBoost(content: BoostContent(name: "Owned swipe picker", host: source.host))
+                store.boostPicker = BoostPickerSession(source: source, boost: boost)
+                _ = send(.ended, at: shelf)
+                check(store.space.id == first && store.boostPicker?.source === source,
+                      "Opening the element picker preserves its Space and mounted document during a swipe")
+                store.cancelBoostPicker()
+            } else {
+                check(false, "The swipe interruption probe has an owned web document for its element picker")
+            }
+            store.selectSpace(second)
+            await settle()
+            window.claimsKeyForGestures = false
+        } else {
+            check(false, "The multi-Space browser exposes a native sidebar gesture region")
         }
         let splitTabs = (1...4).map { index in
             store.newTab(url: URL(string: "about:blank#split-layout-\(index)"))

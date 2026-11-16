@@ -23,6 +23,7 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 - Manual GitHub update checks, stable/preview channels and optional daily checks. Downloads and installation remain explicit actions.
 - Favorites, Pinned and Today scroll separately, keeping saved pages visible while you browse daily tabs. Bookmarking also pins the original page without reloading it.
 - Create folders from the Pinned header, File menu or command bar. Create a subfolder from a folder’s menu or drag a folder into its new parent. Moving or removing a folder keeps its contents pinned.
+- Swipe with two fingers across the sidebar’s tab list to switch to an adjacent Space. The Space icons remain available in the footer.
 - Hold Control and press Tab to browse up to five recent tabs in the window. Press Shift-Tab to reverse, release Control to switch, or press Escape to cancel.
 - Drag tabs between sections and into folders. Pinned tabs keep their title and saved home URL when closed. ⌘W closes the focused page (or Peek/panel first), then closes an empty window while leaving Alcove running.
 - Multiple normal windows share tabs and profiles. Each window has its own selected Space, selected tab and sidebar layout. Opening a shared tab in another window moves its live page.
