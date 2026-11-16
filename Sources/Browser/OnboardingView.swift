@@ -7,7 +7,7 @@ struct AlcovePortal: Shape {
         p.move(to: CGPoint(x: w * 0.2, y: h * 0.88)); p.addLine(to: CGPoint(x: w * 0.2, y: h * 0.42))
         p.addCurve(to: CGPoint(x: w * 0.8, y: h * 0.42), control1: CGPoint(x: w * 0.2, y: -h * 0.02), control2: CGPoint(x: w * 0.8, y: -h * 0.02))
         p.addLine(to: CGPoint(x: w * 0.8, y: h * 0.88))
-        return p
+        return p.offsetBy(dx: rect.minX, dy: rect.minY)
     }
 }
 struct OnboardingView: View {
@@ -23,8 +23,12 @@ struct OnboardingView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                store.activeTheme.gradient.ignoresSafeArea()
-                Circle().fill(store.activeTheme.accent.opacity(0.1)).frame(width: 520, height: 520).blur(radius: 90).offset(x: 240, y: -140)
+                store.activeTheme.gradient
+                    .overlay {
+                        Circle().fill(store.activeTheme.accent.opacity(0.1)).frame(width: 520, height: 520)
+                            .blur(radius: 90).offset(x: 240, y: -140).accessibilityHidden(true)
+                    }
+                    .ignoresSafeArea()
                 VStack(spacing: 0) {
                     HStack {
                         Text("ALCOVE").font(.system(size: 11, weight: .semibold)).tracking(3).opacity(0.6)
@@ -52,7 +56,7 @@ struct OnboardingView: View {
                 .allowsHitTesting(!showsIntro).accessibilityHidden(showsIntro).disabled(showsIntro)
                 if showsIntro {
                     LaunchIntroduction {
-                        withAnimation(motion) { introDismissed = true }
+                        withAnimation(.easeInOut(duration: 0.28)) { introDismissed = true }
                     }.transition(.opacity).zIndex(1)
                 }
             }.foregroundStyle(store.activeTheme.ink)

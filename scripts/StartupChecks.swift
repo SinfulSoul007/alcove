@@ -31,20 +31,42 @@ final class KeyGate: @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: root) }
         let key = SymmetricKey(size: .bits256)
         let welcomeStore = BrowserStore(dataRoot: root.appendingPathComponent("welcome"), keyProvider: { _ in key })
-        func firstWelcomeFrame() throws -> String {
-            let view = OnboardingView(store: welcomeStore).frame(width: 800, height: 540)
+        func firstWelcomeFrame(width: CGFloat = 800, height: CGFloat = 540) throws -> (text: String, image: CGImage) {
+            let view = OnboardingView(store: welcomeStore).frame(width: width, height: height)
             let renderer = ImageRenderer(content: view)
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
-            if let image = renderer.cgImage { try VNImageRequestHandler(cgImage: image).perform([request]) }
-            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            guard let image = renderer.cgImage else { throw CocoaError(.coderInvalidValue) }
+            try VNImageRequestHandler(cgImage: image).perform([request])
+            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            return (text, image)
         }
-        check(try firstWelcomeFrame().contains("Skip intro"),
+        let animatedWelcome = try firstWelcomeFrame()
+        check(animatedWelcome.text.contains("Skip intro"),
               "Animation-enabled first launch opens the greeting before setup")
+        check(try firstWelcomeFrame(width: 620, height: 385).text.contains("Skip intro"),
+              "A compact welcome view keeps the Skip control inside the viewport")
+        let image = animatedWelcome.image
+        // Sample the upper center outside the wordmark's bounds for the emblem.
+        let emblemBounds = CGRect(x: image.width / 2 - 28, y: image.height / 4, width: 56, height: image.height / 8)
+        let emblem = image.cropping(to: emblemBounds)!
+        let pixelCount = emblem.width * emblem.height
+        var pixels = [UInt8](repeating: 0, count: pixelCount * 4)
+        pixels.withUnsafeMutableBytes { bytes in
+            let raster = CGContext(data: bytes.baseAddress, width: emblem.width, height: emblem.height,
+                                   bitsPerComponent: 8, bytesPerRow: emblem.width * 4,
+                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            raster.draw(emblem, in: CGRect(x: 0, y: 0, width: emblem.width, height: emblem.height))
+        }
+        let litPixels = stride(from: 0, to: pixels.count, by: 4).filter { offset in
+            pixels[offset] > 195 && pixels[offset + 1] > 175 && pixels[offset + 2] > 150
+        }.count
+        check(litPixels > 60, "Alcove's opening emblem is visible in the first frame")
         var welcomeAppearance = welcomeStore.appearance
         welcomeAppearance.animationsEnabled = false
         welcomeStore.appearance = welcomeAppearance
-        let staticWelcome = try firstWelcomeFrame()
+        let staticWelcome = try firstWelcomeFrame().text
         check(staticWelcome.contains("Skip setup") && !staticWelcome.contains("Skip intro"),
               "Disabling Alcove animations shows setup in the first rendered frame")
         welcomeStore.shutdown()
