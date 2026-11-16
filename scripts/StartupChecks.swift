@@ -30,6 +30,24 @@ final class KeyGate: @unchecked Sendable {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let key = SymmetricKey(size: .bits256)
+        let welcomeStore = BrowserStore(dataRoot: root.appendingPathComponent("welcome"), keyProvider: { _ in key })
+        func firstWelcomeFrame() throws -> String {
+            let view = OnboardingView(store: welcomeStore).frame(width: 800, height: 540)
+            let renderer = ImageRenderer(content: view)
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            if let image = renderer.cgImage { try VNImageRequestHandler(cgImage: image).perform([request]) }
+            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        }
+        check(try firstWelcomeFrame().contains("Skip intro"),
+              "Animation-enabled first launch opens the greeting before setup")
+        var welcomeAppearance = welcomeStore.appearance
+        welcomeAppearance.animationsEnabled = false
+        welcomeStore.appearance = welcomeAppearance
+        let staticWelcome = try firstWelcomeFrame()
+        check(staticWelcome.contains("Skip setup") && !staticWelcome.contains("Skip intro"),
+              "Disabling Alcove animations shows setup in the first rendered frame")
+        welcomeStore.shutdown()
         let seed = BrowserStore(dataRoot: root, keyProvider: { _ in key }); seed.finishOnboarding(); try seed.setDefaultLinkDestination(.mostRecentSpace); seed.shutdown()
         let before = try Data(contentsOf: seed.sessionURL)
         let gate = KeyGate()

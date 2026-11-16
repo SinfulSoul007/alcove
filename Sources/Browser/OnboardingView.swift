@@ -14,11 +14,12 @@ struct OnboardingView: View {
     @ObservedObject var store: BrowserStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var step = 0
-    @State private var appeared = false
-    @State private var drawing = false
     @State private var automaticChecks = false
-    @State private var introVisible = true
-    private var motion: Animation? { reduceMotion || !store.appearance.animationsEnabled ? nil : .spring(response: 0.5, dampingFraction: 0.86) }
+    @State private var introDismissed = false
+
+    private var animates: Bool { !reduceMotion && store.appearance.animationsEnabled }
+    private var showsIntro: Bool { animates && !introDismissed }
+    private var motion: Animation? { animates ? .spring(response: 0.5, dampingFraction: 0.86) : nil }
     var body: some View {
         GeometryReader { geometry in
             ZStack {
@@ -48,31 +49,31 @@ struct OnboardingView: View {
                     }.padding(.top, 20)
                 }
                 .padding(32).frame(width: min(900, geometry.size.width - 64), height: geometry.size.height - 80)
-                .opacity(appeared ? 1 : 0).offset(y: appeared || reduceMotion ? 0 : 16)
-                .allowsHitTesting(!introVisible).accessibilityHidden(introVisible).disabled(introVisible)
-                if introVisible {
-                    LaunchIntroduction(animate: !reduceMotion && store.appearance.animationsEnabled) {
-                        withAnimation(motion) { introVisible = false }
+                .allowsHitTesting(!showsIntro).accessibilityHidden(showsIntro).disabled(showsIntro)
+                if showsIntro {
+                    LaunchIntroduction {
+                        withAnimation(motion) { introDismissed = true }
                     }.transition(.opacity).zIndex(1)
                 }
             }.foregroundStyle(store.activeTheme.ink)
                 .onAppear {
                     automaticChecks = store.preferences.automaticUpdateChecks ?? false
-                    withAnimation(motion) { appeared = true }
-                    withAnimation(reduceMotion || !store.appearance.animationsEnabled ? nil : .easeInOut(duration: 1.4)) { drawing = true }
+                }
+                .onChange(of: animates, initial: true) { _, enabled in
+                    if !enabled { introDismissed = true }
                 }
         }
     }
     private var introduction: some View {
         VStack(spacing: 22) {
             ZStack {
-                RoundedRectangle(cornerRadius: 36).fill(store.activeTheme.tile).frame(width: 150, height: 150).rotationEffect(.degrees(reduceMotion ? 0 : (appeared ? -6 : 6)))
-                AlcovePortal().trim(from: 0, to: drawing || reduceMotion ? 1 : 0).stroke(store.activeTheme.accent, style: StrokeStyle(lineWidth: 9, lineCap: .round, lineJoin: .round)).frame(width: 105, height: 114)
-                Circle().fill(store.activeTheme.accent).frame(width: 7, height: 7).offset(x: 70, y: -55).opacity(drawing ? 1 : 0)
+                RoundedRectangle(cornerRadius: 36).fill(store.activeTheme.tile).frame(width: 150, height: 150).rotationEffect(.degrees(-6))
+                AlcovePortal().stroke(store.activeTheme.accent, style: StrokeStyle(lineWidth: 9, lineCap: .round, lineJoin: .round)).frame(width: 105, height: 114)
+                Circle().fill(store.activeTheme.accent).frame(width: 7, height: 7).offset(x: 70, y: -55)
             }.frame(height: 180).accessibilityHidden(true)
             Text("A little more room\nfor the internet.").font(.system(size: 42, weight: .medium, design: .rounded)).multilineTextAlignment(.center)
             Text("Your tabs, your Spaces, your way.\nA familiar sidebar with a native Mac foundation.").font(.system(size: 15)).multilineTextAlignment(.center).lineSpacing(5).opacity(0.6)
-        }.transition(.opacity.combined(with: .offset(x: reduceMotion ? 0 : 18)))
+        }.transition(.opacity.combined(with: .offset(x: animates ? 18 : 0)))
     }
     private var styleStep: some View {
         VStack(spacing: 20) {
@@ -84,7 +85,7 @@ struct OnboardingView: View {
                     Button { withAnimation(motion) { store.setTheme(preset) } } label: { RoundedRectangle(cornerRadius: 11).fill(AppearanceTheme(palette: preset.palette).gradient).frame(width: 46, height: 38).overlay { if store.space.theme == preset.rawValue { Image(systemName: "checkmark").foregroundStyle(preset.ink) } } }.buttonStyle(.plain).help(preset.name).accessibilityLabel(preset.name)
                 }
             }
-        }.transition(.opacity.combined(with: .offset(x: reduceMotion ? 0 : 18)))
+        }.transition(.opacity.combined(with: .offset(x: animates ? 18 : 0)))
     }
     private var setupStep: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -95,7 +96,7 @@ struct OnboardingView: View {
             Text("Alcove checks GitHub at most once a day when this is enabled. Your browsing history is never included. Downloads are installed only when you choose.").font(.caption).opacity(0.6)
             HStack(alignment: .top, spacing: 10) { Image(systemName: "keyboard"); Text("⌘T opens the command bar. Shift-click a link to Peek. Drag the sidebar edge to resize it.").font(.system(size: 12)).lineSpacing(4) }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(store.activeTheme.tile, in: RoundedRectangle(cornerRadius: 12))
             Text("This build is an unsigned preview. macOS may restrict downloads until trusted signing is available.").font(.caption).opacity(0.5)
-        }.frame(maxWidth: 480).transition(.opacity.combined(with: .offset(x: reduceMotion ? 0 : 18)))
+        }.frame(maxWidth: 480).transition(.opacity.combined(with: .offset(x: animates ? 18 : 0)))
     }
     private func finish(saveUpdateChoice: Bool) {
         if saveUpdateChoice { store.preferences.automaticUpdateChecks = automaticChecks }
