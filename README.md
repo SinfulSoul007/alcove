@@ -24,6 +24,8 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 - Favorites, Pinned and Today scroll separately, keeping saved pages visible while you browse daily tabs. Bookmarking also pins the original page without reloading it.
 - Create folders from the Pinned header, File menu or command bar. Create a subfolder from a folder’s menu or drag a folder into its new parent. Moving or removing a folder keeps its contents pinned.
 - Click the Pinned heading or use **Collapse Pinned** and **Expand Pinned** in the command bar. Each Space remembers its setting and accepts tab drops on the collapsed heading.
+- Double-click a Today or Pinned tab name to edit it. Press Return to save or Escape to cancel. Use **Rename Tab** from a tab or Favorite menu, and **Restore Tab Name** to clear the custom name.
+- Use **Duplicate Tab** from the sidebar, File menu or command bar. A copy opens in Today with its own back and forward history when the original page is live. Tabs with only a saved address open a copy at that address.
 - Swipe with two fingers across the sidebar’s tab list to switch to an adjacent Space. The Space icons remain available in the footer.
 - Hold Control and press Tab to browse up to five recent tabs in the window. Press Shift-Tab to reverse, release Control to switch, or press Escape to cancel.
 - Drag tabs between sections and into folders. Pinned tabs keep their title and saved home URL when closed. ⌘W closes the focused page (or Peek/panel first), then closes an empty window while leaving Alcove running.

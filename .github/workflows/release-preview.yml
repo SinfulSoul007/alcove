@@ -116,6 +116,10 @@ jobs:
 
           Pinned folders can contain subfolders. Create one from a folder’s menu, or move a folder by dropping it onto its destination. Removing a folder keeps its tabs and subfolders. Pinned and Favorites receive more room when Today has few or no tabs.
 
+          Double-click a sidebar tab name to edit it. Return saves the name and Escape cancels. Tab and Favorites menus also offer Rename Tab and Restore Tab Name.
+
+          Use Duplicate Tab from a tab menu, the File menu or command search. The copy opens in Today and carries the live tab’s back and forward history. If only the saved address is available, the copy opens that address.
+
           Click Pinned to collapse or expand that Space’s saved tabs. You can still drop tabs onto the collapsed heading. Each Space remembers this setting. Use Customize to adjust theme intensity and grain. A two-finger horizontal swipe over the sidebar switches Spaces.
 
           Hold Control and press Tab to browse up to five recent tabs in the active window and profile. Release Control to switch, press Escape to cancel, or press Control-W to close the highlighted tab.
@@ -130,7 +134,7 @@ jobs:
 
           The native extension manager has limited tested compatibility with uBlock Origin Lite. Full uBlock Origin support is still in development. Native extension APIs need macOS 15.4+. Private request-blocking extensions need a fixed system WebKit (624.1.16 or later).
 
-          Alcove 0.13 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
+          Alcove 0.14 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
 
           SHA256SUMS.txt contains checksums for both installers. Checksums detect changed bytes; they do not establish developer identity.
           NOTE
