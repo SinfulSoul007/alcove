@@ -441,13 +441,16 @@ struct BrowserUI: View {
                     store.selectSpace(destination)
                 }
             ))
-            HStack(spacing: 10) {
-                mini("archivebox", "Library") { store.libraryVisible = true }
-                if store.hasDownloadsForActiveProfile {
-                    mini("square.and.arrow.down", "Show Downloads") { store.showDownloads() }
-                        .accessibilityLabel("Show Downloads")
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    mini("archivebox", "Library") { store.libraryVisible = true }
+                    SidebarPlaybackButton(store: store)
+                    if store.hasDownloadsForActiveProfile {
+                        mini("square.and.arrow.down", "Show Downloads") { store.showDownloads() }
+                            .accessibilityLabel("Show Downloads")
+                    }
+                    if updates.offer != nil { mini("arrow.down.circle.fill", "An Alcove update is available") { store.updatesVisible = true }.foregroundStyle(theme.accent) }
                 }
-                if updates.offer != nil { mini("arrow.down.circle.fill", "An Alcove update is available") { store.updatesVisible = true }.foregroundStyle(theme.accent) }
                 Spacer(minLength: 0)
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {

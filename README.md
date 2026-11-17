@@ -42,6 +42,7 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 - Find in page, zoom, back/forward gestures, reload/stop.
 - Native printing, PDF export and WebArchive saving, with Quit choices for unfinished output.
 - Open Downloads from the sidebar or with Option-Command-L. See progress, cancel active transfers, open finished files or show them in Finder. The list is scoped to the window and profile.
+- Open Playing Tabs from the sidebar to pause audio or video or return to a playing tab in this window and profile.
 - File uploads and camera/microphone permission prompts.
 - Encrypted local sessions, bookmarks, history and preferences using CryptoKit AES-GCM and a macOS Keychain key.
 - App Sandbox and Hardened Runtime, with release Web Inspector access disabled.

@@ -7,6 +7,10 @@ import BrowserCore
 
 @MainActor final class PlaybackFixtureWebView: WKWebView {
     var fixturePlayback: WKMediaPlaybackState = .none
+    var pauseCount = 0
+    override func pauseAllMediaPlayback(completionHandler: (@MainActor @Sendable () -> Void)? = nil) {
+        pauseCount += 1; fixturePlayback = .paused; completionHandler?()
+    }
     var fixtureCapture: WKMediaCaptureState = .none
     var fixtureMicrophone: WKMediaCaptureState = .none
     var delayReply = false
@@ -299,6 +303,31 @@ import BrowserCore
             check(primary.views[oldPlayer] === oldPlayerWeb && primary.tab(oldIdle) == nil
                   && primary.library.archive.contains { $0.id == oldIdle },
                   "Age-based archive protects the playing page and archives the equally old paused tab")
+        }
+        do {
+            let primary = BrowserStore(isPrivate: true)
+            defer { primary.shutdown() }
+            let playing = primary.newTab(url: URL(string: "https://media.example.invalid/playing-menu")!)
+            let paused = primary.newTab(url: URL(string: "https://media.example.invalid/paused-menu")!)
+            let playingWeb = PlaybackFixtureWebView()
+            playingWeb.fixturePlayback = .playing
+            let pausedWeb = PlaybackFixtureWebView()
+            pausedWeb.fixturePlayback = .paused
+            primary.registerView(playingWeb, for: playing, profile: BrowserProfile.defaultID)
+            primary.registerView(pausedWeb, for: paused, profile: BrowserProfile.defaultID)
+            let listed = await primary.playingSidebarTabs()
+            check(listed.map(\.id) == [playing], "Playing Tabs lists the active player and excludes paused media")
+            if let player = listed.first {
+                check(primary.showPlaybackTab(player) && primary.focusedID == playing && primary.views[playing] === playingWeb,
+                      "Show Tab focuses the existing live page")
+                check(primary.pausePlaybackTab(player) && playingWeb.pauseCount == 1 && pausedWeb.pauseCount == 0,
+                      "Pause is forwarded only to the listed live page")
+                primary.invalidateDocumentIdentity(for: playingWeb)
+                check(!primary.pausePlaybackTab(player) && !primary.showPlaybackTab(player) && playingWeb.pauseCount == 1,
+                      "A stale player cannot pause or select a replaced document")
+            } else { check(false, "Playing Tabs returned no active media for the fixture") }
+            let remaining = await primary.playingSidebarTabs()
+            check(remaining.isEmpty, "After pausing, a refreshed media list is empty")
         }
         privateStore.shutdown(); loadingView = nil; playingView = nil; captureView = nil; pausedView = nil; delayedView = nil; microphoneView = nil; switchedOffView = nil; unknownView = nil
         store.shutdown(); page = nil; changingPage = nil; closingPage = nil; child = nil; changedPeek = nil
