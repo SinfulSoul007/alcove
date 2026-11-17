@@ -2,7 +2,7 @@ name: Build upstream WebKit for extension research
 
 on:
   push:
-    branches: [research/webkit-build]
+    branches: [research/webkit-before-send]
 
 permissions:
   contents: read
@@ -51,8 +51,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # This development build is for API probes. Keep the upstream source
-          # and feature configuration while reducing compiler work on hosted runners.
+          patch="$GITHUB_WORKSPACE/diagnostics/webkit-before-send-cancellation.patch"
+          git apply --check "$patch"
+          git apply "$patch"
+          git diff --check
+          # Reduce compiler work for this API research build.
           Tools/Scripts/set-webkit-configuration --release --force-optimization-level=O1 --lto-mode=none
           Tools/Scripts/build-webkit --release --lto-mode=none --only='Everything up to WebKit' 2>&1 |
             awk 'NR <= 80 || NR % 4000 == 0 || / (fatal error|error|warning):|BUILD (SUCCEEDED|FAILED)|No space left/ {
@@ -65,7 +68,7 @@ jobs:
           xcrun lipo -archs "$framework"
           df -h "$RUNNER_TEMP"
 
-      - name: Verify the built framework serves the loopback extension probe
+      - name: Require before-send cancellation in the built framework
         shell: bash
         run: |
           set -euo pipefail
@@ -88,6 +91,6 @@ jobs:
           test -s "$scratch/port"
           status=0
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
-            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" || status=$?
+            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --require-blocking || status=$?
           cat "$scratch/requests.log"
           exit "$status"

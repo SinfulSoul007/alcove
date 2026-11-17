@@ -150,6 +150,7 @@ struct SystemWebKitExtensionProbe {
                 browser.webRequest.onBeforeRequest.addListener(({url}) => { observed.push(url); }, filter);
                 try {
                     browser.webRequest.onBeforeRequest.addListener(({url}) => {
+                        observed.push(url);
                         const path = new URL(url).pathname;
                         if (path.endsWith("/should-cancel.js") || path.startsWith("/native-block-top-")) return {cancel:true};
                     }, filter, ["blocking"]);
