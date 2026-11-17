@@ -42,6 +42,81 @@ import BrowserCore
             delegate.buildMenu()
             check(NSApp.mainMenu?.items.first(where:{$0.title == "File"})?.submenu?.items.contains(where:{$0.action == #selector(AppDelegate.newFolder)}) == true && store.availableCommands.contains(.newFolder) && BrowserCommand.newFolder.matches("new fol"),"Folder creation is discoverable in the native File menu and command search")
         }
+        do {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Alcove.BookmarkImport." + UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let source = directory.appendingPathComponent("bookmarks.html")
+            let html = """
+            <!DOCTYPE NETSCAPE-Bookmark-file-1>
+            <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+            <TITLE>Bookmarks</TITLE><H1>Bookmarks</H1><DL><p>
+                <DT><H3>Research</H3><DL><p>
+                    <DT><A HREF="https://example.invalid/guide?q=one&amp;n=2" ADD_DATE="42">Guide &mdash; &amp; &#128640;</A>
+                    <DT><H3>Sources</H3><DL><p>
+                        <DT><A HREF="https://example.invalid/paper">Paper</A>
+                    </DL><p>
+                </DL><p>
+                <DT><H3>research</H3><DL><p>
+                    <DT><A HREF="https://example.invalid/guide?q=one&amp;n=2">Same link, another folder</A>
+                </DL><p>
+                <DT><H3>Empty</H3><DL><p></DL><p>
+                <DT><A HREF="https://example.invalid/top">Top</A>
+                <DT><A HREF="javascript:void(0)">Bookmarklet</A>
+                <DT><A HREF="file:///tmp/demo.txt">File</A>
+                <DT><A HREF="https://user:pass@example.invalid/secret">Credentials</A>
+            </DL><p><a href="https://example.invalid/outside">Outside the export</a>
+            """
+            try Data(html.utf8).write(to: source)
+            let imported = try BookmarkHTMLImport.read(from: source)
+            check(imported.bookmarks.map(\.title) == ["Guide — & 🚀", "Paper", "Same link, another folder", "Top"]
+                  && imported.bookmarks.first?.url == "https://example.invalid/guide?q=one&n=2"
+                  && imported.bookmarks.first?.addedAt.timeIntervalSince1970 == 42 && imported.skippedLinkCount == 3,
+                  "Bookmark HTML decoding keeps source order, title entities, query parameters and dates while skipping unsafe addresses")
+            check(imported.folders.map(\.name) == ["Research", "Sources", "research (2)", "Empty"]
+                  && imported.folders[1].parent == "Research" && imported.bookmarks.map(\.folder) == ["Research", "Sources", "research (2)", nil],
+                  "Bookmark HTML decoding preserves nested and empty folders with distinct names")
+
+            let key = SymmetricKey(size: .bits256)
+            let normal = BrowserStore(dataRoot: directory.appendingPathComponent("profile"), keyProvider: { _ in key })
+            defer { normal.shutdown() }
+            let firstURL = "https://example.invalid/guide?q=one&n=2"
+            normal.library.bookmark(title: "Keep my saved title", url: firstURL)
+            let otherProfile = try normal.createProfile(name: "Separate profile")
+            let activeSpace = normal.space.id
+            let added = try normal.importBookmarkHTML(imported, into: BrowserProfile.defaultID)
+            let saved = try MetadataStore(url: normal.sessionURL, key: key).load(BrowserDocument.self)
+            let importedSpace = saved?.session.spaces.first(where: { $0.id == added })
+            check(normal.space.id == activeSpace && normal.activeProfileID == otherProfile && normal.views.isEmpty
+                  && importedSpace?.effectiveProfileID == BrowserProfile.defaultID && importedSpace?.tabs.first?.url == ""
+                  && importedSpace?.tabs.filter(\.pinned).map(\.homeURL) == imported.bookmarks.map { Optional($0.url) },
+                  "Bookmark HTML import adds pins to a separate Space without opening any imported address or changing the active profile")
+            check(importedSpace?.folderParents == ["Sources": "Research"] && importedSpace?.folderNames == ["Research", "Sources", "research (2)", "Empty"]
+                  && saved?.library(for: BrowserProfile.defaultID).bookmarks.map(\.title) == ["Keep my saved title", "Paper", "Top"]
+                  && saved?.library(for: otherProfile).bookmarks.isEmpty == true,
+                  "Bookmark HTML import commits folders and deduplicated records to the selected encrypted profile")
+
+            let window = OwnedSidebarWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            let delegate = AppDelegate()
+            application.fixtureWindow = window
+            delegate.windows[window] = normal
+            defer { application.fixtureWindow = nil; delegate.windows = [:] }
+            delegate.buildMenu()
+            let action = NSApp.mainMenu?.items.first(where: { $0.title == "File" })?.submenu?.items.first(where: { $0.action == #selector(AppDelegate.importBookmarks) })
+            check(action.map(delegate.validateMenuItem) == true, "A normal window offers Import Bookmarks HTML in the native File menu")
+            normal.savingEnabled = false
+            let before = try Data(contentsOf: normal.sessionURL)
+            let rejected = (try? normal.importBookmarkHTML(imported, into: otherProfile)) == nil
+            let after = try Data(contentsOf: normal.sessionURL)
+            check(action.map(delegate.validateMenuItem) == false && rejected && before == after,
+                  "A read-only profile rejects bookmark import without modifying its document")
+            let privateStore = BrowserStore(isPrivate: true)
+            defer { privateStore.shutdown() }
+            delegate.windows[window] = privateStore
+            check(action.map(delegate.validateMenuItem) == false && (try? privateStore.importBookmarkHTML(imported, into: BrowserProfile.defaultID)) == nil,
+                  "Private windows keep the bookmark import command disabled")
+        } catch { check(false, "Bookmark HTML import fixture: \(error)") }
         inWindow { store, _, _ in
             do {
                 let originalSpace = store.space.id
