@@ -7,11 +7,14 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
 @main struct ExtensionErasureChecks {
     @MainActor static func wait(_ operation:()async throws->Bool) async throws {for _ in 0..<700 {if try await operation() {return};try await Task.sleep(for:.milliseconds(10))};throw OwnedExtensionErasureError.timedOut}
     @MainActor static func js(_ web:WKWebView,_ script:String) async throws -> Any? {try await web.callAsyncJavaScript(script,arguments:[:],in:nil,contentWorld:.page)}
-    @available(macOS 15.4,*) @MainActor static func page(_ context:WKWebExtensionContext) async throws -> WKWebView {
+    @available(macOS 15.4,*) @MainActor static func page(_ context:WKWebExtensionContext, trace: String? = nil) async throws -> WKWebView {
+        if let trace { print("ERASURE_TRACE \(trace): loading background") }
         try await context.loadBackgroundContent()
+        if let trace { print("ERASURE_TRACE \(trace): loading options") }
         guard let configuration = context.webViewConfiguration else {throw OwnedExtensionErasureError.missingFixture}
         let web = WKWebView(frame:.zero,configuration:configuration);web.load(URLRequest(url:context.baseURL.appendingPathComponent("probe.html")))
         try await wait{(try? await web.evaluateJavaScript("window.ownedErasureReady === true")) as? Bool == true}
+        if let trace { print("ERASURE_TRACE \(trace): waiting for storage readiness") }
         try await wait{(try await js(web,"return (await browser.storage.session.get('ownedErasureReadiness')).ownedErasureReadiness === 'ready';")) as? Bool == true}
         return web
     }
@@ -356,24 +359,32 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
         }
         func profileClearExercise() async throws {
             nativeCleanupSafe = false
+            print("ERASURE_TRACE profile-clear: creating fixture")
             let normal = BrowserStore(dataRoot:root.appendingPathComponent("profile-clear"),keyProvider:{_ in key}),owner = BrowserWindowOwner(store:normal),primary = try owner.acquirePrimary(),profile = try normal.createProfile(name:"Owned complete clear")
             defer {owner.release(primary);normal.shutdown()}
             let controllerID = normal.profiles.first(where:{$0.id == profile})!.extensionControllerID!
             try owned.register(profile);try controllers.register(controllerID)
             let source = root.appendingPathComponent("source"),package = try privateErasurePackage(staging:"clear-staging"),approval = try normal.extensionInstallApproval(for:package,profileID:profile,permissions:["storage","scripting"],allowPrivate:true,enable:true)
-            let id = try await normal.installExtension(package,approval:approval);try await normal.prepareExtensions(profileID:profile)
-            let record = normal.extensionRecords(profileID:profile).first!,context = (normal.extensionHosting as! NativeBrowserExtensionHost).profiles[profile]!.contexts[id]!,api = try await page(context),dataStore = normal.websiteDataStore(forProfile:profile)
+            print("ERASURE_TRACE profile-clear: installing fixture")
+            let id = try await normal.installExtension(package,approval:approval)
+            print("ERASURE_TRACE profile-clear: preparing extension")
+            try await normal.prepareExtensions(profileID:profile)
+            let record = normal.extensionRecords(profileID:profile).first!,context = (normal.extensionHosting as! NativeBrowserExtensionHost).profiles[profile]!.contexts[id]!,api = try await page(context, trace: "profile-clear-installed"),dataStore = normal.websiteDataStore(forProfile:profile)
+            print("ERASURE_TRACE profile-clear: seeding installed storage")
             _ = try await js(api,"await browser.storage.local.set({owned:'clear this account'});await browser.storage.sync.set({owned:'clear sync'});localStorage.setItem('owned-profile-origin','clear');return true;")
             let orphanID = UUID().uuidString.lowercased()
             func seedOrphan() async throws {
+                print("ERASURE_TRACE profile-clear: loading orphan context")
                 let object = try await WKWebExtension(resourceBaseURL:source),orphan = WKWebExtensionContext(for:object),native = context.webExtensionController!
                 orphan.uniqueIdentifier = orphanID;orphan.baseURL = URL(string:"webkit-extension://"+orphanID+"/")!
                 orphan.grantedPermissions = Dictionary(uniqueKeysWithValues:["storage","scripting","declarativeNetRequest"].map{(WKWebExtension.Permission(rawValue:$0),Date.distantFuture)})
                 try native.load(orphan);defer {if orphan.isLoaded {try? native.unload(orphan)}}
-                let orphanPage = try await page(orphan)
+                let orphanPage = try await page(orphan, trace: "profile-clear-orphan")
+                print("ERASURE_TRACE profile-clear: seeding orphan storage")
                 _ = try await js(orphanPage,"await browser.storage.local.set({orphan:'remove interrupted install'});await browser.storage.sync.set({orphan:'remove synchronized orphan'});localStorage.setItem('owned-orphan-origin','remove');return true;")
             }
             try await seedOrphan()
+            print("ERASURE_TRACE profile-clear: mounting private page")
             var privateKeyRequests = 0
             let client = BrowserStore(isPrivate:true,dataRoot:root.appendingPathComponent("clear-private"),keyProvider:{_ in privateKeyRequests += 1;throw CocoaError(.fileReadNoPermission)})
             defer {client.shutdown()}
@@ -385,7 +396,9 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             let window = NSWindow(contentRect:NSRect(x:0,y:0,width:600,height:400),styleMask:[.titled,.closable],backing:.buffered,defer:false)
             window.isReleasedWhenClosed = false;window.contentView = privateWeb;client.registerExtensionWindow(window,kind:.primary)
             defer {client.unregisterExtensionWindow(kind:.primary);window.contentView = nil;window.close()}
+            print("ERASURE_TRACE profile-clear: starting browser profile clear")
             try await normal.clearProfileData(profile)
+            print("ERASURE_TRACE profile-clear: browser profile clear returned")
             let nextControllerID = normal.profiles.first(where:{$0.id == profile})!.extensionControllerID!
             try controllers.register(nextControllerID)
             check(nextControllerID != controllerID && normal.profiles.first(where:{$0.id == profile})?.isPendingClear == false,"A completed profile clear rotates its native namespace only after successful data removal")
@@ -399,7 +412,7 @@ enum OwnedExtensionErasureError:Error {case missingFixture,timedOut}
             readback.uniqueIdentifier = record.runtimeIdentifier;readback.baseURL = context.baseURL
             readback.grantedPermissions = Dictionary(uniqueKeysWithValues:["storage","scripting","declarativeNetRequest"].map{(WKWebExtension.Permission(rawValue:$0),Date.distantFuture)})
             try inspector.load(readback);defer {if readback.isLoaded {try? inspector.unload(readback)}}
-            let readbackAPI = try await page(readback)
+            let readbackAPI = try await page(readback, trace: "profile-clear-readback")
             check((try await js(readbackAPI,"return Object.keys(await browser.storage.local.get(null)).length === 0 && Object.keys(await browser.storage.sync.get(null)).length === 0;")) as? Bool == true,"Completed profile clearing erases the actual old namespace's native local and synchronized data")
             check((try await readbackAPI.evaluateJavaScript("localStorage.getItem('owned-profile-origin') === null")) as? Bool == true,"Completed profile clearing erases its old extension-origin website data")
             let orphanTypes = WKWebExtensionController.allExtensionDataTypes.subtracting([.session]),orphanRecords = await inspector.dataRecords(ofTypes:orphanTypes).filter{$0.uniqueIdentifier == orphanID}
