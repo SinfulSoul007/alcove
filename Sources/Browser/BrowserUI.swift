@@ -417,7 +417,11 @@ struct BrowserUI: View {
                 HStack {
                     Text("Today").font(.system(size: 11, weight: .semibold)).opacity(0.5)
                     Spacer(minLength: 4)
-                    if !today.isEmpty { Button("Clear") { for tab in today { store.close(tab.id) } }.font(.system(size: 10)).buttonStyle(.plain).opacity(0.4).help("Close Today tabs") }
+                    if !today.isEmpty {
+                        Button("Clear") { store.clearTodayTabs() }
+                            .font(.system(size: 10)).buttonStyle(.plain).opacity(0.4)
+                            .disabled(store.clearingToday).help("Close inactive Today tabs")
+                    }
                     Button { store.showCommand(new: true) } label: { Label("New Tab", systemImage: "plus").font(.system(size: 12)).opacity(0.5) }.buttonStyle(.plain)
                 }.padding(.horizontal, 18).frame(height: 32).onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .today))
                 ScrollView {

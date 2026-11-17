@@ -241,6 +241,65 @@ import BrowserCore
         privateStore.archiveInactiveQuickPages(now: now)
         check(privateStore.quickPage(privateID) == nil && privateStore.library.archive.first?.url == "https://expiry.example/private" && privateKeyRequests == 0 && !FileManager.default.fileExists(atPath: privateRoot.path), "Private auto-archive keeps its records in memory without requesting a normal key or file")
         check(privateStore.archiveTimer?.isValid != true, "A private owner stops its archive timer after its final quick window leaves")
+        do {
+            let primary = BrowserStore(isPrivate: true)
+            defer { primary.shutdown() }
+            let playing = primary.newTab(url: URL(string: "https://media.example.invalid/playing")!)
+            let captured = primary.newTab(url: URL(string: "https://media.example.invalid/captured")!)
+            let idle = primary.newTab(url: URL(string: "https://media.example.invalid/idle")!)
+            let delayed = primary.newTab(url: URL(string: "https://media.example.invalid/delayed")!)
+            let changed = primary.newTab(url: URL(string: "https://media.example.invalid/changed")!)
+            let playingWeb = PlaybackFixtureWebView()
+            playingWeb.fixturePlayback = .playing
+            let captureWeb = PlaybackFixtureWebView()
+            captureWeb.fixtureMicrophone = .muted
+            let delayedWeb = PlaybackFixtureWebView()
+            delayedWeb.delayReply = true
+            let changedWeb = PlaybackFixtureWebView()
+            changedWeb.delayReply = true
+            for (id, web) in [(playing, playingWeb), (captured, captureWeb), (delayed, delayedWeb), (changed, changedWeb)] {
+                primary.registerView(web, for: id, profile: BrowserProfile.defaultID)
+            }
+            primary.clearTodayTabs()
+            check(primary.tab(playing) != nil && primary.tab(idle) != nil, "Clear waits for WebKit before removing a batch")
+            primary.invalidateDocumentIdentity(for: changedWeb)
+            changedWeb.delayedReply?(.paused)
+            let timeout = ContinuousClock.now + .seconds(3)
+            while primary.clearingToday && ContinuousClock.now < timeout { try await Task.sleep(for: .milliseconds(20)) }
+            check(!primary.clearingToday && primary.tab(idle) == nil && primary.views[playing] === playingWeb
+                  && primary.views[captured] === captureWeb && primary.views[delayed] === delayedWeb
+                  && primary.views[changed] === changedWeb,
+                  "Clear closes idle tabs and preserves playing, recording, unanswered, and changed pages")
+            delayedWeb.delayedReply?(.paused)
+            check(primary.views[delayed] === delayedWeb, "A late playback reply cannot close a retained tab")
+            primary.close(playing)
+            check(primary.tab(playing) == nil, "Closing a playing tab explicitly still closes it")
+        }
+        do {
+            let primary = BrowserStore(dataRoot: root.appendingPathComponent("primary-media"), keyProvider: { _ in key })
+            defer { primary.shutdown() }
+            let oldPlayer = primary.newTab(url: URL(string: "https://media.example.invalid/archive-playing")!)
+            let oldIdle = primary.newTab(url: URL(string: "https://media.example.invalid/archive-idle")!)
+            _ = primary.newTab()
+            for id in [oldPlayer, oldIdle] { primary.update(id) { $0.lastAccessed = .distantPast } }
+            let oldPlayerWeb = PlaybackFixtureWebView()
+            oldPlayerWeb.fixturePlayback = .playing
+            let oldIdleWeb = PlaybackFixtureWebView()
+            oldIdleWeb.delayReply = true
+            primary.registerView(oldPlayerWeb, for: oldPlayer, profile: BrowserProfile.defaultID)
+            primary.registerView(oldIdleWeb, for: oldIdle, profile: BrowserProfile.defaultID)
+            primary.preferences.archiveAfterDays = 1
+            primary.archiveOldTabs()
+            primary.preferences.archiveAfterDays = 0
+            oldIdleWeb.delayedReply?(.paused)
+            check(primary.tab(oldIdle) != nil, "Disabling age-based archive invalidates pending playback replies")
+            primary.preferences.archiveAfterDays = 1
+            primary.archiveOldTabs()
+            oldIdleWeb.delayedReply?(.paused)
+            check(primary.views[oldPlayer] === oldPlayerWeb && primary.tab(oldIdle) == nil
+                  && primary.library.archive.contains { $0.id == oldIdle },
+                  "Age-based archive protects the playing page and archives the equally old paused tab")
+        }
         privateStore.shutdown(); loadingView = nil; playingView = nil; captureView = nil; pausedView = nil; delayedView = nil; microphoneView = nil; switchedOffView = nil; unknownView = nil
         store.shutdown(); page = nil; changingPage = nil; closingPage = nil; child = nil; changedPeek = nil
         let clock = ContinuousClock(); let deadline = clock.now.advanced(by: .seconds(5))

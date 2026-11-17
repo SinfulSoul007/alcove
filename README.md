@@ -45,7 +45,7 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 - File uploads and camera/microphone permission prompts.
 - Encrypted local sessions, bookmarks, history and preferences using CryptoKit AES-GCM and a macOS Keychain key.
 - App Sandbox and Hardened Runtime, with release Web Inspector access disabled.
-- Optional background-tab suspension and day-based Space-tab archive, both off by default. Quick Browse defaults to six-hour inactivity archive, with Off/6/12/24-hour choices.
+- Clear Today and day-based archiving keep pages with active playback or capture open. Optional background-tab suspension and day-based Space-tab archive are both off by default. Quick Browse defaults to six-hour inactivity archive, with Off/6/12/24-hour choices.
 
 Spaces using the **same profile share website logins**; different profiles use separate WebKit data stores and library records. Existing Spaces stay on the default profile so their logins survive the upgrade. Private windows use their own in-memory website storage. Click a split pane to direct navigation, find and other page actions to it.
 

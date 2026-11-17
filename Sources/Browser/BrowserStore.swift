@@ -173,6 +173,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var privateWindowRequested: (() -> Void)?
     let pendingDownloadProfiles = NSMapTable<WKDownload, NSUUID>.weakToStrongObjects()
     var archiveTimer: Timer?
+    var archivingOldTabs = false
+    @Published var clearingToday = false
     var views: [UUID: WKWebView] = [:]
     private let documentIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     private let presentationIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)

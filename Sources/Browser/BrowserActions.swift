@@ -123,21 +123,6 @@ extension BrowserStore {
     func setFolder(_ id: UUID) {
         requestNewTabFolder(adding:id)
     }
-    func archiveOldTabs() {
-        guard !isPrivate, preferences.archiveAfterDays > 0 else { return }
-        let cutoff = Date().addingTimeInterval(-Double(preferences.archiveAfterDays) * 86400)
-        var protected = Set(session.spaces.compactMap(\.selected))
-        protected.formUnion(splitGroups.flatMap(\.tabIDs))
-        if let windowGroup { protected.formUnion(windowGroup.protectedPaneIDs) }
-        var profileBeforeArchive: [UUID: UUID] = [:]
-        for space in session.spaces { for tab in space.tabs { profileBeforeArchive[tab.id] = space.effectiveProfileID } }
-        let archived = session.archiveInactive(before: cutoff, excluding: protected)
-        for tab in archived {
-            let owner = viewProfileIDs[tab.id] ?? profileBeforeArchive[tab.id] ?? BrowserProfile.defaultID
-            mutateLibrary(for: owner) { $0.archive.insert(tab, at: 0) }; discardSharedView(tab.id)
-        }
-        save()
-    }
     func importLegacySession() {
         guard !isPrivate, savingEnabled else { return }
         let profileID = activeProfileID
