@@ -5,33 +5,54 @@ enum SidebarFolderLinkFormat {
     case plainText, markdown
 }
 
+/// The tab lists depend on the active Space. The sidebar can reuse them at any size.
+final class SidebarSpaceLists {
+    let space: Space
+    let today: [BrowserCore.Tab]
+    let saved: SidebarSavedLayout
+
+    init(space: Space) {
+        self.space = space
+        today = space.tabs.filter { !$0.pinned && !$0.url.isEmpty }
+        saved = SidebarSavedLayout(space: space)
+    }
+}
+
 struct SidebarSavedLayout {
     let spaceID: UUID
     let tree: SidebarFolderTree
     let topLevelTabs: [BrowserCore.Tab]
     let tabsByFolder: [String: [BrowserCore.Tab]]
     let folders: [SidebarFolderTree.Row]
+    private let visibleTabCount: Int
+    private let emptyFolderCount: Int
 
     init(space: Space, collapsed: Set<String>? = nil) {
-        spaceID = space.id
-        tree = SidebarFolderTree(space: space)
-        let pins = space.tabs.filter { $0.pinned && $0.favorite != true }
-        let grouped = Dictionary(grouping: pins, by: \.folder)
-        topLevelTabs = grouped[nil] ?? []
-        tabsByFolder = Dictionary(uniqueKeysWithValues: grouped.compactMap { name, tabs in
+        let tree = SidebarFolderTree(space: space)
+        let folders = tree.visibleFolders(collapsed: collapsed ?? Set(space.collapsedFolders ?? []))
+        let grouped = Dictionary(grouping: space.tabs.filter { $0.pinned && $0.favorite != true }, by: \.folder)
+        let byFolder = Dictionary(uniqueKeysWithValues: grouped.compactMap { name, tabs in
             name.map { ($0, tabs) }
         })
-        folders = tree.visibleFolders(collapsed: collapsed ?? Set(space.collapsedFolders ?? []))
+        spaceID = space.id
+        self.tree = tree
+        self.folders = folders
+        topLevelTabs = grouped[nil] ?? []
+        tabsByFolder = byFolder
+
+        var visibleTabs = topLevelTabs.count
+        var emptyFolders = 0
+        for folder in folders where folder.expanded {
+            let tabCount = byFolder[folder.name]?.count ?? 0
+            visibleTabs += tabCount
+            if tabCount == 0 && tree.children(of: folder.name).isEmpty { emptyFolders += 1 }
+        }
+        visibleTabCount = visibleTabs
+        emptyFolderCount = emptyFolders
     }
 
     func height(rowHeight: Double) -> Double {
-        let tabs = folders.reduce(topLevelTabs.count) { count, folder in
-            count + (folder.expanded ? tabsByFolder[folder.name, default: []].count : 0)
-        }
-        let empty = folders.filter {
-            $0.expanded && tabsByFolder[$0.name, default: []].isEmpty && tree.children(of: $0.name).isEmpty
-        }.count
-        return Double(tabs) * (rowHeight + 3) + Double(folders.count) * 35 + Double(empty) * 24 + 8
+        Double(visibleTabCount) * (rowHeight + 3) + Double(folders.count) * 35 + Double(emptyFolderCount) * 24 + 8
     }
 
     func copiedLinks(in folder: String, format: SidebarFolderLinkFormat) -> String? {

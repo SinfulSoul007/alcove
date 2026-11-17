@@ -329,16 +329,17 @@ struct BrowserUI: View {
 
     private func sidebar(width: Double, windowHeight: Double) -> some View {
         let swipeSpaces = nearbySpaces
-        let space = store.space
-        let today = space.tabs.filter { !$0.pinned && !$0.url.isEmpty }
+        let lists = store.sidebarLists
+        let space = lists.space
+        let today = lists.today
+        let favorites = store.favorites
         let columns = appearance.columns(for: width)
-        let favoriteRows = Double((store.favorites.count + columns - 1) / columns)
+        let favoriteRows = Double((favorites.count + columns - 1) / columns)
         // Reserve chrome, both section headers and the footer before dividing the scrollable space.
-        let pool = max(0, windowHeight - chrome.height - 197 - (store.favorites.isEmpty ? 0 : 8))
-        let savedLayout = SidebarSavedLayout(space: space)
+        let pool = max(0, windowHeight - chrome.height - 197 - (favorites.isEmpty ? 0 : 8))
         let rowHeight = appearance.rowHeight + 3
         let pinnedCollapsed = space.pinnedShelfCollapsed == true
-        let pinnedDemand = pinnedCollapsed ? 0 : max(32, savedLayout.height(rowHeight: appearance.rowHeight))
+        let pinnedDemand = pinnedCollapsed ? 0 : max(32, lists.saved.height(rowHeight: appearance.rowHeight))
         let todayDemand = max(32, Double(today.count) * rowHeight)
         let favoriteDemand = min(224, max(0, favoriteRows * 55 - 7))
         let favoriteBudget = max(pool * 0.30, pool - pinnedDemand - todayDemand)
@@ -365,10 +366,10 @@ struct BrowserUI: View {
                 }.padding(.horizontal, 12).frame(height: 36).background(theme.tile, in: RoundedRectangle(cornerRadius: 10))
             }.buttonStyle(.plain).padding(.horizontal, 8).padding(.bottom, 8)
             VStack(alignment: .leading, spacing: 0) {
-                if !store.favorites.isEmpty {
+                if !favorites.isEmpty {
                     ScrollView(.vertical, showsIndicators: false) {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: columns), spacing: 7) {
-                        ForEach(store.favorites) { tab in
+                        ForEach(favorites) { tab in
                             let actions = tab.pinned ? store.pinnedAddressActions(for: tab.id) : .unavailable
                             Button { store.selectAny(tab.id) } label: {
                                 SiteBadge(url: tab.homeURL ?? tab.url, large: true, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil).frame(maxWidth: .infinity).frame(height: 48).background(store.focusedID == tab.id ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: 10))
@@ -411,7 +412,7 @@ struct BrowserUI: View {
                     } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20).accessibilityLabel("Space settings")
                 }.padding(.horizontal, 16).frame(height: 36)
                 SidebarSavedTabs(store: store, theme: theme, appearance: appearance, motion: motion,
-                                 height: pinnedHeight, layout: savedLayout, collapsed: pinnedCollapsed)
+                                 height: pinnedHeight, layout: lists.saved, collapsed: pinnedCollapsed)
                 Rectangle().fill(theme.ink.opacity(0.12)).frame(height: 1).padding(.horizontal, 18).padding(.vertical, 6)
                 HStack {
                     Text("Today").font(.system(size: 11, weight: .semibold)).opacity(0.5)

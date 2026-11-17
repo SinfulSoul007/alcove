@@ -43,6 +43,36 @@ import BrowserCore
             check(NSApp.mainMenu?.items.first(where:{$0.title == "File"})?.submenu?.items.contains(where:{$0.action == #selector(AppDelegate.newFolder)}) == true && store.availableCommands.contains(.newFolder) && BrowserCommand.newFolder.matches("new fol"),"Folder creation is discoverable in the native File menu and command search")
         }
         inWindow { store, _, _ in
+            do {
+                let originalSpace = store.space.id
+                let pin = store.newTab(url: URL(string: "about:blank#pin"))
+                store.togglePin(pin)
+                let folder = try store.createTabFolder(name: "Research", in: originalSpace, adding: pin)
+                let today = store.newTab(url: URL(string: "about:blank#today"))
+                let initial = store.sidebarLists
+                store.windowSidebarWidth = 326
+                check(store.sidebarLists === initial && initial.today.map(\.id) == [today] && initial.saved.tabsByFolder[folder]?.map(\.id) == [pin],
+                      "Width changes reuse the prepared Today list and pinned folders")
+
+                try store.renameSidebarTab(store.beginSidebarRename(pin), to: "Reference")
+                let renamed = store.sidebarLists
+                check(renamed !== initial && renamed.saved.tabsByFolder[folder]?.first?.sidebarTitle == "Reference",
+                      "Renaming a pin refreshes the prepared folder rows")
+                try store.setTabFolderExpanded(folder, expanded: false, in: originalSpace)
+                let collapsed = store.sidebarLists
+                check(collapsed.saved.folders.first?.expanded == false && collapsed.saved.height(rowHeight: 30) < renamed.saved.height(rowHeight: 30),
+                      "Collapsing a folder updates the prepared shelf height")
+
+                let destination = try store.createSpace(name: "Another Space")
+                store.selectSpace(destination)
+                check(store.sidebarLists.space.id == destination && store.sidebarLists.today.isEmpty && store.sidebarLists.saved.folders.isEmpty,
+                      "Switching Spaces replaces the prepared sidebar with its own contents")
+                store.selectSpace(originalSpace)
+                check(store.sidebarLists.saved.folders.first?.expanded == false && store.sidebarLists.today.map(\.id) == [today],
+                      "Returning to a Space restores its prepared list and collapsed state")
+            } catch { check(false, "Preparing sidebar lists through tab and folder changes: \(error)") }
+        }
+        inWindow { store, _, _ in
             let place = store.spaceIndex
             let spaceID = store.space.id
             store.session.spaces[place].folders = ["Research", "Sources", "Notes", "Unrelated", "Empty"]

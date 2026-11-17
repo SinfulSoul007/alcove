@@ -15,8 +15,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var extensionPopupProfileID: UUID?
     var savedWindowRestore: BrowserWindowRestoreState?
     var metadataWriter: BrowserStore { windowGroup?.root ?? self }
+    private var cachedSidebarLists: SidebarSpaceLists?
     @Published var session = Session() {
         didSet {
+            cachedSidebarLists = nil
             reconcileSplitGroups(from: oldValue)
             windowGroup?.sessionDidChange(from: self)
             if boostPicker != nil { reconcileBoostPicker() }
@@ -254,6 +256,12 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     let previousSessionURL: URL
     var spaceIndex: Int { session.spaces.firstIndex { $0.id == session.selectedSpace } ?? 0 }
     var space: Space { session.spaces[spaceIndex] }
+    var sidebarLists: SidebarSpaceLists {
+        if let cachedSidebarLists { return cachedSidebarLists }
+        let lists = SidebarSpaceLists(space: space)
+        cachedSidebarLists = lists
+        return lists
+    }
     var selectedID: UUID? { space.selected }
     var focusedID: UUID? {
         if let activePaneID, visiblePaneIDs.contains(activePaneID) { return activePaneID }
