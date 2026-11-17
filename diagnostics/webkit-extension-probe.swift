@@ -33,6 +33,13 @@ import WebKit
     -> [any WKWebExtensionWindow] { [window] }
 }
 
+@MainActor final class ProbeNavigation: NSObject, WKNavigationDelegate {
+    var result: Bool?
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) { result = true }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation?, withError error: Error) { result = false }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation?, withError error: Error) { result = false }
+}
+
 @main
 struct SystemWebKitExtensionProbe {
     @MainActor static func main() async throws {
@@ -143,7 +150,8 @@ struct SystemWebKitExtensionProbe {
                 browser.webRequest.onBeforeRequest.addListener(({url}) => { observed.push(url); }, filter);
                 try {
                     browser.webRequest.onBeforeRequest.addListener(({url}) => {
-                        if (new URL(url).pathname.endsWith("/should-cancel.js")) return {cancel:true};
+                        const path = new URL(url).pathname;
+                        if (path.endsWith("/should-cancel.js") || path.startsWith("/native-block-top-")) return {cancel:true};
                     }, filter, ["blocking"]);
                     status.registered = true;
                 } catch (error) {
@@ -180,7 +188,22 @@ struct SystemWebKitExtensionProbe {
             controller.didCloseWindow(window)
             withExtendedLifetime(delegate) {}
         }
-        func exercise(_ phase: String) async throws -> (control: Bool, candidate: Bool, events: [String]) {
+        let requests = URLSession(configuration: .ephemeral)
+        defer { requests.invalidateAndCancel() }
+        func count(_ path: String) async throws -> Int {
+            var address = URLComponents(url: server.appendingPathComponent("__request_count"), resolvingAgainstBaseURL: false)!
+            address.queryItems = [URLQueryItem(name: "path", value: path)]
+            let (data, response) = try await requests.data(from: address.url!)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let count = Int(String(decoding: data, as: UTF8.self)) else { throw CocoaError(.coderInvalidValue) }
+            return count
+        }
+        func matchingEvents(for address: URL) async throws -> [String] {
+            try await Task.sleep(for: .milliseconds(400))
+            let observed = try await options.evaluateJavaScript("window.probeData.observed") as? [String] ?? []
+            return observed.filter { $0.hasPrefix(address.absoluteString) }
+        }
+        func exercise(_ phase: String, in page: WKWebView) async throws -> (candidate: Bool, requests: Int, events: [String]) {
             let address = server.appendingPathComponent("native-fixture-\(phase)-\(UUID().uuidString)")
             page.load(URLRequest(url: address, cachePolicy: .reloadIgnoringLocalCacheData))
             for _ in 0..<450 where page.url != address || page.isLoading {
@@ -190,26 +213,52 @@ struct SystemWebKitExtensionProbe {
                   let result = try await page.evaluateJavaScript("""
                     ({control: window.controlRequestLoaded === true, candidate: window.candidateRequestLoaded === true})
                     """) as? [String: Bool] else { throw URLError(.timedOut) }
-            try await Task.sleep(for: .milliseconds(400))
-            let observed = try await options.evaluateJavaScript("window.probeData.observed") as? [String] ?? []
-            let events = observed.filter { $0.hasPrefix(address.absoluteString) }
+            let events = try await matchingEvents(for: address)
             let control = result["control"] == true
             let candidate = result["candidate"] == true
-            print("MV2_\(phase.uppercased()) control=\(control) candidate=\(candidate) events=\(events)")
-            guard control else { throw CocoaError(.coderInvalidValue) }
-            return (control, candidate, events)
+            let controlRequests = try await count(address.path + "/control.js")
+            let candidateRequests = try await count(address.path + "/should-cancel.js")
+            print("MV2_\(phase.uppercased()) control=\(control) candidate=\(candidate) requests=\(controlRequests)/\(candidateRequests) events=\(events)")
+            guard control, controlRequests > 0, !candidate || candidateRequests > 0 else { throw CocoaError(.coderInvalidValue) }
+            return (candidate, candidateRequests, events)
         }
-        let granted = try await exercise("granted")
+        func exerciseMain(_ phase: String) async throws -> (loaded: Bool, requests: Int, observed: Bool) {
+            let address = server.appendingPathComponent("native-block-top-\(phase)-\(UUID().uuidString)")
+            let navigation = ProbeNavigation()
+            page.navigationDelegate = navigation
+            defer { page.navigationDelegate = nil }
+            page.load(URLRequest(url: address, cachePolicy: .reloadIgnoringLocalCacheData))
+            for _ in 0..<450 where navigation.result == nil { try await Task.sleep(for: .milliseconds(20)) }
+            guard let loaded = navigation.result else { throw URLError(.timedOut) }
+            let observed = try await matchingEvents(for: address).contains(address.absoluteString)
+            let requests = try await count(address.path)
+            print("MV2_TOP_\(phase.uppercased()) loaded=\(loaded) requests=\(requests) observed=\(observed)")
+            return (loaded, requests, observed)
+        }
+        let granted = try await exercise("granted", in: page)
+        let grantedMain = try await exerciseMain("granted")
+        let isolatedConfig = WKWebViewConfiguration()
+        isolatedConfig.websiteDataStore = .nonPersistent()
+        let isolated = try await exercise("isolated", in: WKWebView(frame: .zero, configuration: isolatedConfig))
+        guard isolated.candidate, isolated.requests > 0, isolated.events.isEmpty else { throw CocoaError(.coderInvalidValue) }
+
         let pattern = try WKWebExtension.MatchPattern(string: "http://127.0.0.1/*")
         context.setPermissionStatus(.deniedExplicitly, for: server)
         context.setPermissionStatus(.deniedExplicitly, for: pattern)
         guard !context.hasAccess(to: server) else { throw CocoaError(.featureUnsupported) }
-        let denied = try await exercise("denied")
-        guard denied.candidate, denied.events.isEmpty else { throw CocoaError(.coderInvalidValue) }
+        let denied = try await exercise("denied", in: page)
+        let deniedMain = try await exerciseMain("denied")
+        guard denied.candidate, denied.requests > 0, denied.events.isEmpty,
+              deniedMain.loaded, deniedMain.requests > 0, !deniedMain.observed else { throw CocoaError(.coderInvalidValue) }
         let observedControl = granted.events.contains { URL(string: $0)?.lastPathComponent == "control.js" }
         let observedCandidate = granted.events.contains { URL(string: $0)?.lastPathComponent == "should-cancel.js" }
-        let blocked = observedControl && observedCandidate && !granted.candidate
-        print("MV2_BLOCKING_PROVEN \(blocked)")
-        if requireBlocking && !blocked { throw CocoaError(.featureUnsupported) }
+        let blockedResource = observedControl && observedCandidate && !granted.candidate && granted.requests == 0
+        let blockedMain = grantedMain.observed && !grantedMain.loaded && grantedMain.requests == 0
+        print("MV2_SUBRESOURCE_BLOCKING_PROVEN \(blockedResource)")
+        print("MV2_TOP_BLOCKING_PROVEN \(blockedMain)")
+        if requireBlocking && !(blockedResource && blockedMain) {
+            print("FAIL: before-send blocking was not proven for both request types")
+            exit(1)
+        }
     }
 }

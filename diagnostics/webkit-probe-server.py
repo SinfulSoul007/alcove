@@ -1,22 +1,40 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from html import escape
 from pathlib import Path
+from threading import Lock
+from urllib.parse import parse_qs, urlsplit
 import sys
 
 class Fixture(BaseHTTPRequestHandler):
+    counts = {}
+    lock = Lock()
+
     def do_GET(self):
+        request = urlsplit(self.path)
+        if request.path == "/__request_count":
+            target = parse_qs(request.query).get("path", [""])[0]
+            with self.lock:
+                count = self.counts.get(target, 0)
+            self.respond(str(count), "text/plain; charset=utf-8")
+            return
+        with self.lock:
+            self.counts[request.path] = self.counts.get(request.path, 0) + 1
+
         mime = "text/html; charset=utf-8"
-        if self.path.endswith("/control.js"):
+        if request.path.endswith("/control.js"):
             body, mime = "window.controlRequestLoaded = true;", "application/javascript"
-        elif self.path.endswith("/should-cancel.js"):
+        elif request.path.endswith("/should-cancel.js"):
             body, mime = "window.candidateRequestLoaded = true;", "application/javascript"
-        elif self.path.startswith("/native-fixture-"):
-            path = escape(self.path, quote=True)
+        elif request.path.startswith("/native-fixture-"):
+            path = escape(request.path, quote=True)
             body = ("<!doctype html><title>Owned loopback page</title>"
                     f"<script src='{path}/control.js'></script>"
                     f"<script src='{path}/should-cancel.js'></script>")
         else:
-            body = "<!doctype html><title>Owned loopback page</title>" if self.path == "/" else "owned:" + self.path
+            body = "<!doctype html><title>Owned loopback page</title>"
+        self.respond(body, mime)
+
+    def respond(self, body, mime):
         data = body.encode()
         self.send_response(200)
         self.send_header("Content-Type", mime)
