@@ -193,8 +193,8 @@ struct SettingsPanel: View {
             }
             GroupBox("Tabs") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Toggle("Suspend older background tabs after six live pages", isOn: $store.preferences.suspendTabs)
-                    Text("May discard unsaved forms or stop background audio. Off by default.").font(.caption).foregroundStyle(.secondary)
+                    Toggle("Suspend idle background tabs after six live pages", isOn: $store.preferences.suspendTabs)
+                    Text("Keeps playback and calls open. Unsaved forms in unloaded tabs may be lost.").font(.caption).foregroundStyle(.secondary)
                     Picker("Auto-archive inactive tabs", selection: $store.preferences.archiveAfterDays) {
                         Text("Off").tag(0); Text("After 1 day").tag(1); Text("After 7 days").tag(7); Text("After 30 days").tag(30)
                     }

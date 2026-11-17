@@ -33,6 +33,61 @@ private struct CleanupTab {
 }
 
 extension BrowserStore {
+    func scheduleTabSuspension(afterOpening id: UUID, retaining sourceID: UUID?) {
+        guard canSuspendBackgroundTabs else { return }
+        var exclusions: Set<UUID> = [id]
+        if let sourceID { exclusions.insert(sourceID) }
+        if pendingTabSuspensionExclusions != nil {
+            pendingTabSuspensionExclusions?.formUnion(exclusions)
+            return
+        }
+        pendingTabSuspensionExclusions = exclusions
+        // A sidebar render can construct a pane. Defer eviction until after that render returns.
+        Task { @MainActor [weak self] in self?.checkBackgroundTabSuspension() }
+    }
+
+    private var canSuspendBackgroundTabs: Bool {
+        preferences.suspendTabs && views.count > 6 && canCleanUpTabs
+    }
+
+    private var suspensionExclusions: Set<UUID> {
+        var protected = pendingTabSuspensionExclusions ?? []
+        protected.formUnion(visiblePaneIDs)
+        protected.formUnion(splitGroups.flatMap(\.tabIDs))
+        if let windowGroup { protected.formUnion(windowGroup.protectedPaneIDs) }
+        return protected
+    }
+
+    private func hasSuspendableProfile(_ id: UUID) -> Bool {
+        guard quickProfileID(id) == nil, let profile = profileID(for: id),
+              viewProfileIDs[id] == profile else { return false }
+        return !profileUnavailable(profile)
+    }
+
+    private func checkBackgroundTabSuspension() {
+        guard canSuspendBackgroundTabs else { pendingTabSuspensionExclusions = nil; return }
+        let excluded = suspensionExclusions
+        var pages: [(id: UUID, snapshot: CleanupPage)] = []
+        var requests: [(id: UUID, web: WKWebView)] = []
+        for id in accessOrder where !excluded.contains(id) {
+            guard let web = views[id], hasSuspendableProfile(id) else { continue }
+            let snapshot = CleanupPage(store: self, web: web)
+            guard snapshot.matchesAvailableDocument(in: self, tabID: id) else { continue }
+            pages.append((id, snapshot))
+            requests.append((id, web))
+        }
+        checkIdlePages(requests) { store, idle in
+            let excluded = store.suspensionExclusions
+            store.pendingTabSuspensionExclusions = nil
+            for (id, snapshot) in pages where idle.contains(id) && !excluded.contains(id) {
+                guard store.canSuspendBackgroundTabs else { break }
+                if store.hasSuspendableProfile(id), snapshot.matchesAvailableDocument(in: store, tabID: id) {
+                    store.discardView(id)
+                }
+            }
+        }
+    }
+
     func clearTodayTabs() {
         guard canCleanUpTabs, !clearingToday else { return }
         let spaceID = space.id
@@ -117,7 +172,7 @@ extension BrowserStore {
     }
 
     private func checkIdleTabs(_ candidates: [CleanupTab], then complete: @escaping (BrowserStore, [UUID]) -> Void) {
-        var idle = Set<UUID>()
+        var unloaded = Set<UUID>()
         var requests: [(id: UUID, web: WKWebView)] = []
         for candidate in candidates {
             let id = candidate.tab.id
@@ -125,16 +180,23 @@ extension BrowserStore {
                 if let web = page.web, page.matchesAvailableDocument(in: page.store, tabID: id) {
                     requests.append((id, web))
                 }
-            } else { idle.insert(id) }
+            } else { unloaded.insert(id) }
         }
+        checkIdlePages(requests) { store, idle in
+            complete(store, store.validIdleTabs(candidates, idle: idle.union(unloaded)))
+        }
+    }
 
+    private func checkIdlePages(_ requests: [(id: UUID, web: WKWebView)],
+                                then complete: @escaping (BrowserStore, Set<UUID>) -> Void) {
+        var idle = Set<UUID>()
         var pending = Set(requests.map(\.id))
         var finished = false
         let finish = { [weak self] in
             guard !finished else { return }
             finished = true
             guard let self else { return }
-            complete(self, self.validIdleTabs(candidates, idle: idle))
+            complete(self, idle)
         }
         for (id, web) in requests {
             web.requestMediaPlaybackState { state in

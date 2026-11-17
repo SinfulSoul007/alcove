@@ -46,7 +46,7 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 - File uploads and camera/microphone permission prompts.
 - Encrypted local sessions, bookmarks, history and preferences using CryptoKit AES-GCM and a macOS Keychain key.
 - App Sandbox and Hardened Runtime, with release Web Inspector access disabled.
-- Clear Today and day-based archiving keep pages with active playback or capture open. Optional background-tab suspension and day-based Space-tab archive are both off by default. Quick Browse defaults to six-hour inactivity archive, with Off/6/12/24-hour choices.
+- Clear Today, day-based archiving and tab suspension keep pages with active playback or capture open. Background tab suspension and day-based Space-tab archive are both off by default. Quick Browse defaults to six-hour inactivity archive, with Off/6/12/24-hour choices.
 
 Spaces using the **same profile share website logins**; different profiles use separate WebKit data stores and library records. Existing Spaces stay on the default profile so their logins survive the upgrade. Private windows use their own in-memory website storage. Click a split pane to direct navigation, find and other page actions to it.
 
@@ -197,7 +197,7 @@ Broader website/login/media/download compatibility testing, accessibility and ke
 
 Arc-inspired next steps include more gesture/animation fidelity, automatic site-search discovery, live routing/gesture fidelity, Boosts and Easels/capture. Quick Browse supplies the Little Arc-style external-link workflow. Favorites, drag organization and Shift-click Peek are implemented; full Arc parity is not claimed. Encrypted sync and assisted workflows remain unimplemented parts of the broader browser goal. No Safari-equivalent speed or complete-security claim is made.
 
-Optional tab suspension can stop background media and lose unsaved page state. Optional archive preserves pinned tabs and each Space’s selected tab, and offers restore from the Library. Those Space-tab controls require deliberate opt-in; Quick Browse has its own default six-hour policy and can be turned Off.
+Optional tab suspension unloads idle background pages when a window has more than six live pages. It keeps their tabs and last addresses. Unsaved form entries and other in-memory state can be lost when an idle page unloads. The window can keep more than six live pages when playback, capture, or other activity prevents suspension. Optional archive preserves pinned tabs and each Space’s selected tab, and offers restore from the Library. Quick Browse has its own default six-hour policy and can be turned Off.
 
 ## License
 

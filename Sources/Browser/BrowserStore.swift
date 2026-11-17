@@ -252,6 +252,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     var closingPages: [ClosingProfilePage] = []
     var accessOrder: [UUID] = []
+    var pendingTabSuspensionExclusions: Set<UUID>?
     var observations: [UUID: [NSKeyValueObservation]] = [:]
     private var saveTask: Task<Void, Never>?
     private var profileOperationSubscription: AnyCancellable?
@@ -570,11 +571,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             else if configuration == nil,url.scheme?.lowercased() == "webkit-extension" {restoreSavedExtensionTab(id,url:url,placeholder:web,profileID:profile)}
             else {web.load(URLRequest(url:url))}
         }
-        // Keep active and split panes alive; suspended tabs retain their last URL, but lose in-memory page state.
-        while preferences.suspendTabs && views.count > 6,
-              let victim = accessOrder.first(where: { $0 != id && $0 != sourceID && !visiblePaneIDs.contains($0) && quickPage($0) == nil && views[$0]?.isLoading == false }) {
-            discardView(victim)
-        }
+        scheduleTabSuspension(afterOpening: id, retaining: sourceID)
         return web
     }
     func registerView(_ web: WKWebView, for id: UUID, profile: UUID) {

@@ -329,6 +329,53 @@ import BrowserCore
             let remaining = await primary.playingSidebarTabs()
             check(remaining.isEmpty, "After pausing, a refreshed media list is empty")
         }
+        do {
+            let primary = BrowserStore(isPrivate: true)
+            defer { primary.shutdown() }
+            primary.preferences.suspendTabs = true
+            let tabs = (0..<6).map { _ in primary.newTab() }
+            let pages = tabs.map { _ in PlaybackFixtureWebView() }
+            pages[0].fixturePlayback = .playing
+            pages[1].fixtureMicrophone = .muted
+            for (id, page) in zip(tabs, pages) {
+                primary.registerView(page, for: id, profile: BrowserProfile.defaultID)
+            }
+            let foreground = primary.newTab()
+            let opened = primary.view(for: foreground)
+            for _ in 0..<60 where primary.views[tabs[2]] != nil { try await Task.sleep(for: .milliseconds(10)) }
+            check(primary.views[tabs[0]] === pages[0] && primary.views[tabs[1]] === pages[1],
+                  "Tab suspension retains an older player and muted microphone")
+            check(primary.views[tabs[2]] == nil && primary.tab(tabs[2]) != nil &&
+                  primary.views.count == 6 && primary.views[foreground] === opened,
+                  "Tab suspension unloads only the oldest idle page and keeps its tab")
+        }
+        do {
+            let primary = BrowserStore(isPrivate: true)
+            defer { primary.shutdown() }
+            primary.preferences.suspendTabs = true
+            let tabs = (0..<6).map { _ in primary.newTab() }
+            let pages = tabs.map { _ in PlaybackFixtureWebView() }
+            for page in pages.prefix(3) { page.delayReply = true }
+            for (id, page) in zip(tabs, pages) {
+                primary.registerView(page, for: id, profile: BrowserProfile.defaultID)
+            }
+            let foreground = primary.newTab()
+            _ = primary.view(for: foreground, retaining: tabs[4])
+            for _ in 0..<60 where pages[1].delayedReply == nil { try await Task.sleep(for: .milliseconds(10)) }
+            check(pages[1].delayedReply != nil && primary.views[tabs[0]] === pages[0],
+                  "Tab suspension waits for WebKit before unloading a page")
+            primary.invalidateDocumentIdentity(for: pages[1])
+            pages[1].delayedReply?(.none)
+            primary.select(tabs[2])
+            pages[2].delayedReply?(.paused)
+            for _ in 0..<300 where primary.views[tabs[3]] != nil { try await Task.sleep(for: .milliseconds(10)) }
+            check(primary.views[tabs[0]] === pages[0] && primary.views[tabs[1]] === pages[1] &&
+                  primary.views[tabs[2]] === pages[2] && primary.views[tabs[3]] == nil &&
+                  primary.views[tabs[4]] === pages[4] && primary.views[foreground] != nil,
+                  "Tab suspension skips unanswered, replaced, focused and retained pages")
+            pages[0].delayedReply?(.paused)
+            check(primary.views[tabs[0]] === pages[0], "Late replies cannot suspend an unanswered page")
+        }
         privateStore.shutdown(); loadingView = nil; playingView = nil; captureView = nil; pausedView = nil; delayedView = nil; microphoneView = nil; switchedOffView = nil; unknownView = nil
         store.shutdown(); page = nil; changingPage = nil; closingPage = nil; child = nil; changedPeek = nil
         let clock = ContinuousClock(); let deadline = clock.now.advanced(by: .seconds(5))
