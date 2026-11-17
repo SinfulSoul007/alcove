@@ -372,6 +372,7 @@ struct BrowserUI: View {
                                 SiteBadge(url: tab.homeURL ?? tab.url, large: true, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil).frame(maxWidth: .infinity).frame(height: 48).background(store.focusedID == tab.id ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: 10))
                             }.buttonStyle(.plain).help(tab.sidebarTitle).accessibilityLabel(tab.sidebarTitle)
                                 .onDrag { store.beginSidebarTabDrag(tab.id) }.contextMenu {
+                                    PinnedAddressMenu(store: store, tabID: tab.id)
                                     Button("Rename Tab…") { store.requestRenameSidebarTab(tab.id) }.disabled(!store.canModifyLocalMetadata)
                                     if tab.customTitle != nil {
                                         Button("Restore Tab Name") { store.restoreSidebarTabName(tab.id) }.disabled(!store.canModifyLocalMetadata)
@@ -380,6 +381,12 @@ struct BrowserUI: View {
                                     TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id)
                                     Button("Remove from Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata)
                                     Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) }.disabled(!store.canModifyLocalMetadata)
+                                }
+                                .overlay(alignment: .topTrailing) {
+                                    if tab.homeURL != tab.url && store.canReturnToPinnedAddress(tab.id) {
+                                        PinnedAddressButton(store: store, tabID: tab.id, accent: theme.accent)
+                                            .padding(4)
+                                    }
                                 }
                         }
                     }
@@ -502,6 +509,42 @@ struct SiteBadge: View {
     }
 }
 
+private struct PinnedAddressButton: View {
+    let store: BrowserStore
+    let tabID: UUID
+    let accent: Color
+
+    var body: some View {
+        Button {
+            let keeping = NSApp.currentEvent?.modifierFlags.contains(.command) == true
+            store.requestReturnToPinnedAddress(tabID, keepingCurrentPage: keeping)
+        } label: {
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 9, weight: .semibold))
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(accent)
+        .accessibilityLabel("Back to Pinned URL")
+        .help("Back to Pinned URL. Command-click to keep the current page.")
+    }
+}
+
+private struct PinnedAddressMenu: View {
+    let store: BrowserStore
+    let tabID: UUID
+
+    var body: some View {
+        if store.canReturnToPinnedAddress(tabID) {
+            Button("Back to Pinned URL") { store.requestReturnToPinnedAddress(tabID) }
+            Button("Back to Pinned URL and Keep Current Page") {
+                store.requestReturnToPinnedAddress(tabID, keepingCurrentPage: true)
+            }.disabled(!store.canKeepPageWhileReturningToPinnedAddress(tabID))
+        }
+    }
+}
+
 struct SidebarTabRow: View {
     let tab: BrowserCore.Tab
     @ObservedObject var store: BrowserStore
@@ -518,6 +561,7 @@ struct SidebarTabRow: View {
         let split = store.splitGroup(containing: tab.id)
         let hasSplitPane = store.splitLayout?.tabIDs.contains(tab.id) == true
         let fullSplit = store.visiblePaneIDs.count >= BrowserSplitLayout.maximumPanes
+        let canReturn = tab.pinned && tab.homeURL != tab.url && store.canReturnToPinnedAddress(tab.id)
         return HStack(spacing: 7) {
             if let rename {
                 HStack(spacing: 9) {
@@ -528,21 +572,29 @@ struct SidebarTabRow: View {
                         .frame(height: max(18, appearance.rowHeight - 8))
                 }.padding(.trailing, 6)
             } else {
-                Button { store.select(tab.id) } label: {
-                    HStack(spacing: 9) {
-                        SiteBadge(url: tab.homeURL ?? tab.url, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil)
-                        Text(tab.sidebarTitle)
-                            .font(.system(size: 12 * appearance.textScale, weight: store.focusedID == tab.id ? .semibold : .medium)).lineLimit(1)
-                        Spacer(minLength: 0)
-                        if let split {
-                            Image(systemName: split.axis == .columns ? "rectangle.split.2x1" : "rectangle.split.1x2")
-                                .font(.system(size: 10)).foregroundStyle(.secondary).accessibilityHidden(true)
-                        }
-                    }.contentShape(Rectangle())
-                }.buttonStyle(.plain)
-                    .accessibilityHint(split == nil ? "" : "Opens this page in its split group")
-                    .simultaneousGesture(TapGesture(count: 2).onEnded { startRename() })
-                    .onDrag { store.beginSidebarTabDrag(tab.id) }
+                HStack(spacing: 9) {
+                    if canReturn {
+                        PinnedAddressButton(store: store, tabID: tab.id, accent: theme.accent)
+                            .onDrag { store.beginSidebarTabDrag(tab.id) }
+                    }
+                    Button { store.select(tab.id) } label: {
+                        HStack(spacing: 9) {
+                            if !canReturn {
+                                SiteBadge(url: tab.homeURL ?? tab.url, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil)
+                            }
+                            Text(tab.sidebarTitle)
+                                .font(.system(size: 12 * appearance.textScale, weight: store.focusedID == tab.id ? .semibold : .medium)).lineLimit(1)
+                            Spacer(minLength: 0)
+                            if let split {
+                                Image(systemName: split.axis == .columns ? "rectangle.split.2x1" : "rectangle.split.1x2")
+                                    .font(.system(size: 10)).foregroundStyle(.secondary).accessibilityHidden(true)
+                            }
+                        }.contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                        .accessibilityHint(split == nil ? "" : "Opens this page in its split group")
+                        .simultaneousGesture(TapGesture(count: 2).onEnded { startRename() })
+                        .onDrag { store.beginSidebarTabDrag(tab.id) }
+                }
             }
             Button { store.close(tab.id) } label: { Image(systemName: "xmark").font(.system(size: 9)).frame(width: 18, height: 22) }.buttonStyle(.plain).opacity(hovered || appearance.alwaysShowCloseButtons ? 0.65 : 0).help(tab.pinned ? "Close page and keep pin" : "Close tab").accessibilityLabel(tab.pinned ? "Close pinned page" : "Close tab")
         }.padding(.horizontal, 10).frame(height: appearance.rowHeight)
@@ -560,6 +612,7 @@ struct SidebarTabRow: View {
                                                                before: tab.id, folder: tab.folder, rowWidth: rowWidth, hover: $splitHover))
         .background(ExtensionTabAnchorReader(anchor:extensionMenuAnchor))
         .contextMenu {
+            PinnedAddressMenu(store: store, tabID: tab.id)
             Button("Rename Tab") { startRename() }.disabled(!store.canModifyLocalMetadata || tab.url.isEmpty)
             if tab.customTitle != nil {
                 Button("Restore Tab Name") { store.restoreSidebarTabName(tab.id) }.disabled(!store.canModifyLocalMetadata)

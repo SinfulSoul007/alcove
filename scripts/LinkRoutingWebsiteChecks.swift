@@ -149,6 +149,62 @@ enum LinkRoutingWebsiteError: Error { case missingFixture, timedOut, invalidPage
         try await ready(privateCopyWeb,origin+"private")
         let copyCookie = try await cookie(privateCopyWeb)
         check(copyCookie.isEmpty && !privateCopyWeb.configuration.websiteDataStore.isPersistent && privateReads == 0, "Private duplication stays inside its ephemeral website store")
+        let home = origin + "pinned-home", drift = origin + "pinned-current"
+        let pin = store.newTab(url: URL(string: home)!)
+        let pinWeb = store.view(for: pin); pinWeb.frame = webA.frame
+        try await ready(pinWeb, home)
+        store.togglePin(pin)
+        let folder = try store.createTabFolder(name: "Pinned test folder", in: spaceA, adding: pin)
+        try store.renameSidebarTab(store.beginSidebarRename(pin), to: "Saved starting point")
+        check(!store.canReturnToPinnedAddress(pin), "The pin does not show a reset action at its saved address")
+        pinWeb.load(URLRequest(url: URL(string: drift)!)); try await ready(pinWeb, drift)
+        check(store.canReturnToPinnedAddress(pin), "The reset action becomes available after navigating away from a pin")
+        check(store.availableCommands.contains(.returnToPinnedURL) && store.availableCommands.contains(.returnToPinnedURLKeepingPage),
+              "Both pinned reset actions are available in keyboard command search")
+        let originalCount = store.space.tabs.count
+        let reset = try store.returnToPinnedAddress(pin)
+        try await ready(pinWeb, home)
+        check(reset == nil && store.views[pin] === pinWeb && pinWeb.canGoBack && store.space.tabs.count == originalCount,
+              "Reset navigates the existing pinned page home without making a copy")
+        pinWeb.goBack(); try await ready(pinWeb, drift)
+        _ = try await pinWeb.evaluateJavaScript("document.getElementById('draft').value='keep this draft'")
+        store.savingEnabled = false
+        check(rejects { _ = try store.returnToPinnedAddress(pin, keepingCurrentPage: true) }
+              && store.views[pin] === pinWeb && store.space.tabs.count == originalCount,
+              "A failed pinned reset cannot detach the live page or create a phantom tab")
+        store.savingEnabled = true
+        guard let continued = try store.returnToPinnedAddress(pin, keepingCurrentPage: true) else { throw LinkRoutingWebsiteError.failed }
+        let returnedHome = store.view(for: pin); returnedHome.frame = pinWeb.frame; try await ready(returnedHome, home)
+        let movedDraft = try await pinWeb.evaluateJavaScript("document.getElementById('draft').value") as? String
+        check(store.views[continued] === pinWeb && returnedHome !== pinWeb && pinWeb.url?.absoluteString == drift
+              && pinWeb.canGoBack && movedDraft == "keep this draft",
+              "Keeping the current page moves its original WebKit view, history and unsaved form")
+        check(store.tab(pin)?.homeURL == home && store.tab(pin)?.folder == folder && store.tab(pin)?.sidebarTitle == "Saved starting point"
+              && store.tab(continued)?.pinned == false && store.profileID(for: continued) == a && store.focusedID == pin,
+              "The saved pin stays selected in its folder while its old page becomes a same-profile Today tab")
+        store.toggleFavorite(pin)
+        returnedHome.load(URLRequest(url: URL(string: drift)!)); try await ready(returnedHome, drift)
+        _ = try store.returnToPinnedAddress(pin)
+        try await ready(returnedHome, home)
+        check(store.favorites.contains(where: { $0.id == pin && $0.url == home && $0.homeURL == home && $0.sidebarTitle == "Saved starting point" }),
+              "Reset synchronizes the Favorite and saved-tab address")
+        let legacyPin = store.newTab(url: URL(string: drift)!)
+        store.update(legacyPin) { $0.pinned = true }
+        check(!store.canReturnToPinnedAddress(legacyPin), "Older pins without a saved address have no reset action")
+        store.update(legacyPin) { $0.homeURL = home }
+        guard let savedCurrent = try store.returnToPinnedAddress(legacyPin, keepingCurrentPage: true) else { throw LinkRoutingWebsiteError.failed }
+        try await ready(store.view(for: legacyPin), home)
+        check(store.tab(savedCurrent)?.url == drift && store.views[savedCurrent] == nil, "A suspended pin keeps its saved current address without loading the old page")
+        store.selectSpace(spaceB)
+        check(!store.canReturnToPinnedAddress(legacyPin), "A pin from another profile cannot be reset through the current sidebar")
+        privateStore.select(privatePromoted)
+        privateStore.togglePin(privatePromoted)
+        privatePeek.load(URLRequest(url: URL(string: origin + "private-pinned-drift")!))
+        try await ready(privatePeek, origin + "private-pinned-drift")
+        guard let keptPrivate = try privateStore.returnToPinnedAddress(privatePromoted, keepingCurrentPage: true) else { throw LinkRoutingWebsiteError.failed }
+        check(privateStore.views[keptPrivate] === privatePeek && !privatePeek.configuration.websiteDataStore.isPersistent
+              && privateReads == 0 && !FileManager.default.fileExists(atPath: privateStore.sessionURL.path),
+              "Returning home with a private pin preserves the live page without persisting a session")
         let aliases:[(String,String?)] = [("127.1","127.0.0.1"),("0x7f.1","127.0.0.1"),("0177.0.0.1","127.0.0.1"),("2130706433","127.0.0.1"),("bücher.example","xn--bcher-kva.example"),("[0:0:0:0:0:0:0:1]","[::1]"),("[::ffff:127.0.0.1]","[::ffff:7f00:1]"),("[:::]",nil),("09",nil)]
         let beforeAliases = try await count()
         for (input,expected) in aliases {

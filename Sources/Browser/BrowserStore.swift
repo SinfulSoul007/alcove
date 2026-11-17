@@ -201,19 +201,23 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return true
     }
     func moveView(_ id: UUID, profile: UUID, to destination: BrowserStore) -> Bool {
-        guard canMoveView(id, profile: profile, to: destination), let web = views[id] else { return false }
+        guard canMoveView(id, profile: profile, to: destination),
+              let retained = takeRegisteredView(id, transferringTo: destination) else { return false }
+        if let icon = retained.icon { destination.siteIcons[id] = icon }
+        destination.registerView(retained.web, for: id, profile: profile)
+        extensionHosting?.sourceDocumentChanged(retained.web)
+        revision += 1
+        destination.revision += 1
+        return true
+    }
+    func takeRegisteredView(_ id: UUID, transferringTo destination: BrowserStore) -> (web: WKWebView, icon: NSImage?)? {
+        guard let web = views.removeValue(forKey: id) else { return nil }
         let icon = siteIcons.removeValue(forKey: id)
-        views.removeValue(forKey: id)
         observations.removeValue(forKey: id)
         viewProfileIDs.removeValue(forKey: id)
         accessOrder.removeAll { $0 == id }
         transferDocumentBindings(for: web, to: destination)
-        if let icon { destination.siteIcons[id] = icon }
-        destination.registerView(web, for: id, profile: profile)
-        extensionHosting?.sourceDocumentChanged(web)
-        revision += 1
-        destination.revision += 1
-        return true
+        return (web, icon)
     }
     func transferDocumentBindings(for web: WKWebView, to destination: BrowserStore) {
         let identity = documentIdentity(for: web)
