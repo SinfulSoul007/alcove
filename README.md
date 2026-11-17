@@ -20,10 +20,11 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 - Responsive startup while Keychain approval waits, with private browsing available immediately.
 - Original skippable opening animation before first-launch setup, plus a replayable welcome tour. Existing sessions and private windows skip setup.
 - Experimental native extension manager for reviewed Chrome Web Store packages, CRX3, ZIPs and folders. Native APIs require macOS 15.4+; compatibility varies. Full uBlock Origin is unsupported.
-- Manual GitHub update checks, stable/preview channels and optional daily checks. Downloads and installation remain explicit actions.
+- GitHub update checks with stable and preview channels, optional daily checks, and a local checksum verifier for downloaded installers.
 - Favorites, Pinned and Today scroll separately, keeping saved pages visible while you browse daily tabs. Bookmarking also pins the original page without reloading it.
 - Create folders from the Pinned header, File menu or command bar. Create a subfolder from a folder’s menu or drag a folder into its new parent. Moving or removing a folder keeps its contents pinned.
 - Click the Pinned heading or use **Collapse Pinned** and **Expand Pinned** in the command bar. Each Space remembers its setting and accepts tab drops on the collapsed heading.
+- Use a pin or Favorite’s **Pinned URL** menu to change its saved address. Click the return arrow to go back, or Command-click to keep the current live page in Today.
 - Double-click a Today or Pinned tab name to edit it. Press Return to save or Escape to cancel. Use **Rename Tab** from a tab or Favorite menu, and **Restore Tab Name** to clear the custom name.
 - Use **Duplicate Tab** from the sidebar, File menu or command bar. A copy opens in Today with its own back and forward history when the original page is live. Tabs with only a saved address open a copy at that address.
 - Swipe with two fingers across the sidebar’s tab list to switch to an adjacent Space. The Space icons remain available in the footer.

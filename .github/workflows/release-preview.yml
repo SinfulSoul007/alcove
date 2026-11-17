@@ -189,6 +189,10 @@ jobs:
 
           Use Duplicate Tab from a tab menu, the File menu or command search. The copy opens in Today and carries the live tab’s back and forward history. If only the saved address is available, the copy opens that address.
 
+          When a pinned tab or Favorite navigates away from its saved address, click the return arrow to go back. Command-click keeps the current live page in Today with its draft and history. The Pinned URL menu can edit the address or save the current page without reloading it.
+
+          In Alcove → Check for Updates, choose Verify Download to check a downloaded installer. The chooser starts in Downloads. The update panel retains the verification controls and release notes link at short window heights.
+
           Click Pinned to collapse or expand that Space’s saved tabs. You can still drop tabs onto the collapsed heading. Each Space remembers this setting. Use Customize to adjust theme intensity and grain. A two-finger horizontal swipe over the sidebar switches Spaces.
 
           Hold Control and press Tab to browse up to five recent tabs in the active window and profile. Release Control to switch, press Escape to cancel, or press Control-W to close the highlighted tab.
@@ -203,7 +207,7 @@ jobs:
 
           The native extension manager has limited tested compatibility with uBlock Origin Lite. Full uBlock Origin support is still in development. Native extension APIs need macOS 15.4+. Private request-blocking extensions need a fixed system WebKit (624.1.16 or later).
 
-          Alcove 0.14 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
+          Alcove 0.15 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
 
           SHA256SUMS.txt contains checksums for both installers. Checksums detect changed bytes; they do not establish developer identity.
           NOTE
