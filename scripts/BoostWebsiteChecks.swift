@@ -3,7 +3,10 @@ import WebKit
 import CryptoKit
 import BrowserCore
 
-enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
+enum BoostWebsiteCheckError: Error {
+    case failed, fixtureMissing, noBackItem
+    case javaScriptTimedOut(path: String)
+}
 @MainActor final class BoostLifetimeProbe {
     weak var store: BrowserStore?
     weak var web: WKWebView?
@@ -17,14 +20,38 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
         defer { windows.forEach { $0.contentView = nil }; fixtures.forEach { $0.close() } }
         let world = WKContentWorld.world(name: "AlcoveBoostRuntime")
         func check(_ value: Bool, _ name: String) { print("\(value ? "PASS" : "FAIL"): \(name)"); if !value { failures += 1 } }
-        func js(_ web: WKWebView, _ code: String, world: WKContentWorld? = nil) async throws -> Any? {
-            try await web.callAsyncJavaScript(code, in: nil, contentWorld: world ?? .page)
+        func js(_ web: WKWebView, _ code: String, arguments: [String: Any] = [:], world: WKContentWorld? = nil,
+                timeout: Duration = .seconds(5)) async throws -> Any? {
+            let path = web.url?.path ?? "unloaded page"
+            return try await withCheckedThrowingContinuation { continuation in
+                var finished = false
+                let deadline = Task { @MainActor in
+                    do { try await Task.sleep(for: timeout) } catch { return }
+                    guard !finished else { return }
+                    finished = true
+                    continuation.resume(throwing: BoostWebsiteCheckError.javaScriptTimedOut(path: path))
+                }
+                web.callAsyncJavaScript(code, arguments: arguments, in: nil, in: world ?? .page) { result in
+                    guard !finished else { return }
+                    finished = true
+                    deadline.cancel()
+                    continuation.resume(with: result.map { Optional($0) })
+                }
+            }
         }
         func eventually(_ name: String, _ condition: () async throws -> Bool) async throws {
-            for _ in 0..<400 {
-                if (try? await condition()) == true { check(true, name); return }
+            let limit = ContinuousClock.now + .seconds(8)
+            repeat {
+                do {
+                    if try await condition() { check(true, name); return }
+                } catch let error as BoostWebsiteCheckError {
+                    check(false, name)
+                    throw error
+                } catch {
+                    // Navigation can briefly invalidate the current JavaScript context.
+                }
                 try await Task.sleep(for: .milliseconds(20))
-            }
+            } while ContinuousClock.now < limit
             check(false, name)
         }
         func fixture(_ privateMode: Bool = false, controller: WKUserContentController? = nil) throws -> (SiteSearchStoreFixture, WKWebView) {
@@ -49,6 +76,13 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
         var look = SiteBoost(content: BoostContent(name: "Strict site", host: "127.0.0.1", appearance: BoostAppearance(background: "#F0EEDD", font: .serif, textScale: 1.25), css: "#target{color:#123456!important}", javascript: "window.scriptRuns=(window.scriptRuns||0)+1; document.getElementById('target').textContent=String(window.siteGlobal+1); await Promise.resolve(); document.body.dataset.awaited='yes';"))
         try await store.saveValidatedBoost(look, profileID: f.profile)
         try await load(web)
+        do {
+            _ = try await js(web, "return new Promise(resolve => setTimeout(() => resolve(true), 700));",
+                             timeout: .milliseconds(100))
+            check(false, "A slow WebKit reply cannot hold the test runner")
+        } catch BoostWebsiteCheckError.javaScriptTimedOut {
+            check(true, "A slow WebKit reply cannot hold the test runner")
+        }
         try await eventually("Constructed Boost CSS applies on a site that rejects inline styles") { try await js(web, "return getComputedStyle(document.getElementById('target')).color;") as? String == "rgb(18, 52, 86)" }
         check(try await js(web, "return getComputedStyle(document.documentElement).fontSize;") as? String == "20px", "No-code relative text scale reaches the real layout engine")
         check(try await js(web, "return getComputedStyle(document.body).fontFamily.includes('Georgia');") as? Bool == true, "The chosen font reaches the real document")
@@ -95,18 +129,22 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
         let beforeBack = try await js(web, "return __alcoveBoostPageNonce_v1;") as! String
         try await load(web, path: "history")
         try await eventually("A second history document runs approved code once") { try await js(web, "return window.scriptRuns===1;") as? Bool == true }
-        web.goBack()
+        print("INFO: Requesting Back navigation to the earlier document")
+        guard web.goBack() != nil else { throw BoostWebsiteCheckError.noBackItem }
+        try await eventually("Back navigation settles on the earlier page") {
+            web.url?.path == "/strict" && !web.isLoading
+        }
         try await eventually("History restoration retains one execution per actual document") { try await js(web, "return location.pathname==='/strict' && window.scriptRuns===1;") as? Bool == true }
         let restored = try await js(web, "return __alcoveBoostPageNonce_v1;") as? String
         print("INFO: History used \(restored == beforeBack ? "the retained document" : "a fresh document"); one-execution assertion applies to the observed path")
         check(store.message == nil, "Normal back/forward restoration does not display a spurious script error")
         let guarded = try BoostScript.validatedBody("function location(){}; function __alcoveHost(){}; window.wrongGuard=true;")
         let liveNonce = try await js(web, "return __alcoveBoostPageNonce_v1;") as! String
-        _ = try await web.callAsyncJavaScript(guarded, arguments: ["__alcoveHost": "other.test", "__alcoveNonce": liveNonce], in: nil, contentWorld: .page)
+        _ = try await js(web, guarded, arguments: ["__alcoveHost": "other.test", "__alcoveNonce": liveNonce])
         let staleBody = try BoostScript.validatedBody("window.staleGuard=true;")
-        _ = try await web.callAsyncJavaScript(staleBody, arguments: ["__alcoveHost": "127.0.0.1", "__alcoveNonce": oldNonce], in: nil, contentWorld: .page)
+        _ = try await js(web, staleBody, arguments: ["__alcoveHost": "127.0.0.1", "__alcoveNonce": oldNonce])
         check(try await js(web, "return window.wrongGuard===undefined && window.staleGuard===undefined;") as? Bool == true, "The actual page engine rejects hoisted guard shadows and old same-URL document nonces")
-        _ = try await web.callAsyncJavaScript("try{Object.defineProperty(window,'__alcoveBoostPageNonce_v1',{value:old});}catch{}", arguments: ["old": oldNonce], in: nil, contentWorld: .page)
+        _ = try await js(web, "try{Object.defineProperty(window,'__alcoveBoostPageNonce_v1',{value:old});}catch{}", arguments: ["old": oldNonce])
         check(try await js(web, "return __alcoveBoostPageNonce_v1;") as? String == liveNonce, "A page cannot replace its document-start nonce with the previous document's token")
         do { _ = try BoostScript.validatedBody("});window.escaped=true;(()=>{"); check(false, "Native execution rejects a wrapper escape before dispatch") }
         catch { check(true, "Native execution rejects a wrapper escape before dispatch") }
@@ -188,7 +226,7 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
         try await load(reviewWeb, path: "review")
         try await eventually("Review fixture begins with the saved working style") { try await js(reviewWeb, "return getComputedStyle(document.getElementById('target')).color==='rgb(255, 0, 0)';") as? Bool == true }
         for css in ["#target{color:", "#target{color:blue} p{background:", "#target ??? {color:blue}", "#target{color:not-a-color}", "#target{color:blue;display:inexistent}"] {
-            let rejected = try await reviewWeb.callAsyncJavaScript("const s=__alcoveBoostState_v1;try{s.apply(s.nonce,location.hostname,s.serial,'',css,[]);return false;}catch(e){return String(e).includes('CSS');}", arguments: ["css": css], in: nil, contentWorld: world) as? Bool
+            let rejected = try await js(reviewWeb, "const s=__alcoveBoostState_v1;try{s.apply(s.nonce,location.hostname,s.serial,'',css,[]);return false;}catch(e){return String(e).includes('CSS');}", arguments: ["css": css], world: world) as? Bool
             let unchangedColor = try await js(reviewWeb, "return getComputedStyle(document.getElementById('target')).color==='rgb(255, 0, 0)';") as? Bool
             check(rejected == true && unchangedColor == true, "Actual WebKit rejects malformed/partial CSS without replacing the working sheets")
             _ = try await js(reviewWeb, "const s=__alcoveBoostState_v1;s.apply(s.nonce,location.hostname,s.serial,'','#target{color:red!important}',[]);return true;", world: world)
@@ -223,7 +261,7 @@ enum BoostWebsiteCheckError: Error { case failed, fixtureMissing }
         _ = try await js(reviewWeb, "document.getElementById('target').dispatchEvent(new Event('pointerdown',{bubbles:true,cancelable:true}));return true;")
         check(try await js(reviewWeb, "return captureCount===2 && reviewInput.value==='page activated';") as? Bool == true, "Normal page pointer input resumes after picker cancellation")
         for rootSize in [24, 10] {
-            _ = try await reviewWeb.callAsyncJavaScript("const site=new CSSStyleSheet();site.replaceSync('html{font-size:'+size+'px!important}');document.adoptedStyleSheets=[...document.adoptedStyleSheets,site];return true;", arguments: ["size": rootSize], in: nil, contentWorld: .page)
+            _ = try await js(reviewWeb, "const site=new CSSStyleSheet();site.replaceSync('html{font-size:'+size+'px!important}');document.adoptedStyleSheets=[...document.adoptedStyleSheets,site];return true;", arguments: ["size": rootSize])
             for (scale, expected) in [(0.75, Double(rootSize)*0.75), (1.0, Double(rootSize)), (1.25, Double(rootSize)*1.25), (1.25, Double(rootSize)*1.25)] {
                 let base = review.store.boostCatalog(profileID: review.profile).entries[0]
                 reviewedLook = base; reviewedLook.content.appearance.textScale = scale
