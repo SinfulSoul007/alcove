@@ -137,7 +137,7 @@ struct BrowserUI: View {
                         .frame(maxHeight: .infinity, alignment: .top)
                         .opacity(store.sidebarVisible ? 0 : 1)
                         .allowsHitTesting(!store.sidebarVisible).accessibilityHidden(store.sidebarVisible)
-                    sidebar(width: width, windowHeight: geometry.size.height).frame(width: width)
+                    sidebar(width: width, windowHeight: geometry.size.height).frame(width: width, alignment: .leading)
                         .background { theme.surface }
                         .background(SidebarTracking(controller: reveal, region: .panel, enabled: floatingAllowed && shown))
                         .clipShape(RoundedRectangle(cornerRadius: store.sidebarVisible ? 0 : appearance.cornerRadius + 4))
@@ -348,23 +348,37 @@ struct BrowserUI: View {
         // Keep the shelves separately scrollable and let them use space Today doesn't need.
         let pinnedBudget = max(min(260, remaining * 0.5), remaining - todayDemand)
         let pinnedHeight = min(pinnedDemand, pinnedBudget)
+        let chromeLeading = max(10, Double(chrome.leadingEdge))
+        let chromeTrailing = 10.0
+        let availableChrome = max(0, width - chromeLeading - chromeTrailing)
+        let navigationButtonsWidth = 4 * 20.0
+        let extensionsWidth = 22.0
+        let standardSpacing = 7.0
+        let extensionsInTitlebar = availableChrome >= navigationButtonsWidth + extensionsWidth + 4 * standardSpacing
+        let chromeSpacing = extensionsInTitlebar ? standardSpacing : max(0, min(standardSpacing, (availableChrome - navigationButtonsWidth) / 3))
+        let extensions = ExtensionControls(store: store, web: store.primaryPeekView ?? store.currentView)
+            .frame(width: extensionsWidth, height: 26)
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 7) {
-                Color.clear.frame(width: max(0, chrome.leadingEdge - 17)).allowsHitTesting(false)
+            HStack(spacing: chromeSpacing) {
                 mini("sidebar.left", "Hide Sidebar") { store.sidebarVisible = false }
                 mini("arrow.left", "Back") { store.currentView?.goBack() }.disabled(store.currentView?.canGoBack != true)
                 mini("arrow.right", "Forward") { store.currentView?.goForward() }.disabled(store.currentView?.canGoForward != true)
                 mini(store.currentView?.isLoading == true ? "xmark" : "arrow.clockwise", "Reload / Stop") { if store.currentView?.isLoading == true { store.currentView?.stopLoading() } else { store.currentView?.reload() } }
-                ExtensionControls(store:store,web:store.primaryPeekView ?? store.currentView).frame(width:22,height:26)
-            }.padding(.horizontal, 10).frame(height: chrome.height)
+                if extensionsInTitlebar { extensions }
+            }.padding(.leading, chromeLeading).padding(.trailing, chromeTrailing)
+                .frame(maxWidth: .infinity, alignment: .leading).frame(height: chrome.height)
                 .background(NativeChromeReader(chrome: chrome))
-            Button { store.showCommand() } label: {
-                HStack {
-                    if store.currentView?.url?.scheme == "https" && store.currentView?.hasOnlySecureContent == true { Image(systemName: "lock.fill").font(.system(size: 9)).opacity(0.5) }
-                    Text(store.currentView?.url?.host ?? "Search or Enter URL…").font(.system(size: 12, weight: .medium)).lineLimit(1)
-                    Spacer(minLength: 0)
-                }.padding(.horizontal, 12).frame(height: 36).background(theme.tile, in: RoundedRectangle(cornerRadius: 10))
-            }.buttonStyle(.plain).padding(.horizontal, 8).padding(.bottom, 8)
+            HStack(spacing: 8) {
+                Button { store.showCommand() } label: {
+                    HStack {
+                        if store.currentView?.url?.scheme == "https" && store.currentView?.hasOnlySecureContent == true { Image(systemName: "lock.fill").font(.system(size: 9)).opacity(0.5) }
+                        Text(store.currentView?.url?.host ?? "Search or enter URL").font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        Spacer(minLength: 0)
+                    }.padding(.horizontal, 12).frame(height: 36)
+                        .background(theme.tile, in: RoundedRectangle(cornerRadius: 10))
+                }.buttonStyle(.plain)
+                if !extensionsInTitlebar { extensions }
+            }.padding(.horizontal, 8).padding(.bottom, 8)
             VStack(alignment: .leading, spacing: 0) {
                 if !favorites.isEmpty {
                     ScrollView(.vertical, showsIndicators: false) {

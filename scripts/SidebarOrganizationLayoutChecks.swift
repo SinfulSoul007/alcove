@@ -24,6 +24,40 @@ import BrowserCore
         check(attached.frame == attachment.bounds,"Native host resizing immediately sizes its website without a deferred layout pass")
         let replacement = WKWebView(frame:.zero,configuration:configuration);attachment.setContent(replacement)
         check(replacement.frame == attachment.bounds && attached.superview == nil,"Replacing an attached document immediately fills the same viewport and detaches only the old view")
+        for width in [196.0, 236.0] {
+            let chromeStore = BrowserStore(isPrivate: true)
+            let domain = "Alcove.SidebarChrome.\(UUID())"
+            let chromeDefaults = UserDefaults(suiteName: domain)!
+            chromeDefaults.set(width, forKey: "sidebarWidth")
+            chromeStore.onboardingVisible = false
+            let chromeHost = NSHostingView(rootView: BrowserUI(store: chromeStore, sidebarDefaults: chromeDefaults)
+                .environmentObject(UpdateController(installedTag: "test")))
+            chromeHost.safeAreaRegions = []
+            chromeHost.sizingOptions = []
+            let chromeWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
+                                        styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                                        backing: .buffered, defer: false)
+            chromeWindow.isReleasedWhenClosed = false
+            chromeWindow.contentView = chromeHost
+            defer {
+                chromeWindow.contentView = nil
+                chromeWindow.close()
+                chromeStore.shutdown()
+                chromeDefaults.removePersistentDomain(forName: domain)
+            }
+            await settle()
+            chromeHost.layoutSubtreeIfNeeded()
+            let extensions = descendants(chromeHost, NSButton.self).filter { $0.toolTip == "Extensions" }
+            let frame = extensions.first.map { $0.convert($0.bounds, to: nil) } ?? .zero
+            let zoom = chromeWindow.standardWindowButton(.zoomButton)
+            let lights = zoom.map { $0.convert($0.bounds, to: nil) } ?? .zero
+            let expectedRow = width == 196 ? lights.midY - frame.midY >= 24 : abs(lights.midY - frame.midY) < 3
+            check(extensions.count == 1 && frame.minX >= 8 && frame.maxX <= width - 6 && expectedRow,
+                  "Extensions stay inside the sidebar at \(Int(width)) points")
+            if !(extensions.count == 1 && frame.maxX <= width - 6 && expectedRow) {
+                print("Extension button frame \(frame), traffic lights \(lights)")
+            }
+        }
         let store = BrowserStore(isPrivate:true),suite = "Alcove.SavedSidebar.\(UUID())",defaults = UserDefaults(suiteName:suite)!
         defer {defaults.removePersistentDomain(forName:suite);store.shutdown()}
         store.onboardingVisible = false
