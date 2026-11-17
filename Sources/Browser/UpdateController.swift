@@ -8,6 +8,16 @@ enum UpdateCheckResult: Equatable {
     case available(UpdateOffer)
 }
 
+struct UpdateInstallerReview {
+    enum Outcome: Equatable {
+        case verifying, matches, sizeMismatch, checksumMismatch, unreadable
+    }
+
+    let id = UUID()
+    let filename: String
+    var outcome: Outcome = .verifying
+}
+
 /// Checks metadata only. Downloading and replacing an unsigned app remain explicit user actions.
 @MainActor
 final class UpdateController: ObservableObject {
@@ -16,6 +26,7 @@ final class UpdateController: ObservableObject {
     @Published private(set) var checking = false
     @Published private(set) var result: UpdateCheckResult?
     @Published private(set) var authenticatedUpdate: AuthenticatedUpdate?
+    @Published private(set) var installerReview: UpdateInstallerReview?
     @Published private(set) var error: String?
     @Published private(set) var lastChecked: Date?
     @Published private(set) var checkedChannel: UpdateChannel?
@@ -23,6 +34,7 @@ final class UpdateController: ObservableObject {
     private let signingTrust: SigningTrust
 
     var offer: UpdateOffer? { if case .available(let offer) = result { return offer }; return nil }
+    var installerAsset: UpdateAsset? { authenticatedUpdate?.asset ?? offer?.asset }
     var releasePage: URL { UpdateCatalog.releasesURL }
 
     private enum SigningTrust {
@@ -67,7 +79,7 @@ final class UpdateController: ObservableObject {
 
     func check(channel: UpdateChannel) async {
         guard !checking else { return }
-        checking = true; result = nil; authenticatedUpdate = nil; error = nil; checkedChannel = channel
+        checking = true; result = nil; authenticatedUpdate = nil; installerReview = nil; error = nil; checkedChannel = channel
         defer { checking = false }
         var request = URLRequest(url: UpdateCatalog.apiURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -96,6 +108,35 @@ final class UpdateController: ObservableObject {
             guard !Task.isCancelled else { return }
             self.error = (error as? LocalizedError)?.errorDescription ?? "Could not read GitHub release information. Try again later or open the releases page."
         }
+    }
+
+    func verifyInstaller(at url: URL, for asset: UpdateAsset) async {
+        guard !checking, installerAsset == asset, asset.sha256 != nil,
+              installerReview?.outcome != .verifying else { return }
+        var review = UpdateInstallerReview(filename: url.lastPathComponent)
+        installerReview = review
+        let worker = Task.detached(priority: .userInitiated) {
+            let access = url.startAccessingSecurityScopedResource()
+            defer { if access { url.stopAccessingSecurityScopedResource() } }
+            return try? asset.verifyInstaller(at: url)
+        }
+        let result = await withTaskCancellationHandler {
+            await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+        guard installerReview?.id == review.id else { return }
+        if Task.isCancelled {
+            installerReview = nil
+            return
+        }
+        switch result {
+        case .matches: review.outcome = .matches
+        case .sizeMismatch: review.outcome = .sizeMismatch
+        case .checksumMismatch: review.outcome = .checksumMismatch
+        case nil: review.outcome = .unreadable
+        }
+        installerReview = review
     }
 
     private func authenticate(_ offer: UpdateOffer, key: Curve25519.Signing.PublicKey) async throws -> AuthenticatedUpdate {

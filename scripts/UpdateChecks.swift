@@ -102,6 +102,36 @@ struct UpdateChecks {
         check(stableOffer?.notes == "A changelog.\n- Fixes", "GitHub changelog decoding preserves content")
         check(stableOffer?.asset.filename == "Alcove-0.4.0-universal-unsigned-preview.dmg", "Offer chooses the expected universal installer")
         check(stableOffer?.asset.verify(Data("abc".utf8)) == true && stableOffer?.asset.verify(Data("tampered".utf8)) == false, "Published SHA-256 accepts matching bytes and rejects tampering")
+        let downloadFixtures = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-update-files-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloadFixtures, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: downloadFixtures) }
+        let installerBytes = Data(repeating: 42, count: 2_097_199)
+        let installerDigest = SHA256.hash(data: installerBytes).map { String(format: "%02x", $0) }.joined()
+        let installer = downloadFixtures.appendingPathComponent("Alcove-0.4.0-universal-unsigned-preview.dmg")
+        try installerBytes.write(to: installer)
+        let installerRecord = try UpdateReleaseManifest.Installer(contentsOf: installer)
+        check(installerRecord.size == Int64(installerBytes.count) && installerRecord.sha256 == installerDigest,
+              "The publisher streams the exact length and checksum of an installer spanning several chunks")
+        let fixtureRelease = try release("v0.4.0", assets: [[
+            "name": installer.lastPathComponent, "browser_download_url": stableOffer!.asset.downloadURL.absoluteString,
+            "state": "uploaded", "size": installerBytes.count, "digest": "sha256:" + installerDigest
+        ]])
+        let fileOffer = try UpdateCatalog.latest(in: [fixtureRelease], installedTag: "v0.3.0", channel: .stable)!
+        check(try fileOffer.asset.verifyInstaller(at: installer) == .matches, "A matching downloaded installer passes the streaming verifier")
+        var changedBytes = installerBytes
+        changedBytes[changedBytes.index(before: changedBytes.endIndex)] ^= 1
+        let altered = downloadFixtures.appendingPathComponent("altered.dmg")
+        try changedBytes.write(to: altered)
+        check(try fileOffer.asset.verifyInstaller(at: altered) == .checksumMismatch, "A changed byte in the final chunk fails verification")
+        try installerBytes.dropLast().write(to: altered)
+        check(try fileOffer.asset.verifyInstaller(at: altered) == .sizeMismatch, "A truncated installer fails before hashing")
+        try (installerBytes + Data([0])).write(to: altered)
+        check(try fileOffer.asset.verifyInstaller(at: altered) == .sizeMismatch, "Extra installer bytes fail before hashing")
+        let shortcut = downloadFixtures.appendingPathComponent("shortcut.dmg")
+        try FileManager.default.createSymbolicLink(at: shortcut, withDestinationURL: installer)
+        check((try? fileOffer.asset.verifyInstaller(at: shortcut)) == nil &&
+              (try? fileOffer.asset.verifyInstaller(at: downloadFixtures)) == nil,
+              "A symlink or directory cannot be reported as a verified file")
         check(try UpdateCatalog.latest(in: releases, installedTag: "v1.0.0", channel: .preview) == nil, "Update checks never offer a downgrade")
         check(try UpdateCatalog.latest(in: [stable], installedTag: "0.4.0+another-build", channel: .stable) == nil, "Same version with different build metadata is not an update")
         check(try UpdateCatalog.latest(in: [try release("v0.4.0-preview.1")], installedTag: "0.3.0", channel: .stable) == nil, "Semantic prerelease is excluded even if GitHub flag is false")
@@ -143,7 +173,8 @@ struct UpdateChecks {
 
         let signingKey = Curve25519.Signing.PrivateKey()
         let signedCommit = String(repeating: "b", count: 40)
-        let signedDigest = String(repeating: "e", count: 64)
+        let verifiedPayload = Data(repeating: 9, count: 1234)
+        let signedDigest = SHA256.hash(data: verifiedPayload).map { String(format: "%02x", $0) }.joined()
         let signedPayload = try UpdateReleaseManifest.makePayload(tag: "v0.4.0", commit: signedCommit, installers: [
             .init(filename: "Alcove-0.4.0-universal-unsigned-preview.zip", size: 1234, sha256: signedDigest)
         ])
@@ -176,10 +207,19 @@ struct UpdateChecks {
         check(signedRequests.count == 3 && Set(signedRequests.compactMap(\.url)) == Set([api, manifestURL, signatureURL])
               && signedRequests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == nil },
               "Manifest and signature are fetched only from the selected release without credentials")
+        let signedInstaller = downloadFixtures.appendingPathComponent("signed.zip")
+        try verifiedPayload.write(to: signedInstaller)
+        guard let signedAsset = signedController.installerAsset else { throw CocoaError(.fileReadUnknown) }
+        await signedController.verifyInstaller(at: signedInstaller, for: signedAsset)
+        check(signedController.installerReview?.outcome == .matches, "The update controller verifies the selected file with the signed checksum")
+        await signedController.verifyInstaller(at: altered, for: signedAsset)
+        check(signedController.installerReview?.outcome == .sizeMismatch, "A second choice supersedes the previous success")
         returnedSignature[0] ^= 1
         await signedController.check(channel: .stable)
         check(signedController.offer == nil && signedController.authenticatedUpdate == nil && signedController.error != nil,
               "A failed signature clears the previous authenticated offer and never falls back")
+        await signedController.verifyInstaller(at: signedInstaller, for: signedAsset)
+        check(signedController.installerReview == nil, "A picker for an expired offer cannot publish a result")
         returnedSignature = signedBytes
         signatureStatus = 404
         await signedController.check(channel: .stable)

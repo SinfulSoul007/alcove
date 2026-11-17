@@ -4,13 +4,12 @@ import Foundation
 @main
 struct SignUpdateManifest {
     enum InputError: LocalizedError {
-        case arguments, signingKey, invalidInstaller
+        case arguments, signingKey
 
         var errorDescription: String? {
             switch self {
             case .arguments: "Usage: sign-update-manifest.sh TAG COMMIT RAW_PRIVATE_KEY NEW_OUTPUT_DIRECTORY INSTALLER [INSTALLER]"
             case .signingKey: "The signing key must contain exactly 32 raw Ed25519 private key bytes."
-            case .invalidInstaller: "The installer must be a regular file."
             }
         }
     }
@@ -39,7 +38,9 @@ struct SignUpdateManifest {
         }
         let key = try Curve25519.Signing.PrivateKey(rawRepresentation: keyData)
         let output = URL(fileURLWithPath: arguments[4], isDirectory: true)
-        let installers = try arguments.dropFirst(5).map { try describeInstaller(URL(fileURLWithPath: $0)) }
+        let installers = try arguments.dropFirst(5).map {
+            try UpdateReleaseManifest.Installer(contentsOf: URL(fileURLWithPath: $0))
+        }
         let payload = try UpdateReleaseManifest.makePayload(tag: tag, commit: commit, installers: installers)
         let signature = try key.signature(for: payload)
 
@@ -51,20 +52,5 @@ struct SignUpdateManifest {
         try signature.write(to: stage.appendingPathComponent(UpdateReleaseManifest.signatureFilename))
         try files.moveItem(at: stage, to: output)
         print("Signed \(tag) for \(installers.count) installer(s).")
-    }
-
-    private static func describeInstaller(_ url: URL) throws -> UpdateReleaseManifest.Installer {
-        let attributes = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-        guard attributes.isRegularFile == true, attributes.isSymbolicLink == false else { throw InputError.invalidInstaller }
-        let installer = try FileHandle(forReadingFrom: url)
-        defer { try? installer.close() }
-        var hash = SHA256()
-        var size: Int64 = 0
-        while let bytes = try installer.read(upToCount: 1_048_576), !bytes.isEmpty {
-            size += Int64(bytes.count)
-            hash.update(data: bytes)
-        }
-        let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
-        return .init(filename: url.lastPathComponent, size: size, sha256: digest)
     }
 }

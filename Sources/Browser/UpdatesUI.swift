@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import BrowserCore
 
 struct UpdatesPanel: View {
@@ -46,8 +48,8 @@ struct UpdatesPanel: View {
                 Spacer()
             }
             Divider()
-            Text("Checks contact GitHub and send no browsing history. Downloads open in your browser. Alcove never installs or launches an update automatically.")
-                .font(.caption).foregroundStyle(.secondary)
+            Text("Update checks contact GitHub without sending browsing history. Download and install updates manually.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Link("All Releases on GitHub", destination: controller.releasePage)
                 Spacer()
@@ -60,22 +62,31 @@ struct UpdatesPanel: View {
 
     private func offerView(_ offer: UpdateOffer) -> some View {
         let authentication = controller.authenticatedUpdate
-        let asset = authentication?.asset ?? offer.asset
+        let asset = controller.installerAsset ?? offer.asset
         return VStack(alignment: .leading, spacing: 12) {
             Text("Available: \(offer.tag)").font(.headline)
-            ScrollView {
-                Text(offer.notes.isEmpty ? "No release notes were provided." : offer.notes)
-                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(maxHeight: .infinity)
-            Text("Unsigned preview: ad hoc signed, without Apple Developer ID signing or notarization. macOS may block it. Download only if you choose to test this build; keep system security enabled.")
-                .font(.caption).foregroundStyle(.secondary)
+            if availableHeight >= 550 {
+                ScrollView {
+                    Text(offer.notes.isEmpty ? "No release notes were provided." : offer.notes)
+                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(maxHeight: .infinity)
+            }
+            Text("This ad hoc–signed preview may be blocked by macOS Gatekeeper.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let digest = asset.sha256 {
                 DisclosureGroup(authentication == nil ? "Published SHA-256 checksum" : "Signed installer SHA-256 checksum") {
                     Text(digest).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
                     Text(authentication == nil
-                         ? "Compare this with your download’s checksum to check for changed bytes."
-                         : "Alcove verified the release manifest’s signature. Compare this checksum with your downloaded installer before opening it.")
+                         ? "Verify your download against this checksum to check for changed bytes."
+                         : "Alcove verified the release manifest’s signature. Verify the downloaded installer against its signed checksum.")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+                HStack(spacing: 9) {
+                    Button("Verify Download…") { chooseInstaller(for: asset) }
+                        .disabled(controller.installerReview?.outcome == .verifying)
+                    if let review = controller.installerReview {
+                        installerStatus(review, isAuthenticated: authentication != nil)
+                    }
                 }
             } else {
                 Text("GitHub did not publish a SHA-256 digest for this asset. Check the release’s SHA256SUMS.txt before opening it.").font(.caption).foregroundStyle(.secondary)
@@ -86,6 +97,41 @@ struct UpdatesPanel: View {
                 Spacer()
                 Link("Release Notes on GitHub", destination: offer.releaseURL)
             }
+        }
+    }
+
+    private func chooseInstaller(for asset: UpdateAsset) {
+        let panel = NSOpenPanel()
+        let fileExtension = (asset.filename as NSString).pathExtension
+        panel.allowedContentTypes = [UTType(filenameExtension: fileExtension) ?? .data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.resolvesAliases = false
+        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        panel.prompt = "Verify"
+        panel.message = "Choose the downloaded Alcove installer."
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { await controller.verifyInstaller(at: url, for: asset) }
+        }
+    }
+
+    @ViewBuilder private func installerStatus(_ review: UpdateInstallerReview, isAuthenticated: Bool) -> some View {
+        if review.outcome == .verifying {
+            ProgressView().controlSize(.small).accessibilityLabel("Verifying installer")
+        } else {
+            let message: String = switch review.outcome {
+            case .matches:
+                isAuthenticated ? "Matches the signed release." : "Matches the published checksum."
+            case .sizeMismatch: "File size differs from the release."
+            case .checksumMismatch: "File checksum differs from the release."
+            case .unreadable: "Couldn’t verify this file. Choose a readable installer."
+            case .verifying: ""
+            }
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(review.outcome == .matches ? Color.secondary : Color.orange)
+                .help(review.filename)
         }
     }
 }

@@ -10,5 +10,6 @@ if [[ -d "$sdk_26_5" ]]; then sdk="$sdk_26_5"; fi
 xcrun swiftc -sdk "$sdk" -target "$(uname -m)-apple-macosx14.0" -parse-as-library \
     -module-cache-path "$scratch/modules" \
     "$root/Sources/BrowserCore/Updates.swift" "$root/Sources/BrowserCore/UpdateReleaseManifest.swift" \
+    "$root/Sources/BrowserCore/UpdateInstallerFile.swift" \
     "$root/scripts/SignUpdateManifest.swift" -o "$scratch/sign-update-manifest"
 "$scratch/sign-update-manifest" "$@"
