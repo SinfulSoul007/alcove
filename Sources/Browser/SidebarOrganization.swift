@@ -16,6 +16,18 @@ enum SidebarFolderError: LocalizedError {
 }
 
 extension BrowserStore {
+    @discardableResult
+    func copyPinnedFolderLinks(_ folder: String, in spaceID: UUID, format: SidebarFolderLinkFormat,
+                               to pasteboard: NSPasteboard = .general) -> Bool {
+        guard space.id == spaceID, extensionPopupProfileID == nil, canManageSpace(spaceID) else { return false }
+        guard let text = SidebarSavedLayout(space: space).copiedLinks(in: folder, format: format) else {
+            message = "This folder has no website links to copy."
+            return false
+        }
+        pasteboard.clearContents()
+        return pasteboard.setString(text, forType: .string)
+    }
+
     /// Commit both saved representations before publishing; a live website never changes owner or configuration.
     func saveSidebarBookmark(title:String,url:String,profileID:UUID,spaceID:UUID?,existingTabID:UUID?) throws {
         guard !isPrivate else {throw ProfileError.privateMode}

@@ -42,6 +42,57 @@ import BrowserCore
             delegate.buildMenu()
             check(NSApp.mainMenu?.items.first(where:{$0.title == "File"})?.submenu?.items.contains(where:{$0.action == #selector(AppDelegate.newFolder)}) == true && store.availableCommands.contains(.newFolder) && BrowserCommand.newFolder.matches("new fol"),"Folder creation is discoverable in the native File menu and command search")
         }
+        inWindow { store, _, _ in
+            let place = store.spaceIndex
+            let spaceID = store.space.id
+            store.session.spaces[place].folders = ["Research", "Sources", "Notes", "Unrelated", "Empty"]
+            store.session.spaces[place].folderParents = ["Sources": "Research", "Notes": "Sources"]
+            store.session.spaces[place].collapsedFolders = ["Research", "Sources"]
+            func pin(_ title: String, _ address: String, in folder: String, home: String? = nil,
+                     custom: String? = nil) -> BrowserCore.Tab {
+                var pin = BrowserCore.Tab(title: title, url: address, pinned: true)
+                pin.folder = folder
+                pin.homeURL = home
+                pin.customTitle = custom
+                return pin
+            }
+            let saved = "https://example.invalid/collection?q=(test)"
+            let nested = "https://example.invalid/paper"
+            let deeper = "https://example.invalid/notes"
+            var favorite = pin("Favorite", "https://example.invalid/favorite", in: "Research")
+            favorite.favorite = true
+            var today = pin("Today", "https://example.invalid/today", in: "Research")
+            today.pinned = false
+            store.session.spaces[place].tabs += [
+                pin("Nested", nested, in: "Sources", custom: "Paper [draft]"),
+                pin("Drifted", "https://example.invalid/current", in: "Research", home: saved, custom: "Search & notes"),
+                pin("Deeper\nnotes", deeper, in: "Notes"),
+                pin("Unrelated", "https://example.invalid/unrelated", in: "Unrelated"),
+                pin("Credentials", "https://user:pass@example.invalid/login", in: "Research"),
+                pin("Without a web URL", "about:blank", in: "Research"),
+                favorite, today,
+            ]
+            let scratch = NSPasteboard(name: NSPasteboard.Name("AlcoveCopyFolderLinks.\(UUID())"))
+            check(store.copyPinnedFolderLinks("Research", in: spaceID, format: .plainText, to: scratch)
+                  && scratch.string(forType: .string) == [saved, nested, deeper].joined(separator: "\n"),
+                  "Copy All Links uses the saved addresses in sidebar order, including collapsed descendants")
+            let markdown = [
+                "[Search \\& notes](<\(saved)>)",
+                "[Paper \\[draft\\]](<\(nested)>)",
+                "[Deeper notes](<\(deeper)>)",
+            ].joined(separator: "\n")
+            check(store.copyPinnedFolderLinks("Research", in: spaceID, format: .markdown, to: scratch)
+                  && scratch.string(forType: .string) == markdown,
+                  "Markdown copy preserves custom pin titles and escapes literal label punctuation")
+            check(!store.copyPinnedFolderLinks("Empty", in: spaceID, format: .plainText, to: scratch)
+                  && !store.copyPinnedFolderLinks("Missing", in: spaceID, format: .plainText, to: scratch)
+                  && !store.copyPinnedFolderLinks("Research", in: UUID(), format: .plainText, to: scratch)
+                  && scratch.string(forType: .string) == markdown,
+                  "Empty, missing and stale folder requests leave the existing clipboard intact")
+            check(store.copyPinnedFolderLinks("Sources", in: spaceID, format: .plainText, to: scratch)
+                  && scratch.string(forType: .string) == [nested, deeper].joined(separator: "\n"),
+                  "Copying a subfolder never includes its parent’s pins")
+        }
         inWindow {store,window,delegate in
             let a = store.newTab(url: URL(string: "https://example.invalid/first-recent")!)
             let b = store.newTab(url: URL(string: "https://example.invalid/second-recent")!)

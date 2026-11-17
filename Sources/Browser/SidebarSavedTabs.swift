@@ -1,6 +1,10 @@
 import SwiftUI
 import BrowserCore
 
+enum SidebarFolderLinkFormat {
+    case plainText, markdown
+}
+
 struct SidebarSavedLayout {
     let tree: SidebarFolderTree
     let topLevelTabs: [BrowserCore.Tab]
@@ -26,6 +30,35 @@ struct SidebarSavedLayout {
             $0.expanded && tabsByFolder[$0.name, default: []].isEmpty && tree.children(of: $0.name).isEmpty
         }.count
         return Double(tabs) * (rowHeight + 3) + Double(folders.count) * 35 + Double(empty) * 24 + 8
+    }
+
+    func copiedLinks(in folder: String, format: SidebarFolderLinkFormat) -> String? {
+        guard tree.names.contains(folder) else { return nil }
+        var links: [String] = []
+        var pending = [folder]
+        while let name = pending.popLast() {
+            for tab in tabsByFolder[name, default: []] {
+                if let link = Self.formattedLink(for: tab, format: format) { links.append(link) }
+            }
+            pending.append(contentsOf: tree.children(of: name).reversed())
+        }
+        return links.isEmpty ? nil : links.joined(separator: "\n")
+    }
+
+    private static func formattedLink(for tab: BrowserCore.Tab, format: SidebarFolderLinkFormat) -> String? {
+        guard let url = URL(string: tab.homeURL ?? tab.url), let host = QuickBrowseRouting.host(for: url),
+              url.user == nil, url.password == nil else { return nil }
+        if case .plainText = format { return url.absoluteString }
+
+        let title = tab.sidebarTitle.split { character in
+            character.isWhitespace || character.unicodeScalars.contains { $0.value < 32 || $0.value == 127 }
+        }.joined(separator: " ")
+        let punctuation: Set<Character> = ["\\", "`", "*", "_", "[", "]", "<", ">", "&"]
+        let label = (title.isEmpty ? host : title).reduce(into: "") {
+            if punctuation.contains($1) { $0.append("\\") }
+            $0.append($1)
+        }
+        return "[\(label)](<\(url.absoluteString)>)"
     }
 }
 
@@ -142,6 +175,9 @@ struct SidebarSavedTabs: View {
                     Button(layout.tree.path(to: target).joined(separator: " › ")) { move(name, under: target, in: spaceID) }
                 }
             }.disabled(layout.tree.parents[name] == nil && !layout.tree.names.contains { layout.tree.canMove(name, under: $0) })
+            Divider()
+            Button("Copy All Links") { store.copyPinnedFolderLinks(name, in: spaceID, format: .plainText) }
+            Button("Copy All Links as Markdown") { store.copyPinnedFolderLinks(name, in: spaceID, format: .markdown) }
             Divider()
             Button("Remove Folder, Keep Contents") {
                 do { try store.removeTabFolder(name, in: spaceID) }
