@@ -368,11 +368,12 @@ struct BrowserUI: View {
                     ScrollView(.vertical, showsIndicators: false) {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: columns), spacing: 7) {
                         ForEach(store.favorites) { tab in
+                            let pinnedAddressMenu = PinnedAddressMenu(store: store, tab: tab)
                             Button { store.selectAny(tab.id) } label: {
                                 SiteBadge(url: tab.homeURL ?? tab.url, large: true, image: appearance.showFavicons ? store.siteIcons[tab.id] : nil).frame(maxWidth: .infinity).frame(height: 48).background(store.focusedID == tab.id ? theme.selected : theme.tile, in: RoundedRectangle(cornerRadius: 10))
                             }.buttonStyle(.plain).help(tab.sidebarTitle).accessibilityLabel(tab.sidebarTitle)
                                 .onDrag { store.beginSidebarTabDrag(tab.id) }.contextMenu {
-                                    PinnedAddressMenu(store: store, tabID: tab.id)
+                                    pinnedAddressMenu
                                     Button("Rename Tab…") { store.requestRenameSidebarTab(tab.id) }.disabled(!store.canModifyLocalMetadata)
                                     if tab.customTitle != nil {
                                         Button("Restore Tab Name") { store.restoreSidebarTabName(tab.id) }.disabled(!store.canModifyLocalMetadata)
@@ -383,7 +384,7 @@ struct BrowserUI: View {
                                     Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) }.disabled(!store.canModifyLocalMetadata)
                                 }
                                 .overlay(alignment: .topTrailing) {
-                                    if tab.homeURL != tab.url && store.canReturnToPinnedAddress(tab.id) {
+                                    if tab.homeURL != tab.url && pinnedAddressMenu.canReturn {
                                         PinnedAddressButton(store: store, tabID: tab.id, accent: theme.accent)
                                             .padding(4)
                                     }
@@ -532,22 +533,37 @@ private struct PinnedAddressButton: View {
 }
 
 private struct PinnedAddressMenu: View {
-    let store: BrowserStore
-    let tabID: UUID
+    private let store: BrowserStore
+    private let tabID: UUID
+    let canReturn: Bool
+    private let canKeepCurrent: Bool
+    private let canEdit: Bool
+    private let canUseCurrent: Bool
+
+    init(store: BrowserStore, tab: BrowserCore.Tab) {
+        self.store = store
+        tabID = tab.id
+        // The row rebuilds on store changes. Capture menu values there so SwiftUI
+        // can detect changes even when the store and the tab identifier stay the same.
+        canReturn = tab.pinned && store.canReturnToPinnedAddress(tab.id)
+        canKeepCurrent = canReturn && store.canKeepPageWhileReturningToPinnedAddress(tab.id)
+        canEdit = tab.pinned && store.canEditPinnedAddress(tab.id)
+        canUseCurrent = canEdit && store.canUseCurrentAddressAsPinned(tab.id)
+    }
 
     var body: some View {
-        if store.canEditPinnedAddress(tabID) {
+        if canEdit {
             Menu("Pinned URL") {
                 Button("Edit Pinned URL…") { store.requestPinnedAddressEdit(tabID) }
                 Button("Use Current URL as Pinned URL") { store.requestUseCurrentAddressAsPinned(tabID) }
-                    .disabled(!store.canUseCurrentAddressAsPinned(tabID))
+                    .disabled(!canUseCurrent)
             }
         }
-        if store.canReturnToPinnedAddress(tabID) {
+        if canReturn {
             Button("Back to Pinned URL") { store.requestReturnToPinnedAddress(tabID) }
             Button("Back to Pinned URL and Keep Current Page") {
                 store.requestReturnToPinnedAddress(tabID, keepingCurrentPage: true)
-            }.disabled(!store.canKeepPageWhileReturningToPinnedAddress(tabID))
+            }.disabled(!canKeepCurrent)
         }
     }
 }
@@ -568,7 +584,8 @@ struct SidebarTabRow: View {
         let split = store.splitGroup(containing: tab.id)
         let hasSplitPane = store.splitLayout?.tabIDs.contains(tab.id) == true
         let fullSplit = store.visiblePaneIDs.count >= BrowserSplitLayout.maximumPanes
-        let canReturn = tab.pinned && tab.homeURL != tab.url && store.canReturnToPinnedAddress(tab.id)
+        let pinnedAddressMenu = PinnedAddressMenu(store: store, tab: tab)
+        let canReturn = tab.homeURL != tab.url && pinnedAddressMenu.canReturn
         return HStack(spacing: 7) {
             if let rename {
                 HStack(spacing: 9) {
@@ -619,7 +636,7 @@ struct SidebarTabRow: View {
                                                                before: tab.id, folder: tab.folder, rowWidth: rowWidth, hover: $splitHover))
         .background(ExtensionTabAnchorReader(anchor:extensionMenuAnchor))
         .contextMenu {
-            PinnedAddressMenu(store: store, tabID: tab.id)
+            pinnedAddressMenu
             Button("Rename Tab") { startRename() }.disabled(!store.canModifyLocalMetadata || tab.url.isEmpty)
             if tab.customTitle != nil {
                 Button("Restore Tab Name") { store.restoreSidebarTabName(tab.id) }.disabled(!store.canModifyLocalMetadata)
