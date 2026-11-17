@@ -21,11 +21,32 @@ class Handler(BaseHTTPRequestHandler):
             content_type = 'application/json'
         elif parts.path == '/favicon.ico':
             self.send_response(204); self.end_headers(); return
+        elif parts.path == '/osd-redirect':
+            with self.lock:
+                self.counts[parts.path] = self.counts.get(parts.path, 0) + 1
+            self.send_response(302)
+            self.send_header('Location', '/opensearch.xml')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        elif parts.path == '/opensearch.xml':
+            with self.lock:
+                self.counts[parts.path] = self.counts.get(parts.path, 0) + 1
+            name = 'Leaked request metadata' if self.headers.get('Cookie') or self.headers.get('Referer') else 'Owned search'
+            body = (f'<?xml version="1.0"?><OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">'
+                    f'<ShortName>{name}</ShortName><Description>Owned fixture</Description>'
+                    '<Url type="application/json" rel="suggestions" template="/never?q={searchTerms}" />'
+                    '<Url type="text/html" template="/search?q={searchTerms}&amp;kind=advertised" />'
+                    '</OpenSearchDescription>').encode()
+            content_type = 'application/opensearchdescription+xml'
         else:
             with self.lock:
                 self.counts[parts.path] = self.counts.get(parts.path, 0) + 1
             payload = json.dumps({'query': parse_qs(parts.query, keep_blank_values=True), 'cookie': self.headers.get('Cookie', ''), 'path': parts.path})
-            body = ('<!doctype html><html><head><title>Alcove site search fixture</title></head><body><pre id="result">' + html.escape(payload) + '</pre><script>window.alcoveSiteSearchReady=true;</script></body></html>').encode()
+            advertised = ('<base href="https://example.invalid/">'
+                          '<link rel="search" type="application/opensearchdescription+xml" href="https://example.invalid/foreign.xml">'
+                          '<link id="owned-search" rel="search" type="application/opensearchdescription+xml" href="/opensearch.xml">') if parts.path == '/discover' else ''
+            body = ('<!doctype html><html><head><title>Alcove site search fixture</title>' + advertised + '</head><body><pre id="result">' + html.escape(payload) + '</pre><script>window.alcoveSiteSearchReady=true;</script></body></html>').encode()
             content_type = 'text/html; charset=utf-8'
         self.send_response(200)
         self.send_header('Content-Type', content_type)
