@@ -20,6 +20,9 @@ jobs:
       contents: read
     env:
       RELEASE_TAG: ${{ github.ref_name }}
+    outputs:
+      commit: ${{ steps.release-metadata.outputs.commit }}
+      signed-updates: ${{ steps.release-metadata.outputs.signed-updates }}
     steps:
       - name: Check out the release tag
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -27,12 +30,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Require a matching preview tag and bundle version
+        id: release-metadata
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          commit=$(git rev-parse HEAD)
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$commit"
           python3 - <<'PY'
-          import os, plistlib, re
+          import base64, os, plistlib, re
           tag = os.environ['RELEASE_TAG']
           number = r'(?:0|[1-9][0-9]*)'
           match = re.fullmatch(r'v(' + number + r'\.' + number + r'\.' + number + r')-preview\.' + number, tag)
@@ -42,8 +47,19 @@ jobs:
               info = plistlib.load(source)
           if info.get('CFBundleShortVersionString') != match[1] or info.get('AlcoveReleaseTag') != tag:
               raise SystemExit('Tag, CFBundleShortVersionString and AlcoveReleaseTag must match before release')
+          signing_key = info.get('AlcoveUpdateSigningPublicKey')
+          if signing_key is not None:
+              try:
+                  decoded = base64.b64decode(signing_key, validate=True)
+              except (ValueError, TypeError):
+                  decoded = b''
+              if len(decoded) != 32 or base64.b64encode(decoded).decode('ascii') != signing_key:
+                  raise SystemExit('The pinned update public key must be 32 bytes encoded as base64')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as outputs:
+              outputs.write('signed-updates=' + ('true' if signing_key is not None else 'false') + '\n')
           print('Validated preview tag and bundle version:', tag)
           PY
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
       - name: Retrieve the exact tested CI package when available
         id: tested-package
         env:
@@ -76,8 +92,50 @@ jobs:
             dist/Alcove-*-universal-unsigned-preview.dmg
             dist/SHA256SUMS.txt
 
-  publish:
+  sign:
     needs: package
+    if: needs.package.outputs.signed-updates == 'true'
+    runs-on: macos-15
+    timeout-minutes: 10
+    environment: alcove-release-signing
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_COMMIT: ${{ needs.package.outputs.commit }}
+    steps:
+      - name: Check out the verified release commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.package.outputs.commit }}
+          persist-credentials: false
+      - name: Retrieve verified installers
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-preview
+          path: dist
+      - name: Sign the manifest for the checked installer bytes
+        env:
+          ALCOVE_UPDATE_SIGNING_KEY: ${{ secrets.ALCOVE_UPDATE_SIGNING_KEY }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          ./scripts/sign-preview-update.sh "$RELEASE_TAG" "$RELEASE_COMMIT" dist signed-update
+      - name: Pass only the manifest and signature to publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signed-update-metadata
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            signed-update/Alcove-update-manifest-v1.json
+            signed-update/Alcove-update-manifest-v1.sig
+
+  publish:
+    needs: [package, sign]
+    if: >-
+      ${{ !cancelled() && needs.package.result == 'success' &&
+          ((needs.package.outputs.signed-updates == 'true' && needs.sign.result == 'success') ||
+           (needs.package.outputs.signed-updates == 'false' && needs.sign.result == 'skipped')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -86,17 +144,34 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ github.ref_name }}
+      SIGNED_UPDATES: ${{ needs.package.outputs.signed-updates }}
     steps:
       - name: Retrieve verified artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: verified-preview
           path: dist
+      - name: Retrieve the signed update manifest
+        if: env.SIGNED_UPDATES == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: signed-update-metadata
+          path: signed-update
       - name: Publish a GitHub prerelease
         shell: bash
         run: |
           set -euo pipefail
           (cd dist && sha256sum --check SHA256SUMS.txt)
+          release_files=(dist/Alcove-*-universal-unsigned-preview.zip dist/Alcove-*-universal-unsigned-preview.dmg dist/SHA256SUMS.txt)
+          case "$SIGNED_UPDATES" in
+            true)
+              test -s signed-update/Alcove-update-manifest-v1.json
+              test "$(wc -c < signed-update/Alcove-update-manifest-v1.sig)" -eq 64
+              release_files+=(signed-update/Alcove-update-manifest-v1.json signed-update/Alcove-update-manifest-v1.sig)
+              ;;
+            false) ;;
+            *) exit 1 ;;
+          esac
           cat > release-notes.txt <<'NOTE'
           Universal macOS 14+ preview for Apple Silicon and Intel.
 
@@ -136,5 +211,4 @@ jobs:
           gh release create "$RELEASE_TAG" --verify-tag --prerelease --latest=false \
             --title "Alcove $RELEASE_TAG — Unsigned Preview" \
             --notes-file release-notes.txt --generate-notes \
-            dist/Alcove-*-universal-unsigned-preview.zip \
-            dist/Alcove-*-universal-unsigned-preview.dmg dist/SHA256SUMS.txt
+            "${release_files[@]}"

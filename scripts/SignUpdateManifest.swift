@@ -4,12 +4,13 @@ import Foundation
 @main
 struct SignUpdateManifest {
     enum InputError: LocalizedError {
-        case arguments, signingKey
+        case arguments, signingKey, mismatchedPublicKey
 
         var errorDescription: String? {
             switch self {
             case .arguments: "Usage: sign-update-manifest.sh TAG COMMIT RAW_PRIVATE_KEY NEW_OUTPUT_DIRECTORY INSTALLER [INSTALLER]"
             case .signingKey: "The signing key must contain exactly 32 raw Ed25519 private key bytes."
+            case .mismatchedPublicKey: "The signing key does not match Alcove’s pinned update public key."
             }
         }
     }
@@ -37,6 +38,10 @@ struct SignUpdateManifest {
             throw InputError.signingKey
         }
         let key = try Curve25519.Signing.PrivateKey(rawRepresentation: keyData)
+        if let expected = ProcessInfo.processInfo.environment["ALCOVE_EXPECTED_UPDATE_SIGNING_PUBLIC_KEY"],
+           expected != key.publicKey.rawRepresentation.base64EncodedString() {
+            throw InputError.mismatchedPublicKey
+        }
         let output = URL(fileURLWithPath: arguments[4], isDirectory: true)
         let installers = try arguments.dropFirst(5).map {
             try UpdateReleaseManifest.Installer(contentsOf: URL(fileURLWithPath: $0))
