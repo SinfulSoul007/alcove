@@ -236,6 +236,16 @@ struct SystemWebKitExtensionProbe {
             print("MV2_TOP_\(phase.uppercased()) loaded=\(loaded) requests=\(requests) observed=\(observed)")
             return (loaded, requests, observed)
         }
+        // This fixture has a disposable nonpersistent data store, so WebKit treats its tab as private.
+        // Verify the barrier before granting this synthetic extension access to that tab.
+        guard !context.hasAccessToPrivateData else { throw CocoaError(.coderInvalidValue) }
+        let privateDenied = try await exercise("private-denied", in: page)
+        let privateDeniedMain = try await exerciseMain("private-denied")
+        guard privateDenied.candidate, privateDenied.requests > 0, privateDenied.events.isEmpty,
+              privateDeniedMain.loaded, privateDeniedMain.requests > 0, !privateDeniedMain.observed else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        context.hasAccessToPrivateData = true
         let granted = try await exercise("granted", in: page)
         let grantedMain = try await exerciseMain("granted")
         let isolatedConfig = WKWebViewConfiguration()
