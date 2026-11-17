@@ -55,35 +55,16 @@ jobs:
           git apply --check "$patch"
           git apply "$patch"
           git diff --check
-          # The pinned wrapper drops the stored numeric zero for --force-optimization-level=O0.
-          # Send the build settings directly to Xcode and keep the Cocoa extension configuration.
-          log="$RUNNER_TEMP/alcove-webkit-build.log"
-          # WebKit requires an explicit opt-in to unoptimized Release code for this probe.
-          release_define=RELEASE_WITHOUT_OPTIMIZATIONS=1
-          printf '#include <wtf/Compiler.h>\n' |
-            xcrun clang -x c++ -std=c++20 -I Source/WTF -O0 -DNDEBUG -D"$release_define" -fsyntax-only -
-          definitions='GCC_PREPROCESSOR_DEFINITIONS=$(inherited) '"$release_define"
-          settings=(GCC_OPTIMIZATION_LEVEL=0 SWIFT_OPTIMIZATION_LEVEL=-Onone
-                    GCC_GENERATE_DEBUGGING_SYMBOLS=NO COMPILER_INDEX_STORE_ENABLE=NO)
-          Tools/Scripts/build-webkit --release --lto-mode=none --only='Everything up to WebKit' \
-            "${settings[@]}" "$definitions" -showBuildTimingSummary 2>&1 |
-            awk '/Build Timing Summary/ { timing = 1 }
-              NR <= 80 || NR % 4000 == 0 || (timing && timing++ <= 40) || / (fatal error|error|warning):|BUILD (SUCCEEDED|FAILED)|No space left/ {
+          # Use the pinned configuration that previously built and loaded this patched framework.
+          Tools/Scripts/set-webkit-configuration --release --force-optimization-level=O1 --lto-mode=none
+          Tools/Scripts/build-webkit --release --lto-mode=none --only='Everything up to WebKit' 2>&1 |
+            awk '/^The following build commands failed/ { failureSummary = 32 }
+              NR <= 80 || NR % 4000 == 0 || failureSummary > 0 ||
+              /(^|[[:space:]])(fatal error|error|warning|Error):|BUILD (SUCCEEDED|FAILED)|No space left/ {
                 print substr($0, 1, 700)
                 fflush()
-              }' | tee "$log"
-          for entry in "${settings[@]}"; do
-            setting="${entry%%=*}"
-            value="${entry#*=}"
-            if ! grep -Eq "^[[:space:]]+${setting}[[:space:]]*=[[:space:]]*${value}[[:space:]]*$" "$log"; then
-              printf 'Xcode did not report %s=%s\n' "$setting" "$value" >&2
-              exit 1
-            fi
-          done
-          if ! grep -Eq "^[[:space:]]+GCC_PREPROCESSOR_DEFINITIONS[[:space:]]*=.*${release_define}" "$log"; then
-            printf 'Xcode did not report the unoptimized Release opt-in\n' >&2
-            exit 1
-          fi
+              }
+              failureSummary > 0 { failureSummary-- }'
           framework=WebKitBuild/Release/WebKit.framework/WebKit
           test -s "$framework"
           file "$framework"
