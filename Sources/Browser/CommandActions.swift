@@ -50,6 +50,7 @@ extension BrowserStore {
         case .splitBottom: addSplit(at: .bottom)
         case .flipSplit: flipSplit()
         case .library: libraryVisible = true
+        case .downloads: showDownloads()
         case .settings: settingsVisible = true
         case .extensions: requestExtensionManager()
         case .profiles: if !isPrivate { profilesVisible = true }

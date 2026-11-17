@@ -43,6 +43,63 @@ import BrowserCore
             check(NSApp.mainMenu?.items.first(where:{$0.title == "File"})?.submenu?.items.contains(where:{$0.action == #selector(AppDelegate.newFolder)}) == true && store.availableCommands.contains(.newFolder) && BrowserCommand.newFolder.matches("new fol"),"Folder creation is discoverable in the native File menu and command search")
         }
         do {
+            let files = FileManager.default
+            let directory = files.temporaryDirectory.appendingPathComponent("Alcove.Downloads." + UUID().uuidString)
+            try files.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? files.removeItem(at: directory) }
+            let destination = directory.appendingPathComponent("download.txt")
+            let original = directory.appendingPathComponent("original.txt")
+            let staged = try DownloadStaging(filename: destination.lastPathComponent)
+            defer { staged.discard() }
+            try Data("original".utf8).write(to: staged.fileURL)
+            check(!files.fileExists(atPath: destination.path), "A partial download stays outside the user-selected destination")
+            let exported = try staged.publish(to: destination)
+            check(DownloadFileIdentity(destination) == exported && !files.fileExists(atPath: staged.fileURL.path),
+                  "A complete staged download publishes to the chosen file")
+            let competing = try DownloadStaging(filename: destination.lastPathComponent)
+            defer { competing.discard() }
+            try Data("competing download".utf8).write(to: competing.fileURL)
+            let conflict = try? competing.publish(to: destination)
+            let savedData = try Data(contentsOf: destination)
+            check(conflict == nil && savedData == Data("original".utf8), "A finished download cannot overwrite a file at its destination")
+            competing.discard()
+            check(!files.fileExists(atPath: competing.fileURL.deletingLastPathComponent().path), "Discarding a download removes only its staging directory")
+            guard let identity = DownloadFileIdentity(destination) else { throw CocoaError(.fileReadUnknown) }
+            inWindow { store, _, delegate in
+                let completed = DownloadItem(destination: destination, profileID: store.activeProfileID, state: .finished(identity))
+                let otherProfile = DownloadItem(destination: destination, profileID: UUID(), state: .finished(identity))
+                store.downloads = [otherProfile, completed]
+                check(store.downloadsForActiveProfile.map(\.id) == [completed.id] && store.completedDownloadURL(otherProfile.id) == nil,
+                      "The Downloads list and file actions respect the originating profile")
+                check(store.completedDownloadURL(completed.id) == destination,
+                      "A finished download can be opened at its saved destination")
+                do {
+                    try files.moveItem(at: destination, to: original)
+                    try files.createSymbolicLink(at: destination, withDestinationURL: original)
+                    check(store.completedDownloadURL(completed.id) == nil, "A symlink cannot replace the completed file for Open")
+                    try files.removeItem(at: destination)
+                    try Data("replacement".utf8).write(to: destination)
+                    check(store.completedDownloadURL(completed.id) == nil, "A replacement at the old path is not opened")
+                    store.removeDownloadRecord(otherProfile.id)
+                    store.removeDownloadRecord(completed.id)
+                    check(store.downloads.map(\.id) == [otherProfile.id] && files.fileExists(atPath: destination.path) && files.fileExists(atPath: original.path),
+                          "Removing a visible download record keeps both files and leaves other profiles alone")
+                } catch { check(false, "Owned download file operations: \(error.localizedDescription)") }
+                delegate.buildMenu()
+                store.runCommand(.downloads)
+                check(store.libraryVisible && store.librarySection == .downloads && BrowserCommand.downloads.matches("downloads")
+                      && NSApp.mainMenu?.items.first(where: { $0.title == "Library" })?.submenu?.items.contains(where: { $0.action == #selector(AppDelegate.showDownloads) }) == true,
+                      "Show Downloads is available in the menu and command bar and selects the Downloads collection")
+                let web = WKWebView()
+                store.message = "Before policy change"
+                store.webView(web, didFailProvisionalNavigation: nil, withError: NSError(domain: "WebKitErrorDomain", code: 102))
+                check(store.message == "Before policy change", "Switching from navigation to a download does not show a frame error")
+                let failure = NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost)
+                store.webView(web, didFailProvisionalNavigation: nil, withError: failure)
+                check(store.message == failure.localizedDescription, "Ordinary navigation failures remain visible")
+            }
+        }
+        do {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Alcove.BookmarkImport." + UUID().uuidString)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: directory) }

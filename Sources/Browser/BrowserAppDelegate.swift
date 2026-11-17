@@ -466,7 +466,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         spacesMenu = submenu("Spaces"); spacesMenu?.delegate = self
         if let spacesMenu { rebuildSpacesMenu(spacesMenu) }
         let library = submenu("Library")
-        add(library, "Show Library", #selector(showLibrary), "b", [.command, .shift]); add(library, "Bookmark This Page", #selector(bookmark), "d")
+        add(library, "Show Library", #selector(showLibrary), "b", [.command, .shift])
+        add(library, "Show Downloads", #selector(showDownloads), "l", [.command, .option])
+        add(library, "Bookmark This Page", #selector(bookmark), "d")
         let history = submenu("History")
         add(history, "Back", #selector(back), "["); add(history, "Forward", #selector(forward), "]")
         let window = submenu("Window"); NSApp.windowsMenu = window
@@ -640,11 +642,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         openPrimary(owner)
         return preferredPrimary(of: owner).flatMap { windows[$0] } ?? owner.store
     }
-    @objc func showLibrary() {
+    @objc func showLibrary() { showLibrarySection() }
+    @objc func showDownloads() { showLibrarySection(.downloads) }
+    private func showLibrarySection(_ section: LibrarySection? = nil) {
         let profile = activeQuick.flatMap { $0.store.quickProfileID($0.pageID) }
         let store = primaryForActive()
-        do { if let profile { try store.focusProfileSpace(profile) }; store.libraryVisible = true }
-        catch { store.message = error.localizedDescription }
+        do {
+            if let profile { try store.focusProfileSpace(profile) }
+            if let section { store.librarySection = section }
+            store.libraryVisible = true
+        } catch { store.message = error.localizedDescription }
     }
     @objc func bookmark() {
         guard let store = activeStore, let web = activeWebView else { return }

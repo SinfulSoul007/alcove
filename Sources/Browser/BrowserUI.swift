@@ -439,6 +439,10 @@ struct BrowserUI: View {
             ))
             HStack(spacing: 10) {
                 mini("archivebox", "Library") { store.libraryVisible = true }
+                if store.hasDownloadsForActiveProfile {
+                    mini("square.and.arrow.down", "Show Downloads") { store.showDownloads() }
+                        .accessibilityLabel("Show Downloads")
+                }
                 if updates.offer != nil { mini("arrow.down.circle.fill", "An Alcove update is available") { store.updatesVisible = true }.foregroundStyle(theme.accent) }
                 Spacer(minLength: 0)
                 ScrollViewReader { proxy in

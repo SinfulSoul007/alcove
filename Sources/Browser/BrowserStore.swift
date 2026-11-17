@@ -120,6 +120,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var findText = ""
     @Published var findResult = ""
     @Published var downloads: [DownloadItem] = []
+    @Published var librarySection: LibrarySection = .bookmarks
     @Published var clearingData = false
     @Published var clearingProfileID: UUID?
     @Published var deletingProfileID: UUID?
@@ -170,7 +171,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     let metadataKeyAccess: MetadataKeyAccess
     var metadataDidLoad: (() -> Void)?
     var privateWindowRequested: (() -> Void)?
-    var downloadIDs: [ObjectIdentifier: UUID] = [:]
+    let pendingDownloadProfiles = NSMapTable<WKDownload, NSUUID>.weakToStrongObjects()
     var archiveTimer: Timer?
     var views: [UUID: WKWebView] = [:]
     private let documentIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
@@ -644,22 +645,19 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         guard let owner = profileID(for: webView), !profileUnavailable(owner) else { decisionHandler(.cancel); return }
         decisionHandler(response.canShowMIMEType ? .allow : .download)
     }
-    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
-    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
-    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-        let panel = NSSavePanel(); panel.nameFieldStringValue = URL(fileURLWithPath: suggestedFilename).lastPathComponent
-        panel.begin { [weak self] result in
-            guard let self, result == .OK, let url = panel.url else { completionHandler(nil); return }
-            let item = DownloadItem(name: url.lastPathComponent, status: "Downloading…")
-            self.downloads.insert(item, at: 0); self.downloadIDs[ObjectIdentifier(download)] = item.id
-            completionHandler(url)
-        }
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        trackDownload(download, from: webView)
     }
-    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) { updateDownload(download, status: "Failed: \(error.localizedDescription)"); message = "Download failed: \(error.localizedDescription)" }
-    func downloadDidFinish(_ download: WKDownload) { updateDownload(download, status: "Finished"); message = "Download finished." }
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        trackDownload(download, from: webView)
+    }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        if extensionNavigationProblem?.source.web === webView {return}
-        if (error as NSError).code != NSURLErrorCancelled { message = error.localizedDescription }
+        if extensionNavigationProblem?.source.web === webView { return }
+        let failure = error as NSError
+        if failure.domain == NSURLErrorDomain && failure.code == NSURLErrorCancelled { return }
+        // WebKit interrupts the provisional frame when its policy turns navigation into a download.
+        if failure.domain == "WebKitErrorDomain" && failure.code == 102 { return }
+        message = failure.localizedDescription
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { invalidateDocumentIdentity(for: webView); message = "This page stopped responding. Use Reload to try again." }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {

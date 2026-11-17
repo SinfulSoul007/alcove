@@ -1,5 +1,5 @@
 public enum BrowserCommand: String, CaseIterable, Identifiable {
-    case pin, unpin, favorite, unfavorite, sidebar, split, library, settings, profiles, copyURL, siteSearch, linkRouting, boosts, spaces, newSpace, renameSpace, deleteSpace, restoreSpace, deletedSpaces, newFolder, extensions
+    case pin, unpin, favorite, unfavorite, sidebar, split, library, downloads, settings, profiles, copyURL, siteSearch, linkRouting, boosts, spaces, newSpace, renameSpace, deleteSpace, restoreSpace, deletedSpaces, newFolder, extensions
     case splitLeft, splitRight, splitTop, splitBottom, flipSplit
     case collapsePinned, expandPinned, renameTab, duplicateTab
     case returnToPinnedURL, returnToPinnedURLKeepingPage
@@ -25,6 +25,7 @@ public enum BrowserCommand: String, CaseIterable, Identifiable {
         case .splitBottom: return "Add Bottom Split"
         case .flipSplit: return "Flip Split Orientation"
         case .library: return "Open Library"
+        case .downloads: return "Show Downloads"
         case .settings: return "Open Settings"
         case .profiles: return "Manage Profiles"
         case .spaces: return "Manage Spaces"
