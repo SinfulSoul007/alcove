@@ -59,7 +59,9 @@ struct UpdatesPanel: View {
     }
 
     private func offerView(_ offer: UpdateOffer) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let authentication = controller.authenticatedUpdate
+        let asset = authentication?.asset ?? offer.asset
+        return VStack(alignment: .leading, spacing: 12) {
             Text("Available: \(offer.tag)").font(.headline)
             ScrollView {
                 Text(offer.notes.isEmpty ? "No release notes were provided." : offer.notes)
@@ -67,17 +69,20 @@ struct UpdatesPanel: View {
             }.frame(maxHeight: .infinity)
             Text("Unsigned preview: ad hoc signed, without Apple Developer ID signing or notarization. macOS may block it. Download only if you choose to test this build; keep system security enabled.")
                 .font(.caption).foregroundStyle(.secondary)
-            if let digest = offer.asset.sha256 {
-                DisclosureGroup("Published SHA-256 checksum") {
+            if let digest = asset.sha256 {
+                DisclosureGroup(authentication == nil ? "Published SHA-256 checksum" : "Signed installer SHA-256 checksum") {
                     Text(digest).font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
-                    Text("Compare this with your download’s checksum. A checksum detects changed bytes; it does not establish developer identity.").font(.caption).foregroundStyle(.secondary)
+                    Text(authentication == nil
+                         ? "Compare this with your download’s checksum to check for changed bytes."
+                         : "Alcove verified the release manifest’s signature. Compare this checksum with your downloaded installer before opening it.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             } else {
                 Text("GitHub did not publish a SHA-256 digest for this asset. Check the release’s SHA256SUMS.txt before opening it.").font(.caption).foregroundStyle(.secondary)
             }
             HStack {
-                Link("Download \(offer.asset.filename.hasSuffix(".dmg") ? "DMG" : "ZIP")…", destination: offer.asset.downloadURL)
-                Text(ByteCountFormatter.string(fromByteCount: offer.asset.size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                Link("Download \(asset.filename.hasSuffix(".dmg") ? "DMG" : "ZIP")…", destination: asset.downloadURL)
+                Text(ByteCountFormatter.string(fromByteCount: asset.size, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Link("Release Notes on GitHub", destination: offer.releaseURL)
             }

@@ -135,7 +135,7 @@ public enum UpdateCatalog {
 
     private static func installer(for release: Release, version: SemanticVersion) -> UpdateAsset? {
         for suffix in ["dmg", "zip"] {
-            let filename = "Alcove-\(version.base)-universal-unsigned-preview.\(suffix)"
+            let filename = installerFilename(version: version, suffix: suffix)
             let expected = "https://github.com/SinfulSoul007/alcove/releases/download/\(release.tagName)/\(filename)"
             for asset in release.assets where asset.name == filename && asset.state == "uploaded" && asset.size > 0 {
                 // Exact comparison also rejects credentials, ports, query strings, encoded paths,
@@ -144,9 +144,8 @@ public enum UpdateCatalog {
                 var digest: String?
                 if let published = asset.digest {
                     guard published.hasPrefix("sha256:") else { continue }
-                    let hex = String(published.dropFirst(7))
-                    guard hex.utf8.count == 64, hex.utf8.allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) }) else { continue }
-                    digest = hex.lowercased()
+                    guard let normalized = normalizedSHA256(String(published.dropFirst(7))) else { continue }
+                    digest = normalized
                 }
                 return UpdateAsset(filename: filename, downloadURL: url, size: asset.size, sha256: digest)
             }
@@ -155,6 +154,16 @@ public enum UpdateCatalog {
             if release.assets.contains(where: { $0.name == filename }) { return nil }
         }
         return nil
+    }
+
+    static func installerFilename(version: SemanticVersion, suffix: String) -> String {
+        "Alcove-\(version.base)-universal-unsigned-preview.\(suffix)"
+    }
+
+    static func normalizedSHA256(_ hex: String) -> String? {
+        guard hex.utf8.count == 64,
+              hex.utf8.allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) }) else { return nil }
+        return hex.lowercased()
     }
 
     public enum CatalogError: LocalizedError {

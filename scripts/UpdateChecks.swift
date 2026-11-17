@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import BrowserCore
 
 @main
@@ -31,6 +32,69 @@ struct UpdateChecks {
         let drafts = try release("v9.0.0", draft: true)
         let releases = [drafts, preview, stable, try release("v0.5.0-preview.1", prerelease: true)]
         let stableOffer = try UpdateCatalog.latest(in: releases, installedTag: "v0.3.0-preview.1", channel: .stable)
+        if let offer = stableOffer {
+            let signer = Curve25519.Signing.PrivateKey()
+            let otherSigner = Curve25519.Signing.PrivateKey()
+            let digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            let commit = String(repeating: "a", count: 40)
+            let installer: [String: Any] = ["filename": offer.asset.filename, "size": offer.asset.size, "sha256": digest]
+            let fields: [String: Any] = [
+                "version": 1, "product": "dev.openbrowser.mac", "tag": offer.tag,
+                "commit": commit, "installers": [installer]
+            ]
+            let payload = try JSONSerialization.data(withJSONObject: fields, options: .sortedKeys)
+            let signature = try signer.signature(for: payload)
+            func authenticated(_ data: Data, _ signature: Data) -> AuthenticatedUpdate? {
+                try? UpdateReleaseManifest.authenticate(offer, payload: data, signature: signature, trustedKey: signer.publicKey)
+            }
+            func replacement(_ field: String, _ value: Any) throws -> AuthenticatedUpdate? {
+                var changed = fields
+                changed[field] = value
+                let data = try JSONSerialization.data(withJSONObject: changed, options: .sortedKeys)
+                return authenticated(data, try signer.signature(for: data))
+            }
+            let signed = authenticated(payload, signature)
+            check(signed?.commit == commit && signed?.asset == offer.asset && signed?.asset.verify(Data("abc".utf8)) == true,
+                  "A trusted release signature authenticates its exact installer and commit")
+            let published = try UpdateReleaseManifest.makePayload(tag: offer.tag, commit: commit, installers: [
+                .init(filename: offer.asset.filename, size: offer.asset.size, sha256: digest)
+            ])
+            let withoutDigest = try release(offer.tag, assets: [[
+                "name": offer.asset.filename, "size": offer.asset.size, "state": "uploaded",
+                "browser_download_url": offer.asset.downloadURL.absoluteString
+            ]])
+            if let unsignedCatalogOffer = try UpdateCatalog.latest(in: [withoutDigest], installedTag: "0.3.0", channel: .stable) {
+                let verified = try UpdateReleaseManifest.authenticate(unsignedCatalogOffer, payload: published,
+                    signature: signer.signature(for: published), trustedKey: signer.publicKey)
+                check(verified.asset.sha256 == digest, "The publisher payload supplies a trusted checksum even if GitHub omits its digest")
+            } else { check(false, "The catalog still supports an installer without a GitHub digest") }
+            check(authenticated(payload, try otherSigner.signature(for: payload)) == nil,
+                  "A signature from another signing key cannot authenticate the update")
+            check(authenticated(payload + Data(" ".utf8), signature) == nil,
+                  "The verifier authenticates the original manifest bytes before decoding")
+            check(authenticated(payload, signature.dropLast()) == nil,
+                  "A truncated detached signature is rejected")
+            let oversized = payload + Data(repeating: 32, count: 65_537)
+            check(authenticated(oversized, try signer.signature(for: oversized)) == nil,
+                  "Oversized signed metadata is rejected")
+            check(try replacement("tag", "v0.3.0") == nil && replacement("product", "dev.other.browser") == nil,
+                  "A real signature cannot be transferred between products or release tags")
+            check(try replacement("version", 2) == nil && replacement("commit", "HEAD") == nil,
+                  "Unknown manifest schemas and ambiguous source revisions are rejected")
+            check(try replacement("installers", [installer, installer]) == nil,
+                  "A signed manifest cannot define an installer twice")
+            var mismatched = installer
+            mismatched["size"] = Int64(offer.asset.size + 1)
+            check(try replacement("installers", [mismatched]) == nil,
+                  "The signed installer length must match the catalog")
+            mismatched = installer
+            mismatched["sha256"] = String(repeating: "0", count: 64)
+            check(try replacement("installers", [mismatched]) == nil,
+                  "A signed installer cannot disagree with a published catalog checksum")
+            mismatched["filename"] = "../" + offer.asset.filename
+            check(try replacement("installers", [installer, mismatched]) == nil,
+                  "All signed installer names must belong to the current release")
+        }
         check(stableOffer?.tag == "v0.4.0", "Stable channel excludes preview releases and drafts")
         let previewOffer = try UpdateCatalog.latest(in: releases.reversed(), installedTag: "v0.3.0-preview.1", channel: .preview)
         check(previewOffer?.tag == "v0.5.0-preview.2", "Preview channel chooses greatest semantic version regardless of API order")
@@ -76,6 +140,55 @@ struct UpdateChecks {
         await controller.check(channel: .stable)
         check(controller.offer?.tag == "v0.4.0" && controller.error == nil && !controller.checking && controller.lastChecked != nil, "Successful update request publishes a decoded offer and completion time")
         check(requests.first?.url == api && requests.first?.value(forHTTPHeaderField: "Authorization") == nil, "Update check uses public GitHub API without an account token")
+
+        let signingKey = Curve25519.Signing.PrivateKey()
+        let signedCommit = String(repeating: "b", count: 40)
+        let signedDigest = String(repeating: "e", count: 64)
+        let signedPayload = try UpdateReleaseManifest.makePayload(tag: "v0.4.0", commit: signedCommit, installers: [
+            .init(filename: "Alcove-0.4.0-universal-unsigned-preview.zip", size: 1234, sha256: signedDigest)
+        ])
+        let signedBytes = try signingKey.signature(for: signedPayload)
+        let root = URL(string: "https://github.com/SinfulSoul007/alcove/releases/download/v0.4.0/")!
+        let manifestURL = root.appendingPathComponent(UpdateReleaseManifest.payloadFilename)
+        let signatureURL = root.appendingPathComponent(UpdateReleaseManifest.signatureFilename)
+        let cdn = URL(string: "https://release-assets.githubusercontent.com/github-production-release-asset/fixture")!
+        var signedRequests: [URLRequest] = []
+        var signatureStatus = 200
+        var returnedSignature = signedBytes
+        var returnedOrigin = cdn
+        let signedController = UpdateController(installedTag: "0.3.0", trustedSigningKey: signingKey.publicKey, transport: { request in
+            signedRequests.append(request)
+            switch request.url {
+            case api:
+                return (fixture, HTTPURLResponse(url: api, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            case manifestURL:
+                return (signedPayload, HTTPURLResponse(url: cdn, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            case signatureURL:
+                return (returnedSignature, HTTPURLResponse(url: returnedOrigin, statusCode: signatureStatus, httpVersion: nil, headerFields: nil)!)
+            default:
+                throw URLError(.unsupportedURL)
+            }
+        })
+        await signedController.check(channel: .stable)
+        check(signedController.offer?.tag == "v0.4.0" && signedController.authenticatedUpdate?.commit == signedCommit
+              && signedController.authenticatedUpdate?.asset.sha256 == signedDigest && signedController.error == nil,
+              "A trusted-key build offers only the exact authenticated installer")
+        check(signedRequests.count == 3 && Set(signedRequests.compactMap(\.url)) == Set([api, manifestURL, signatureURL])
+              && signedRequests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == nil },
+              "Manifest and signature are fetched only from the selected release without credentials")
+        returnedSignature[0] ^= 1
+        await signedController.check(channel: .stable)
+        check(signedController.offer == nil && signedController.authenticatedUpdate == nil && signedController.error != nil,
+              "A failed signature clears the previous authenticated offer and never falls back")
+        returnedSignature = signedBytes
+        signatureStatus = 404
+        await signedController.check(channel: .stable)
+        check(signedController.offer == nil && signedController.error != nil, "A missing signature prevents the offer")
+        signatureStatus = 200
+        returnedOrigin = URL(string: "https://release-assets.githubusercontent.com.example.org/github-production-release-asset/fixture")!
+        await signedController.check(channel: .stable)
+        check(signedController.offer == nil && signedController.error != nil, "Valid signature bytes cannot authorize an unexpected response origin")
+
         let rateLimited = UpdateController(installedTag: "0.3.0", transport: { _ in (Data(), HTTPURLResponse(url: api, statusCode: 403, httpVersion: nil, headerFields: nil)!) })
         await rateLimited.check(channel: .preview)
         check(rateLimited.error != nil && rateLimited.offer == nil && !rateLimited.checking, "GitHub errors leave no stale or unverified download offer")
