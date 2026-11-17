@@ -6,12 +6,14 @@ enum SidebarFolderLinkFormat {
 }
 
 struct SidebarSavedLayout {
+    let spaceID: UUID
     let tree: SidebarFolderTree
     let topLevelTabs: [BrowserCore.Tab]
     let tabsByFolder: [String: [BrowserCore.Tab]]
     let folders: [SidebarFolderTree.Row]
 
     init(space: Space, collapsed: Set<String>? = nil) {
+        spaceID = space.id
         tree = SidebarFolderTree(space: space)
         let pins = space.tabs.filter { $0.pinned && $0.favorite != true }
         let grouped = Dictionary(grouping: pins, by: \.folder)
@@ -72,7 +74,7 @@ struct SidebarSavedTabs: View {
     let collapsed: Bool
 
     var body: some View {
-        let spaceID = store.space.id
+        let spaceID = layout.spaceID
         VStack(spacing: 0) {
             HStack {
                 Button { store.requestPinnedShelfCollapsed(!collapsed, in: spaceID) } label: {
@@ -134,7 +136,7 @@ struct SidebarSavedTabs: View {
     private func indentation(_ depth: Int) -> Double { Double(min(depth, 4)) * 11 }
 
     private func savedRow(_ tab: BrowserCore.Tab) -> some View {
-        SidebarTabRow(tab: tab, store: store, theme: theme, appearance: appearance, motion: motion)
+        SidebarTabRow(tab: tab, spaceID: layout.spaceID, store: store, theme: theme, appearance: appearance, motion: motion)
     }
 
     private func folderHeader(_ folder: SidebarFolderTree.Row, in spaceID: UUID) -> some View {
