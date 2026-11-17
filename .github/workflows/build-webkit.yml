@@ -1,8 +1,8 @@
-name: Build upstream WebKit for extension research
+name: Build WebKit request-blocking probe with faster compiler settings
 
 on:
   push:
-    branches: [research/webkit-before-send]
+    branches: [research/webkit-fast-probe]
 
 permissions:
   contents: read
@@ -10,7 +10,7 @@ permissions:
 jobs:
   macos:
     runs-on: macos-26
-    timeout-minutes: 350
+    timeout-minutes: 360
     env:
       WEBKIT_REVISION: 26695efdefc6076049ec50713a2c4e54b90b4d47
     steps:
@@ -55,13 +55,26 @@ jobs:
           git apply --check "$patch"
           git apply "$patch"
           git diff --check
-          # Reduce compiler work for this API research build.
-          Tools/Scripts/set-webkit-configuration --release --force-optimization-level=O1 --lto-mode=none
-          Tools/Scripts/build-webkit --release --lto-mode=none --only='Everything up to WebKit' 2>&1 |
-            awk 'NR <= 80 || NR % 4000 == 0 || / (fatal error|error|warning):|BUILD (SUCCEEDED|FAILED)|No space left/ {
-              print substr($0, 1, 700)
-              fflush()
-            }'
+          # The pinned wrapper drops the stored numeric zero for --force-optimization-level=O0.
+          # Send the build settings directly to Xcode and keep the Cocoa extension configuration.
+          log="$RUNNER_TEMP/alcove-webkit-build.log"
+          settings=(GCC_OPTIMIZATION_LEVEL=0 SWIFT_OPTIMIZATION_LEVEL=-Onone
+                    GCC_GENERATE_DEBUGGING_SYMBOLS=NO COMPILER_INDEX_STORE_ENABLE=NO)
+          Tools/Scripts/build-webkit --release --lto-mode=none --only='Everything up to WebKit' \
+            "${settings[@]}" -showBuildTimingSummary 2>&1 |
+            awk '/Build Timing Summary/ { timing = 1 }
+              NR <= 80 || NR % 4000 == 0 || (timing && timing++ <= 40) || / (fatal error|error|warning):|BUILD (SUCCEEDED|FAILED)|No space left/ {
+                print substr($0, 1, 700)
+                fflush()
+              }' | tee "$log"
+          for entry in "${settings[@]}"; do
+            setting="${entry%%=*}"
+            value="${entry#*=}"
+            if ! grep -Eq "^[[:space:]]+${setting}[[:space:]]*=[[:space:]]*${value}[[:space:]]*$" "$log"; then
+              printf 'Xcode did not report %s=%s\n' "$setting" "$value" >&2
+              exit 1
+            fi
+          done
           framework=WebKitBuild/Release/WebKit.framework/WebKit
           test -s "$framework"
           file "$framework"
