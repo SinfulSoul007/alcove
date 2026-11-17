@@ -536,6 +536,13 @@ private struct PinnedAddressMenu: View {
     let tabID: UUID
 
     var body: some View {
+        if store.canEditPinnedAddress(tabID) {
+            Menu("Pinned URL") {
+                Button("Edit Pinned URL…") { store.requestPinnedAddressEdit(tabID) }
+                Button("Use Current URL as Pinned URL") { store.requestUseCurrentAddressAsPinned(tabID) }
+                    .disabled(!store.canUseCurrentAddressAsPinned(tabID))
+            }
+        }
         if store.canReturnToPinnedAddress(tabID) {
             Button("Back to Pinned URL") { store.requestReturnToPinnedAddress(tabID) }
             Button("Back to Pinned URL and Keep Current Page") {

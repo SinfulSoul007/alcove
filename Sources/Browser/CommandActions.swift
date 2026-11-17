@@ -22,6 +22,8 @@ extension BrowserStore {
             case .duplicateTab: return focusedID.map(canDuplicateSidebarTab) ?? false
             case .returnToPinnedURL: return focusedID.map(canReturnToPinnedAddress) ?? false
             case .returnToPinnedURLKeepingPage: return focusedID.map(canKeepPageWhileReturningToPinnedAddress) ?? false
+            case .editPinnedURL: return focusedID.map(canEditPinnedAddress) ?? false
+            case .useCurrentPinnedURL: return focusedID.map(canUseCurrentAddressAsPinned) ?? false
             case .restoreSpace: return canUndoSpaceDeletion
             case .splitLeft, .splitRight, .splitTop, .splitBottom:
                 return !isShuttingDown && !awaitingInitialMetadata &&
@@ -60,6 +62,8 @@ extension BrowserStore {
         case .duplicateTab: if let id = focusedID { duplicateSidebarTab(id) }
         case .returnToPinnedURL: if let id = focusedID { requestReturnToPinnedAddress(id) }
         case .returnToPinnedURLKeepingPage: if let id = focusedID { requestReturnToPinnedAddress(id, keepingCurrentPage: true) }
+        case .editPinnedURL: if let id = focusedID { requestPinnedAddressEdit(id) }
+        case .useCurrentPinnedURL: if let id = focusedID { requestUseCurrentAddressAsPinned(id) }
         case .renameSpace: requestRenameSpace(space.id)
         case .deleteSpace: requestDeleteSpace(space.id)
         case .restoreSpace: undoSpaceDeletion()

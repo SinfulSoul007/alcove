@@ -3,6 +3,7 @@ public enum BrowserCommand: String, CaseIterable, Identifiable {
     case splitLeft, splitRight, splitTop, splitBottom, flipSplit
     case collapsePinned, expandPinned, renameTab, duplicateTab
     case returnToPinnedURL, returnToPinnedURLKeepingPage
+    case editPinnedURL, useCurrentPinnedURL
     public func matches(_ query: String) -> Bool {
         let searchable = self == .linkRouting ? title + " Link Preferences Air Traffic Control" : self == .boosts ? title + " Create Boost This Site" : title
         let words = searchable.lowercased().split(whereSeparator: { $0.isWhitespace })
@@ -35,6 +36,8 @@ public enum BrowserCommand: String, CaseIterable, Identifiable {
         case .duplicateTab: return "Duplicate Tab"
         case .returnToPinnedURL: return "Back to Pinned URL"
         case .returnToPinnedURLKeepingPage: return "Back to Pinned URL and Keep Current Page"
+        case .editPinnedURL: return "Edit Pinned URL"
+        case .useCurrentPinnedURL: return "Use Current URL as Pinned URL"
         case .renameSpace: return "Rename Space"
         case .deleteSpace: return "Delete Space"
         case .restoreSpace: return "Restore Last Deleted Space"

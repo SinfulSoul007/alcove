@@ -188,6 +188,33 @@ enum LinkRoutingWebsiteError: Error { case missingFixture, timedOut, invalidPage
         try await ready(returnedHome, home)
         check(store.favorites.contains(where: { $0.id == pin && $0.url == home && $0.homeURL == home && $0.sidebarTitle == "Saved starting point" }),
               "Reset synchronizes the Favorite and saved-tab address")
+        returnedHome.load(URLRequest(url: URL(string: drift)!)); try await ready(returnedHome, drift)
+        _ = try await returnedHome.evaluateJavaScript("document.getElementById('draft').value='editing the pin'")
+        let pendingEdit = try store.beginPinnedAddressEdit(pin)
+        let editedHome = origin + "pinned-edited-address"
+        check(rejects { try store.setPinnedAddress(pendingEdit, to: "javascript:void(0)") }
+              && store.tab(pin)?.homeURL == home,
+              "Pinned URL editing rejects non-website addresses without changing the pin")
+        try store.setPinnedAddress(pendingEdit, to: editedHome)
+        let stillDraft = try await returnedHome.evaluateJavaScript("document.getElementById('draft').value") as? String
+        check(store.views[pin] === returnedHome && returnedHome.url?.absoluteString == drift
+              && stillDraft == "editing the pin" && store.tab(pin)?.sidebarTitle == "Saved starting point",
+              "Editing a pinned address keeps the live page, draft and custom title")
+        check(store.favorites.contains(where: { $0.id == pin && $0.homeURL == editedHome }),
+              "Editing a favorite updates both saved definitions")
+        check(rejects { try store.setPinnedAddress(pendingEdit, to: home) } && store.tab(pin)?.homeURL == editedHome,
+              "A stale pinned address editor cannot overwrite a newer edit")
+        try store.useCurrentAddressAsPinned(pin)
+        check(store.tab(pin)?.homeURL == drift && store.views[pin] === returnedHome && !store.canReturnToPinnedAddress(pin),
+              "Use Current saves the committed page address without a reload")
+        let persistedPin = try MetadataStore(url: store.sessionURL, key: key).load(BrowserDocument.self)
+        check(persistedPin?.library(for: a).favoriteTabs?.first(where: { $0.id == pin })?.homeURL == drift,
+              "The new pinned address round-trips through the encrypted profile library")
+        let suspended = store.newTab(url: URL(string: home)!)
+        store.togglePin(suspended)
+        try store.setPinnedAddress(store.beginPinnedAddressEdit(suspended), to: editedHome)
+        check(store.views[suspended] == nil && store.tab(suspended)?.url == editedHome,
+              "Editing an unloaded pin changes its next opening address without loading it")
         let legacyPin = store.newTab(url: URL(string: drift)!)
         store.update(legacyPin) { $0.pinned = true }
         check(!store.canReturnToPinnedAddress(legacyPin), "Older pins without a saved address have no reset action")
