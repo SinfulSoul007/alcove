@@ -442,6 +442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(file, "New Window", #selector(newBrowserWindow), "n"); add(file, "Open Main Window", #selector(openMain), "")
         add(file, "New Quick Browse", #selector(newQuick), "n", [.command, .option])
         add(file, "New Tab", #selector(newTab), "t"); add(file, "New Private Window", #selector(privateWindow), "n", [.command, .shift])
+        add(file, "Duplicate Tab", #selector(duplicateTab), "")
         add(file, "New Space…", #selector(newSpace), "n", [.command, .control]); add(file, "Open Location…", #selector(location), "l")
         add(file, "New Folder…", #selector(newFolder), "")
         add(file, "Import Preview Session…", #selector(importSession), "")
@@ -510,6 +511,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         switch menuItem.action {
         case #selector(newQuick), #selector(newSpace), #selector(newFolder): return store.canModifyLocalMetadata && !store.profileDataOperationInProgress && available
         case #selector(pin), #selector(reopen): return store.canModifyLocalMetadata && available
+        case #selector(duplicateTab): return quick == nil && (store.focusedID.map(store.canDuplicateSidebarTab) ?? false)
         case #selector(bookmark): return !store.isPrivate && store.savingEnabled && available && activeWebView?.url != nil
         case #selector(importSession): return !store.isPrivate && store.savingEnabled && available
         case #selector(welcome): return !store.isPrivate && store.savingEnabled
@@ -582,6 +584,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func importSession() { guard activeQuick == nil, let store = activeStore, !store.isPrivate, store.savingEnabled, !store.profileUnavailable(store.activeProfileID) else { return }; store.importLegacySession() }
     @objc func newSpace() { if activeQuick == nil { activeStore?.requestNewSpace() } }
     @objc func newFolder() {if activeQuick == nil {activeStore?.requestNewTabFolder()}}
+    @objc func duplicateTab() {
+        guard activeQuick == nil, let store = activeStore, let id = store.focusedID else { return }
+        store.duplicateSidebarTab(id)
+    }
     @objc func location() {
         guard ExtensionManagerWindowController.active == nil else {return}
         if let quick = activeQuick { quick.requestLocation(); return }

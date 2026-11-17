@@ -376,6 +376,7 @@ struct BrowserUI: View {
                                     if tab.customTitle != nil {
                                         Button("Restore Tab Name") { store.restoreSidebarTabName(tab.id) }.disabled(!store.canModifyLocalMetadata)
                                     }
+                                    Button("Duplicate Tab") { store.duplicateSidebarTab(tab.id) }.disabled(!store.canDuplicateSidebarTab(tab.id))
                                     TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id)
                                     Button("Remove from Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata)
                                     Button("Remove from Sidebar") { store.removeFromSidebar(tab.id) }.disabled(!store.canModifyLocalMetadata)
@@ -563,6 +564,7 @@ struct SidebarTabRow: View {
             if tab.customTitle != nil {
                 Button("Restore Tab Name") { store.restoreSidebarTabName(tab.id) }.disabled(!store.canModifyLocalMetadata)
             }
+            Button("Duplicate Tab") { store.duplicateSidebarTab(tab.id) }.disabled(!store.canDuplicateSidebarTab(tab.id))
             Button(tab.pinned ? "Unpin Tab" : "Pin Tab") { store.togglePin(tab.id) }.disabled(!store.canModifyLocalMetadata)
             Button("Add to Favorites") { store.toggleFavorite(tab.id) }.disabled(!store.canModifyLocalMetadata)
             TabFolderDestinations(store: store, tabID: tab.id, spaceID: store.space.id)

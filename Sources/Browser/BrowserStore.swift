@@ -535,7 +535,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func tab(_ id: UUID) -> BrowserCore.Tab? {
         session.spaces.flatMap(\.tabs).first { $0.id == id } ?? profileLibraries.compactMap { $0.library.favoriteTabs?.first(where: { $0.id == id }) }.first ?? quickPage(id)?.tab
     }
-    func view(for id: UUID, configuration: WKWebViewConfiguration? = nil) -> WKWebView {
+    func view(for id: UUID, configuration: WKWebViewConfiguration? = nil,
+              restoringInteractionState interactionState: Any? = nil, retaining sourceID: UUID? = nil) -> WKWebView {
         if let existing = views[id] { return existing }
         let config = configuration ?? WKWebViewConfiguration()
         guard let profile = profileID(for: id) else {
@@ -550,11 +551,13 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         let web = SplitDropWebView(frame: .zero, configuration: config)
         registerView(web, for: id, profile: profile)
         if !profileUnavailable(profile), let value = tab(id)?.url, !value.isEmpty, let url = URL(string: value) {
-            if configuration == nil,url.scheme?.lowercased() == "webkit-extension" {restoreSavedExtensionTab(id,url:url,placeholder:web,profileID:profile)}
+            if let interactionState { web.interactionState = interactionState }
+            else if configuration == nil,url.scheme?.lowercased() == "webkit-extension" {restoreSavedExtensionTab(id,url:url,placeholder:web,profileID:profile)}
             else {web.load(URLRequest(url:url))}
         }
         // Keep active and split panes alive; suspended tabs retain their last URL, but lose in-memory page state.
-        while preferences.suspendTabs && views.count > 6, let victim = accessOrder.first(where: { $0 != id && !visiblePaneIDs.contains($0) && quickPage($0) == nil && views[$0]?.isLoading == false }) {
+        while preferences.suspendTabs && views.count > 6,
+              let victim = accessOrder.first(where: { $0 != id && $0 != sourceID && !visiblePaneIDs.contains($0) && quickPage($0) == nil && views[$0]?.isLoading == false }) {
             discardView(victim)
         }
         return web

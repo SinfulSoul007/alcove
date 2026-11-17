@@ -111,6 +111,44 @@ enum LinkRoutingWebsiteError: Error { case missingFixture, timedOut, invalidPage
         let privatePeek = privateStore.primaryPeekView!; privatePeek.frame = webA.frame; try await ready(privatePeek,origin+"private-peek")
         let privatePromoted = try privateStore.promotePeek(in:.primary), privateCookie = try await cookie(privatePeek)
         check(privateStore.views[privatePromoted] === privatePeek && privateCookie.isEmpty && privateReads == 0 && !FileManager.default.fileExists(atPath:privateStore.sessionURL.path), "Private Peek ignores normal rules, stays ephemeral and sends no named-store cookies")
+        store.selectSpace(spaceA)
+        let first = origin + "duplicate-first", current = origin + "duplicate-current", next = origin + "duplicate-next"
+        let original = store.newTab(url:URL(string:first)!)
+        let originalWeb = store.view(for:original); originalWeb.frame = webA.frame
+        try await ready(originalWeb,first)
+        originalWeb.load(URLRequest(url:URL(string:current)!)); try await ready(originalWeb,current)
+        originalWeb.load(URLRequest(url:URL(string:next)!)); try await ready(originalWeb,next)
+        originalWeb.goBack(); try await ready(originalWeb,current)
+        _ = try await originalWeb.evaluateJavaScript("document.getElementById('draft').value='original draft'")
+        let following = store.newTab(url:URL(string:origin+"duplicate-following")!)
+        store.accessOrder.removeAll { $0 == original }
+        store.accessOrder.insert(original, at: 0)
+        store.preferences.suspendTabs = true
+        guard let duplicate = store.duplicateSidebarTab(original) else { throw LinkRoutingWebsiteError.failed }
+        store.preferences.suspendTabs = false
+        let duplicateWeb = store.view(for:duplicate); duplicateWeb.frame = originalWeb.frame
+        try await ready(duplicateWeb,current)
+        let duplicateCookie = try await cookie(duplicateWeb)
+        check(duplicate != original && duplicateWeb !== originalWeb && store.views[original] === originalWeb, "Duplicate opens a separate WebKit view without replacing its source")
+        check(store.activeProfileID == a && duplicateCookie.contains("account=ALPHA") && !duplicateCookie.contains("BETA"), "Duplicate keeps the source profile website data")
+        check(store.focusedID == duplicate && Array(store.space.tabs.map(\.id).suffix(3)) == [original, duplicate, following], "Duplicate appears next to its Today source and becomes active")
+        check(duplicateWeb.backForwardList.backList.map { $0.url.absoluteString } == [first] && duplicateWeb.backForwardList.forwardList.map { $0.url.absoluteString } == [next], "Duplicate keeps the current, back and forward navigation entries")
+        duplicateWeb.goBack(); try await ready(duplicateWeb,first)
+        duplicateWeb.goForward(); try await ready(duplicateWeb,current)
+        let retainedDraft = try await originalWeb.evaluateJavaScript("document.getElementById('draft').value") as? String
+        check(originalWeb.url?.absoluteString == current && retainedDraft == "original draft", "Copy navigation leaves the original page and unsaved form intact")
+        store.toggleFavorite(original)
+        guard let favoriteCopy = store.duplicateSidebarTab(original), let copiedFavorite = store.tab(favoriteCopy) else { throw LinkRoutingWebsiteError.failed }
+        check(!copiedFavorite.pinned && copiedFavorite.favorite != true && copiedFavorite.homeURL == nil && store.favorites.contains(where: { $0.id == original }), "Duplicating a Favorite opens a Today tab and keeps the saved Favorite")
+        let saved = store.newTab(url:URL(string:origin+"duplicate-saved")!)
+        guard let restoredCopy = store.duplicateSidebarTab(saved) else { throw LinkRoutingWebsiteError.failed }
+        try await ready(store.view(for:restoredCopy),origin+"duplicate-saved")
+        check(store.views[saved] == nil, "A saved-only tab opens its current address without mounting the source")
+        guard let privateCopy = privateStore.duplicateSidebarTab(privateID) else { throw LinkRoutingWebsiteError.failed }
+        let privateCopyWeb = privateStore.view(for:privateCopy)
+        try await ready(privateCopyWeb,origin+"private")
+        let copyCookie = try await cookie(privateCopyWeb)
+        check(copyCookie.isEmpty && !privateCopyWeb.configuration.websiteDataStore.isPersistent && privateReads == 0, "Private duplication stays inside its ephemeral website store")
         let aliases:[(String,String?)] = [("127.1","127.0.0.1"),("0x7f.1","127.0.0.1"),("0177.0.0.1","127.0.0.1"),("2130706433","127.0.0.1"),("bücher.example","xn--bcher-kva.example"),("[0:0:0:0:0:0:0:1]","[::1]"),("[::ffff:127.0.0.1]","[::ffff:7f00:1]"),("[:::]",nil),("09",nil)]
         let beforeAliases = try await count()
         for (input,expected) in aliases {
