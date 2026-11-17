@@ -156,9 +156,19 @@ enum LinkRoutingWebsiteError: Error { case missingFixture, timedOut, invalidPage
         store.togglePin(pin)
         let folder = try store.createTabFolder(name: "Pinned test folder", in: spaceA, adding: pin)
         try store.renameSidebarTab(store.beginSidebarRename(pin), to: "Saved starting point")
-        check(!store.canReturnToPinnedAddress(pin), "The pin does not show a reset action at its saved address")
+        check(!store.pinnedAddressActions(for: pin).canReturn, "The pin does not show a reset action at its saved address")
+        guard let homeTab = store.tab(pin) else { throw LinkRoutingWebsiteError.failed }
+        let atHome = store.pinnedAddressActions(forLocalTab: homeTab, in: spaceA)
+        check(atHome == store.pinnedAddressActions(for: pin) && atHome.canEdit && !atHome.canReturn
+              && !atHome.canKeepCurrent && !atHome.canUseCurrent, "Local pin actions agree with command actions at the saved address")
         pinWeb.load(URLRequest(url: URL(string: drift)!)); try await ready(pinWeb, drift)
-        check(store.canReturnToPinnedAddress(pin), "The reset action becomes available after navigating away from a pin")
+        check(store.pinnedAddressActions(for: pin).canReturn, "The reset action becomes available after navigating away from a pin")
+        guard let awayTab = store.tab(pin) else { throw LinkRoutingWebsiteError.failed }
+        let away = store.pinnedAddressActions(forLocalTab: awayTab, in: spaceA)
+        check(away == store.pinnedAddressActions(for: pin) && away.canReturn && away.canKeepCurrent
+              && away.canEdit && away.canUseCurrent, "Local pin actions reflect the committed WebKit address after navigation")
+        check(store.pinnedAddressActions(forLocalTab: awayTab, in: spaceB) == .unavailable,
+              "A row from a different Space cannot display pinned address actions")
         check(store.availableCommands.contains(.returnToPinnedURL) && store.availableCommands.contains(.returnToPinnedURLKeepingPage),
               "Both pinned reset actions are available in keyboard command search")
         let originalCount = store.space.tabs.count
@@ -169,6 +179,9 @@ enum LinkRoutingWebsiteError: Error { case missingFixture, timedOut, invalidPage
         pinWeb.goBack(); try await ready(pinWeb, drift)
         _ = try await pinWeb.evaluateJavaScript("document.getElementById('draft').value='keep this draft'")
         store.savingEnabled = false
+        let readOnly = store.pinnedAddressActions(forLocalTab: awayTab, in: spaceA)
+        check(readOnly == store.pinnedAddressActions(for: pin) && readOnly.canReturn && !readOnly.canKeepCurrent
+              && !readOnly.canEdit && !readOnly.canUseCurrent, "Read-only pins can return home without offering metadata edits")
         check(rejects { _ = try store.returnToPinnedAddress(pin, keepingCurrentPage: true) }
               && store.views[pin] === pinWeb && store.space.tabs.count == originalCount,
               "A failed pinned reset cannot detach the live page or create a phantom tab")
@@ -184,6 +197,8 @@ enum LinkRoutingWebsiteError: Error { case missingFixture, timedOut, invalidPage
               "The saved pin stays selected in its folder while its old page becomes a same-profile Today tab")
         store.toggleFavorite(pin)
         returnedHome.load(URLRequest(url: URL(string: drift)!)); try await ready(returnedHome, drift)
+        let favoriteAway = store.pinnedAddressActions(for: pin)
+        check(favoriteAway == away, "A Favorite still offers all pinned address actions when it is away from home")
         _ = try store.returnToPinnedAddress(pin)
         try await ready(returnedHome, home)
         check(store.favorites.contains(where: { $0.id == pin && $0.url == home && $0.homeURL == home && $0.sidebarTitle == "Saved starting point" }),
@@ -205,8 +220,9 @@ enum LinkRoutingWebsiteError: Error { case missingFixture, timedOut, invalidPage
         check(rejects { try store.setPinnedAddress(pendingEdit, to: home) } && store.tab(pin)?.homeURL == editedHome,
               "A stale pinned address editor cannot overwrite a newer edit")
         try store.useCurrentAddressAsPinned(pin)
-        check(store.tab(pin)?.homeURL == drift && store.views[pin] === returnedHome && !store.canReturnToPinnedAddress(pin),
+        check(store.tab(pin)?.homeURL == drift && store.views[pin] === returnedHome && !store.pinnedAddressActions(for: pin).canReturn,
               "Use Current saves the committed page address without a reload")
+        check(store.pinnedAddressActions(for: pin) == atHome, "Saving the current address refreshes Favorite actions without reloading")
         let persistedPin = try MetadataStore(url: store.sessionURL, key: key).load(BrowserDocument.self)
         check(persistedPin?.library(for: a).favoriteTabs?.first(where: { $0.id == pin })?.homeURL == drift,
               "The new pinned address round-trips through the encrypted profile library")
@@ -217,13 +233,13 @@ enum LinkRoutingWebsiteError: Error { case missingFixture, timedOut, invalidPage
               "Editing an unloaded pin changes its next opening address without loading it")
         let legacyPin = store.newTab(url: URL(string: drift)!)
         store.update(legacyPin) { $0.pinned = true }
-        check(!store.canReturnToPinnedAddress(legacyPin), "Older pins without a saved address have no reset action")
+        check(!store.pinnedAddressActions(for: legacyPin).canReturn, "Older pins without a saved address have no reset action")
         store.update(legacyPin) { $0.homeURL = home }
         guard let savedCurrent = try store.returnToPinnedAddress(legacyPin, keepingCurrentPage: true) else { throw LinkRoutingWebsiteError.failed }
         try await ready(store.view(for: legacyPin), home)
         check(store.tab(savedCurrent)?.url == drift && store.views[savedCurrent] == nil, "A suspended pin keeps its saved current address without loading the old page")
         store.selectSpace(spaceB)
-        check(!store.canReturnToPinnedAddress(legacyPin), "A pin from another profile cannot be reset through the current sidebar")
+        check(!store.pinnedAddressActions(for: legacyPin).canReturn, "A pin from another profile cannot be reset through the current sidebar")
         privateStore.select(privatePromoted)
         privateStore.togglePin(privatePromoted)
         privatePeek.load(URLRequest(url: URL(string: origin + "private-pinned-drift")!))

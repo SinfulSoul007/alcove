@@ -134,6 +134,61 @@ enum SiteSearchWebsiteError: Error { case missingFixture, timedOut, invalidPage,
         var malformedRejected = false
         do { try store.saveSiteSearch(SiteSearch(name: "Bad escape", keyword: "bad", template: origin + "search?q=%2%s")) } catch { malformedRejected = true }
         check(try await count() == beforeUnsafe && malformedRejected && store.siteSearchCatalog.preferredMatch("bad") == nil, "Malformed site settings cannot become a real navigation action")
+
+        let discoveryID = store.newTab(url: URL(string: origin + "discover"))
+        let discoveryWeb = store.view(for: discoveryID)
+        let window = NSWindow(contentRect: webA.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView?.addSubview(discoveryWeb)
+        discoveryWeb.frame = webA.frame
+        defer { discoveryWeb.removeFromSuperview(); window.close() }
+        try await ready(discoveryWeb, origin + "discover")
+        store.presentedPanel = .siteSearch
+        guard let page = store.siteSearchDiscoveryPage, let advertisement = await store.discoverSiteSearch(on: page) else {
+            throw SiteSearchWebsiteError.invalidPage
+        }
+        let beforeDiscoveryFetch = try await count("/opensearch.xml")
+        check(advertisement.descriptorURL.absoluteString == origin + "opensearch.xml" && beforeDiscoveryFetch == 0,
+              "OpenSearch discovery reads the visible document without fetching and ignores its cross-site base and advert")
+        let previousCatalog = store.siteSearchCatalog.entries
+        let draft = try await store.loadSiteSearchDraft(advertisement)
+        let afterDiscoveryFetch = try await count("/opensearch.xml")
+        check(draft.name == "Owned search" && draft.template == origin + "search?q=%s&kind=advertised"
+              && store.siteSearchCatalog.entries == previousCatalog && afterDiscoveryFetch == 1,
+              "OpenSearch fetch reads one same-origin description without cookies or referrer and leaves the shortcut as a draft")
+        check(try await count("/never") == 0, "OpenSearch discovery sends no suggestion request")
+
+        let foreign = """
+        <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+          <ShortName>Foreign search</ShortName>
+          <Url type="text/html" template="https://example.invalid/search?q={searchTerms}" />
+        </OpenSearchDescription>
+        """
+        check((try? OpenSearchDescription.siteSearch(from: Data(foreign.utf8), at: advertisement.descriptorURL, keyword: "foreign")) == nil,
+              "OpenSearch does not turn a document into a shortcut for another origin")
+        _ = try await discoveryWeb.evaluateJavaScript("document.getElementById('owned-search').setAttribute('href','/osd-redirect'); true")
+        guard let redirect = await store.discoverSiteSearch(on: page) else { throw SiteSearchWebsiteError.invalidPage }
+        let rejectedRedirect = (try? await store.loadSiteSearchDraft(redirect)) == nil
+        let redirectRequests = try await count("/osd-redirect")
+        let forwardedRequests = try await count("/opensearch.xml")
+        check(rejectedRedirect && redirectRequests == 1 && forwardedRequests == 1,
+              "OpenSearch description retrieval refuses redirects")
+
+        discoveryWeb.load(URLRequest(url: URL(string: origin + "discover?replacement=1")!))
+        try await ready(discoveryWeb, origin + "discover?replacement=1")
+        let rejectedStale = (try? await store.loadSiteSearchDraft(advertisement)) == nil
+        let descriptorRequests = try await count("/opensearch.xml")
+        check(rejectedStale && descriptorRequests == 1,
+              "OpenSearch discovery cannot fetch for a replaced page")
+        try store.saveSiteSearch(draft)
+        store.presentedPanel = nil
+        store.showCommand(); store.command = draft.keyword
+        check(store.activatePreferredCommandSiteSearch(), "A saved OpenSearch shortcut activates with Tab in the command bar")
+        store.command = "discovered query + café"; store.submitCommandInput()
+        try await ready(discoveryWeb, origin + "search?q=discovered%20query%20%2B%20caf%C3%A9&kind=advertised")
+        let discoveredResult = try await record(discoveryWeb)
+        check(discoveredResult.query["q"] == ["discovered query + café"] && discoveredResult.cookie.contains("account=ALPHA"),
+              "The saved OpenSearch shortcut searches with the page’s own account after submission")
         return failures
     }
     @MainActor static func main() async throws {

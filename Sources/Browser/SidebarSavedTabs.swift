@@ -1,31 +1,87 @@
 import SwiftUI
 import BrowserCore
 
+enum SidebarFolderLinkFormat {
+    case plainText, markdown
+}
+
+/// The tab lists depend on the active Space. The sidebar can reuse them at any size.
+final class SidebarSpaceLists {
+    let space: Space
+    let today: [BrowserCore.Tab]
+    let saved: SidebarSavedLayout
+
+    init(space: Space) {
+        self.space = space
+        today = space.tabs.filter { !$0.pinned && !$0.url.isEmpty }
+        saved = SidebarSavedLayout(space: space)
+    }
+}
+
 struct SidebarSavedLayout {
+    let spaceID: UUID
     let tree: SidebarFolderTree
     let topLevelTabs: [BrowserCore.Tab]
     let tabsByFolder: [String: [BrowserCore.Tab]]
     let folders: [SidebarFolderTree.Row]
+    private let visibleTabCount: Int
+    private let emptyFolderCount: Int
 
     init(space: Space, collapsed: Set<String>? = nil) {
-        tree = SidebarFolderTree(space: space)
-        let pins = space.tabs.filter { $0.pinned && $0.favorite != true }
-        let grouped = Dictionary(grouping: pins, by: \.folder)
-        topLevelTabs = grouped[nil] ?? []
-        tabsByFolder = Dictionary(uniqueKeysWithValues: grouped.compactMap { name, tabs in
+        let tree = SidebarFolderTree(space: space)
+        let folders = tree.visibleFolders(collapsed: collapsed ?? Set(space.collapsedFolders ?? []))
+        let grouped = Dictionary(grouping: space.tabs.filter { $0.pinned && $0.favorite != true }, by: \.folder)
+        let byFolder = Dictionary(uniqueKeysWithValues: grouped.compactMap { name, tabs in
             name.map { ($0, tabs) }
         })
-        folders = tree.visibleFolders(collapsed: collapsed ?? Set(space.collapsedFolders ?? []))
+        spaceID = space.id
+        self.tree = tree
+        self.folders = folders
+        topLevelTabs = grouped[nil] ?? []
+        tabsByFolder = byFolder
+
+        var visibleTabs = topLevelTabs.count
+        var emptyFolders = 0
+        for folder in folders where folder.expanded {
+            let tabCount = byFolder[folder.name]?.count ?? 0
+            visibleTabs += tabCount
+            if tabCount == 0 && tree.children(of: folder.name).isEmpty { emptyFolders += 1 }
+        }
+        visibleTabCount = visibleTabs
+        emptyFolderCount = emptyFolders
     }
 
     func height(rowHeight: Double) -> Double {
-        let tabs = folders.reduce(topLevelTabs.count) { count, folder in
-            count + (folder.expanded ? tabsByFolder[folder.name, default: []].count : 0)
+        Double(visibleTabCount) * (rowHeight + 3) + Double(folders.count) * 35 + Double(emptyFolderCount) * 24 + 8
+    }
+
+    func copiedLinks(in folder: String, format: SidebarFolderLinkFormat) -> String? {
+        guard tree.names.contains(folder) else { return nil }
+        var links: [String] = []
+        var pending = [folder]
+        while let name = pending.popLast() {
+            for tab in tabsByFolder[name, default: []] {
+                if let link = Self.formattedLink(for: tab, format: format) { links.append(link) }
+            }
+            pending.append(contentsOf: tree.children(of: name).reversed())
         }
-        let empty = folders.filter {
-            $0.expanded && tabsByFolder[$0.name, default: []].isEmpty && tree.children(of: $0.name).isEmpty
-        }.count
-        return Double(tabs) * (rowHeight + 3) + Double(folders.count) * 35 + Double(empty) * 24 + 8
+        return links.isEmpty ? nil : links.joined(separator: "\n")
+    }
+
+    private static func formattedLink(for tab: BrowserCore.Tab, format: SidebarFolderLinkFormat) -> String? {
+        guard let url = URL(string: tab.homeURL ?? tab.url), let host = QuickBrowseRouting.host(for: url),
+              url.user == nil, url.password == nil else { return nil }
+        if case .plainText = format { return url.absoluteString }
+
+        let title = tab.sidebarTitle.split { character in
+            character.isWhitespace || character.unicodeScalars.contains { $0.value < 32 || $0.value == 127 }
+        }.joined(separator: " ")
+        let punctuation: Set<Character> = ["\\", "`", "*", "_", "[", "]", "<", ">", "&"]
+        let label = (title.isEmpty ? host : title).reduce(into: "") {
+            if punctuation.contains($1) { $0.append("\\") }
+            $0.append($1)
+        }
+        return "[\(label)](<\(url.absoluteString)>)"
     }
 }
 
@@ -39,7 +95,7 @@ struct SidebarSavedTabs: View {
     let collapsed: Bool
 
     var body: some View {
-        let spaceID = store.space.id
+        let spaceID = layout.spaceID
         VStack(spacing: 0) {
             HStack {
                 Button { store.requestPinnedShelfCollapsed(!collapsed, in: spaceID) } label: {
@@ -101,7 +157,7 @@ struct SidebarSavedTabs: View {
     private func indentation(_ depth: Int) -> Double { Double(min(depth, 4)) * 11 }
 
     private func savedRow(_ tab: BrowserCore.Tab) -> some View {
-        SidebarTabRow(tab: tab, store: store, theme: theme, appearance: appearance, motion: motion)
+        SidebarTabRow(tab: tab, spaceID: layout.spaceID, store: store, theme: theme, appearance: appearance, motion: motion)
     }
 
     private func folderHeader(_ folder: SidebarFolderTree.Row, in spaceID: UUID) -> some View {
@@ -142,6 +198,9 @@ struct SidebarSavedTabs: View {
                     Button(layout.tree.path(to: target).joined(separator: " › ")) { move(name, under: target, in: spaceID) }
                 }
             }.disabled(layout.tree.parents[name] == nil && !layout.tree.names.contains { layout.tree.canMove(name, under: $0) })
+            Divider()
+            Button("Copy All Links") { store.copyPinnedFolderLinks(name, in: spaceID, format: .plainText) }
+            Button("Copy All Links as Markdown") { store.copyPinnedFolderLinks(name, in: spaceID, format: .markdown) }
             Divider()
             Button("Remove Folder, Keep Contents") {
                 do { try store.removeTabFolder(name, in: spaceID) }

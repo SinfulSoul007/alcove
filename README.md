@@ -15,7 +15,7 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 - Compact, resizable Arc-style sidebar with Favorites tiles, pinned tabs/folders, Today and named Spaces.
 - Twelve per-Space themes, custom gradients and accent colors, color intensity, grain, Space icons, and a live appearance preview.
 - Tab density, text size, corner rounding, responsive Favorite columns, icon/close-button visibility and reduced-motion support.
-- A bottom Space dock and delayed collapsed-sidebar edge reveal; sidebar drag width saves on release.
+- A bottom Space dock and delayed collapsed-sidebar edge reveal. Alcove reuses tab and folder lists during a resize and saves sidebar width on release.
 - Themed Spaces overview, rename/icons/reordering, and encrypted Recently Deleted/Undo recovery.
 - Responsive startup while Keychain approval waits, with private browsing available immediately.
 - Original skippable opening animation before first-launch setup, plus a replayable welcome tour. Existing sessions and private windows skip setup.
@@ -23,6 +23,7 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 - GitHub update checks with stable and preview channels, optional daily checks, and a local checksum verifier for downloaded installers.
 - Favorites, Pinned and Today scroll separately, keeping saved pages visible while you browse daily tabs. Bookmarking also pins the original page without reloading it.
 - Create folders from the Pinned header, File menu or command bar. Create a subfolder from a folder’s menu or drag a folder into its new parent. Moving or removing a folder keeps its contents pinned.
+- Use **Copy All Links** or **Copy All Links as Markdown** from a folder’s menu to include its saved links and subfolders.
 - Click the Pinned heading or use **Collapse Pinned** and **Expand Pinned** in the command bar. Each Space remembers its setting and accepts tab drops on the collapsed heading.
 - Use a pin or Favorite’s **Pinned URL** menu to change its saved address. Click the return arrow to go back, or Command-click to keep the current live page in Today.
 - Double-click a Today or Pinned tab name to edit it. Press Return to save or Escape to cancel. Use **Rename Tab** from a tab or Favorite menu, and **Restore Tab Name** to clear the custom name.
@@ -37,10 +38,10 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 - Quick Browse compact external-link windows, exact-host profile memory, same-link resurfacing and live page handoff into a Space. Forms, scroll and navigation history survive a same-profile handoff.
 - Named profiles with separate website logins/storage, Favorites, bookmarks, history, closed tabs and archives. Multiple Spaces can share a profile.
 - Private windows with temporary WebKit storage and no saved session/history.
-- Bookmarks, searchable history, closed-tab restore and an archive library.
+- Bookmarks, searchable history, closed-tab restore and an archive library. Import a browser’s bookmarks HTML from the File menu to bring its folders into a new Space in your chosen profile.
 - Find in page, zoom, back/forward gestures, reload/stop.
 - Native printing, PDF export and WebArchive saving, with Quit choices for unfinished output.
-- Download destination picker and a window-local status list.
+- Open Downloads from the sidebar or with Option-Command-L. See progress, cancel active transfers, open finished files or show them in Finder. The list is scoped to the window and profile.
 - File uploads and camera/microphone permission prompts.
 - Encrypted local sessions, bookmarks, history and preferences using CryptoKit AES-GCM and a macOS Keychain key.
 - App Sandbox and Hardened Runtime, with release Web Inspector access disabled.
@@ -72,7 +73,7 @@ Exported PDF/WebArchive files, printer output and print-system artifacts are out
 
 The 0.8 preview includes configured site shortcuts. Type `yt`, `wiki` or `gh` in the command bar or Quick Browse address field, press Tab, then type a query and press Return. Empty Backspace restores the shortcut; the pill's close button leaves site mode and keeps your query. Normal Return behavior stays unchanged until you select a site.
 
-Use **Alcove → Site Search Settings…**, Settings, or the command list to add, edit, disable or remove shortcuts. A search URL uses one `%s` for the query, with complete URL escapes for other literal percent signs. Path templates reject queries that would become dot-only path segments. Matching stays local and sends nothing before submission. Normal profiles share encrypted shortcut settings; searches use the current page's actual profile. Private windows start with presets and keep changes temporary. Editing or removing a selected provider requires selecting it again before submission. Automatic site discovery is still pending.
+Use **Alcove → Site Search Settings…**, Settings, or the command list to add, edit, disable or remove shortcuts. If the current page advertises a search through OpenSearch, **Use This Site’s Search** reads its description and fills an editable draft. Save it to use its shortcut in the command bar. A search URL uses one `%s` for the query, with complete URL escapes for other literal percent signs. Path templates reject queries that would become dot-only path segments. Matching stays local and sends nothing before submission. Normal profiles share encrypted shortcut settings; searches use the current page's actual profile. Private windows start with presets and keep changes temporary. Editing or removing a selected provider requires selecting it again before submission.
 
 ## Link routing
 

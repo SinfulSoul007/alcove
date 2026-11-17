@@ -42,6 +42,219 @@ import BrowserCore
             delegate.buildMenu()
             check(NSApp.mainMenu?.items.first(where:{$0.title == "File"})?.submenu?.items.contains(where:{$0.action == #selector(AppDelegate.newFolder)}) == true && store.availableCommands.contains(.newFolder) && BrowserCommand.newFolder.matches("new fol"),"Folder creation is discoverable in the native File menu and command search")
         }
+        do {
+            let files = FileManager.default
+            let directory = files.temporaryDirectory.appendingPathComponent("Alcove.Downloads." + UUID().uuidString)
+            try files.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? files.removeItem(at: directory) }
+            let destination = directory.appendingPathComponent("download.txt")
+            let original = directory.appendingPathComponent("original.txt")
+            let staged = try DownloadStaging(filename: destination.lastPathComponent)
+            defer { staged.discard() }
+            try Data("original".utf8).write(to: staged.fileURL)
+            check(!files.fileExists(atPath: destination.path), "A partial download stays outside the user-selected destination")
+            let exported = try staged.publish(to: destination)
+            check(DownloadFileIdentity(destination) == exported && !files.fileExists(atPath: staged.fileURL.path),
+                  "A complete staged download publishes to the chosen file")
+            let competing = try DownloadStaging(filename: destination.lastPathComponent)
+            defer { competing.discard() }
+            try Data("competing download".utf8).write(to: competing.fileURL)
+            let conflict = try? competing.publish(to: destination)
+            let savedData = try Data(contentsOf: destination)
+            check(conflict == nil && savedData == Data("original".utf8), "A finished download cannot overwrite a file at its destination")
+            competing.discard()
+            check(!files.fileExists(atPath: competing.fileURL.deletingLastPathComponent().path), "Discarding a download removes only its staging directory")
+            guard let identity = DownloadFileIdentity(destination) else { throw CocoaError(.fileReadUnknown) }
+            inWindow { store, _, delegate in
+                let completed = DownloadItem(destination: destination, profileID: store.activeProfileID, state: .finished(identity))
+                let otherProfile = DownloadItem(destination: destination, profileID: UUID(), state: .finished(identity))
+                store.downloads = [otherProfile, completed]
+                check(store.downloadsForActiveProfile.map(\.id) == [completed.id] && store.completedDownloadURL(otherProfile.id) == nil,
+                      "The Downloads list and file actions respect the originating profile")
+                check(store.completedDownloadURL(completed.id) == destination,
+                      "A finished download can be opened at its saved destination")
+                do {
+                    try files.moveItem(at: destination, to: original)
+                    try files.createSymbolicLink(at: destination, withDestinationURL: original)
+                    check(store.completedDownloadURL(completed.id) == nil, "A symlink cannot replace the completed file for Open")
+                    try files.removeItem(at: destination)
+                    try Data("replacement".utf8).write(to: destination)
+                    check(store.completedDownloadURL(completed.id) == nil, "A replacement at the old path is not opened")
+                    store.removeDownloadRecord(otherProfile.id)
+                    store.removeDownloadRecord(completed.id)
+                    check(store.downloads.map(\.id) == [otherProfile.id] && files.fileExists(atPath: destination.path) && files.fileExists(atPath: original.path),
+                          "Removing a visible download record keeps both files and leaves other profiles alone")
+                } catch { check(false, "Owned download file operations: \(error.localizedDescription)") }
+                delegate.buildMenu()
+                store.runCommand(.downloads)
+                check(store.libraryVisible && store.librarySection == .downloads && BrowserCommand.downloads.matches("downloads")
+                      && NSApp.mainMenu?.items.first(where: { $0.title == "Library" })?.submenu?.items.contains(where: { $0.action == #selector(AppDelegate.showDownloads) }) == true,
+                      "Show Downloads is available in the menu and command bar and selects the Downloads collection")
+                let web = WKWebView()
+                store.message = "Before policy change"
+                store.webView(web, didFailProvisionalNavigation: nil, withError: NSError(domain: "WebKitErrorDomain", code: 102))
+                check(store.message == "Before policy change", "Switching from navigation to a download does not show a frame error")
+                let failure = NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost)
+                store.webView(web, didFailProvisionalNavigation: nil, withError: failure)
+                check(store.message == failure.localizedDescription, "Ordinary navigation failures remain visible")
+            }
+        }
+        do {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Alcove.BookmarkImport." + UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let source = directory.appendingPathComponent("bookmarks.html")
+            let html = """
+            <!DOCTYPE NETSCAPE-Bookmark-file-1>
+            <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+            <TITLE>Bookmarks</TITLE><H1>Bookmarks</H1><DL><p>
+                <DT><H3>Research</H3><DL><p>
+                    <DT><A HREF="https://example.invalid/guide?q=one&amp;n=2" ADD_DATE="42">Guide &mdash; &amp; &#128640;</A>
+                    <DT><H3>Sources</H3><DL><p>
+                        <DT><A HREF="https://example.invalid/paper">Paper</A>
+                    </DL><p>
+                </DL><p>
+                <DT><H3>research</H3><DL><p>
+                    <DT><A HREF="https://example.invalid/guide?q=one&amp;n=2">Same link, another folder</A>
+                </DL><p>
+                <DT><H3>Empty</H3><DL><p></DL><p>
+                <DT><A HREF="https://example.invalid/top">Top</A>
+                <DT><A HREF="javascript:void(0)">Bookmarklet</A>
+                <DT><A HREF="file:///tmp/demo.txt">File</A>
+                <DT><A HREF="https://user:pass@example.invalid/secret">Credentials</A>
+            </DL><p><a href="https://example.invalid/outside">Outside the export</a>
+            """
+            try Data(html.utf8).write(to: source)
+            let imported = try BookmarkHTMLImport.read(from: source)
+            check(imported.bookmarks.map(\.title) == ["Guide — & 🚀", "Paper", "Same link, another folder", "Top"]
+                  && imported.bookmarks.first?.url == "https://example.invalid/guide?q=one&n=2"
+                  && imported.bookmarks.first?.addedAt.timeIntervalSince1970 == 42 && imported.skippedLinkCount == 3,
+                  "Bookmark HTML decoding keeps source order, title entities, query parameters and dates while skipping unsafe addresses")
+            check(imported.folders.map(\.name) == ["Research", "Sources", "research (2)", "Empty"]
+                  && imported.folders[1].parent == "Research" && imported.bookmarks.map(\.folder) == ["Research", "Sources", "research (2)", nil],
+                  "Bookmark HTML decoding preserves nested and empty folders with distinct names")
+
+            let key = SymmetricKey(size: .bits256)
+            let normal = BrowserStore(dataRoot: directory.appendingPathComponent("profile"), keyProvider: { _ in key })
+            defer { normal.shutdown() }
+            let firstURL = "https://example.invalid/guide?q=one&n=2"
+            normal.library.bookmark(title: "Keep my saved title", url: firstURL)
+            let otherProfile = try normal.createProfile(name: "Separate profile")
+            let activeSpace = normal.space.id
+            let added = try normal.importBookmarkHTML(imported, into: BrowserProfile.defaultID)
+            let saved = try MetadataStore(url: normal.sessionURL, key: key).load(BrowserDocument.self)
+            let importedSpace = saved?.session.spaces.first(where: { $0.id == added })
+            check(normal.space.id == activeSpace && normal.activeProfileID == otherProfile && normal.views.isEmpty
+                  && importedSpace?.effectiveProfileID == BrowserProfile.defaultID && importedSpace?.tabs.first?.url == ""
+                  && importedSpace?.tabs.filter(\.pinned).map(\.homeURL) == imported.bookmarks.map { Optional($0.url) },
+                  "Bookmark HTML import adds pins to a separate Space without opening any imported address or changing the active profile")
+            check(importedSpace?.folderParents == ["Sources": "Research"] && importedSpace?.folderNames == ["Research", "Sources", "research (2)", "Empty"]
+                  && saved?.library(for: BrowserProfile.defaultID).bookmarks.map(\.title) == ["Keep my saved title", "Paper", "Top"]
+                  && saved?.library(for: otherProfile).bookmarks.isEmpty == true,
+                  "Bookmark HTML import commits folders and deduplicated records to the selected encrypted profile")
+
+            let window = OwnedSidebarWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            let delegate = AppDelegate()
+            application.fixtureWindow = window
+            delegate.windows[window] = normal
+            defer { application.fixtureWindow = nil; delegate.windows = [:] }
+            delegate.buildMenu()
+            let action = NSApp.mainMenu?.items.first(where: { $0.title == "File" })?.submenu?.items.first(where: { $0.action == #selector(AppDelegate.importBookmarks) })
+            check(action.map(delegate.validateMenuItem) == true, "A normal window offers Import Bookmarks HTML in the native File menu")
+            normal.savingEnabled = false
+            let before = try Data(contentsOf: normal.sessionURL)
+            let rejected = (try? normal.importBookmarkHTML(imported, into: otherProfile)) == nil
+            let after = try Data(contentsOf: normal.sessionURL)
+            check(action.map(delegate.validateMenuItem) == false && rejected && before == after,
+                  "A read-only profile rejects bookmark import without modifying its document")
+            let privateStore = BrowserStore(isPrivate: true)
+            defer { privateStore.shutdown() }
+            delegate.windows[window] = privateStore
+            check(action.map(delegate.validateMenuItem) == false && (try? privateStore.importBookmarkHTML(imported, into: BrowserProfile.defaultID)) == nil,
+                  "Private windows keep the bookmark import command disabled")
+        } catch { check(false, "Bookmark HTML import fixture: \(error)") }
+        inWindow { store, _, _ in
+            do {
+                let originalSpace = store.space.id
+                let pin = store.newTab(url: URL(string: "about:blank#pin"))
+                store.togglePin(pin)
+                let folder = try store.createTabFolder(name: "Research", in: originalSpace, adding: pin)
+                let today = store.newTab(url: URL(string: "about:blank#today"))
+                let initial = store.sidebarLists
+                store.windowSidebarWidth = 326
+                check(store.sidebarLists === initial && initial.today.map(\.id) == [today] && initial.saved.tabsByFolder[folder]?.map(\.id) == [pin],
+                      "Width changes reuse the prepared Today list and pinned folders")
+
+                try store.renameSidebarTab(store.beginSidebarRename(pin), to: "Reference")
+                let renamed = store.sidebarLists
+                check(renamed !== initial && renamed.saved.tabsByFolder[folder]?.first?.sidebarTitle == "Reference",
+                      "Renaming a pin refreshes the prepared folder rows")
+                try store.setTabFolderExpanded(folder, expanded: false, in: originalSpace)
+                let collapsed = store.sidebarLists
+                check(collapsed.saved.folders.first?.expanded == false && collapsed.saved.height(rowHeight: 30) < renamed.saved.height(rowHeight: 30),
+                      "Collapsing a folder updates the prepared shelf height")
+
+                let destination = try store.createSpace(name: "Another Space")
+                store.selectSpace(destination)
+                check(store.sidebarLists.space.id == destination && store.sidebarLists.today.isEmpty && store.sidebarLists.saved.folders.isEmpty,
+                      "Switching Spaces replaces the prepared sidebar with its own contents")
+                store.selectSpace(originalSpace)
+                check(store.sidebarLists.saved.folders.first?.expanded == false && store.sidebarLists.today.map(\.id) == [today],
+                      "Returning to a Space restores its prepared list and collapsed state")
+            } catch { check(false, "Preparing sidebar lists through tab and folder changes: \(error)") }
+        }
+        inWindow { store, _, _ in
+            let place = store.spaceIndex
+            let spaceID = store.space.id
+            store.session.spaces[place].folders = ["Research", "Sources", "Notes", "Unrelated", "Empty"]
+            store.session.spaces[place].folderParents = ["Sources": "Research", "Notes": "Sources"]
+            store.session.spaces[place].collapsedFolders = ["Research", "Sources"]
+            func pin(_ title: String, _ address: String, in folder: String, home: String? = nil,
+                     custom: String? = nil) -> BrowserCore.Tab {
+                var pin = BrowserCore.Tab(title: title, url: address, pinned: true)
+                pin.folder = folder
+                pin.homeURL = home
+                pin.customTitle = custom
+                return pin
+            }
+            let saved = "https://example.invalid/collection?q=(test)"
+            let nested = "https://example.invalid/paper"
+            let deeper = "https://example.invalid/notes"
+            var favorite = pin("Favorite", "https://example.invalid/favorite", in: "Research")
+            favorite.favorite = true
+            var today = pin("Today", "https://example.invalid/today", in: "Research")
+            today.pinned = false
+            store.session.spaces[place].tabs += [
+                pin("Nested", nested, in: "Sources", custom: "Paper [draft]"),
+                pin("Drifted", "https://example.invalid/current", in: "Research", home: saved, custom: "Search & notes"),
+                pin("Deeper\nnotes", deeper, in: "Notes"),
+                pin("Unrelated", "https://example.invalid/unrelated", in: "Unrelated"),
+                pin("Credentials", "https://user:pass@example.invalid/login", in: "Research"),
+                pin("Without a web URL", "about:blank", in: "Research"),
+                favorite, today,
+            ]
+            let scratch = NSPasteboard(name: NSPasteboard.Name("AlcoveCopyFolderLinks.\(UUID())"))
+            check(store.copyPinnedFolderLinks("Research", in: spaceID, format: .plainText, to: scratch)
+                  && scratch.string(forType: .string) == [saved, nested, deeper].joined(separator: "\n"),
+                  "Copy All Links uses the saved addresses in sidebar order, including collapsed descendants")
+            let markdown = [
+                "[Search \\& notes](<\(saved)>)",
+                "[Paper \\[draft\\]](<\(nested)>)",
+                "[Deeper notes](<\(deeper)>)",
+            ].joined(separator: "\n")
+            check(store.copyPinnedFolderLinks("Research", in: spaceID, format: .markdown, to: scratch)
+                  && scratch.string(forType: .string) == markdown,
+                  "Markdown copy preserves custom pin titles and escapes literal label punctuation")
+            check(!store.copyPinnedFolderLinks("Empty", in: spaceID, format: .plainText, to: scratch)
+                  && !store.copyPinnedFolderLinks("Missing", in: spaceID, format: .plainText, to: scratch)
+                  && !store.copyPinnedFolderLinks("Research", in: UUID(), format: .plainText, to: scratch)
+                  && scratch.string(forType: .string) == markdown,
+                  "Empty, missing and stale folder requests leave the existing clipboard intact")
+            check(store.copyPinnedFolderLinks("Sources", in: spaceID, format: .plainText, to: scratch)
+                  && scratch.string(forType: .string) == [nested, deeper].joined(separator: "\n"),
+                  "Copying a subfolder never includes its parent’s pins")
+        }
         inWindow {store,window,delegate in
             let a = store.newTab(url: URL(string: "https://example.invalid/first-recent")!)
             let b = store.newTab(url: URL(string: "https://example.invalid/second-recent")!)

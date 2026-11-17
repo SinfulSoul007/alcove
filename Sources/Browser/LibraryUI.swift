@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import BrowserCore
 
@@ -15,16 +16,24 @@ struct FindBar: View {
     }
 }
 
+enum LibrarySection: String, CaseIterable {
+    case bookmarks = "Bookmarks"
+    case history = "History"
+    case archive = "Archive"
+    case downloads = "Downloads"
+}
+
 struct LibraryPanel: View {
     @ObservedObject var store: BrowserStore
     var availableHeight: Double = 480
-    @State private var section = "Bookmarks"
     @State private var search = ""
     @State private var archiveFilter = "All"
     @State private var archiveError: String?
+    @State private var downloadError: String?
+    private var section: LibrarySection { store.librarySection }
     private var archivedTabs: [BrowserCore.Tab] { store.library.archive.filter { archiveFilter == "All" || $0.archiveSource == "quickBrowse" } }
     var records: [PageRecord] {
-        (section == "Bookmarks" ? store.library.bookmarks : store.library.history).filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.url.localizedCaseInsensitiveContains(search) }
+        (section == .bookmarks ? store.library.bookmarks : store.library.history).filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.url.localizedCaseInsensitiveContains(search) }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -33,34 +42,88 @@ struct LibraryPanel: View {
             if !store.isPrivate && !store.savingEnabled {
                 HStack { Text("Unlock local data to change saved records.").font(.caption).foregroundStyle(.secondary); Spacer(); Button("Unlock…") { store.unlockLocalData() }.disabled(store.unlocking) }
             }
-            Picker("Collection", selection: $section) { ForEach(["Bookmarks", "History", "Archive", "Downloads"], id: \.self) { Text($0) } }.pickerStyle(.segmented)
-            if section == "Bookmarks" || section == "History" {
-                TextField("Search \(section.lowercased())", text: $search).textFieldStyle(.roundedBorder)
-                if records.isEmpty { empty("No \(section.lowercased()) yet.") }
+            Picker("Collection", selection: $store.librarySection) {
+                ForEach(LibrarySection.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }.pickerStyle(.segmented)
+            if section == .bookmarks || section == .history {
+                TextField("Search \(section.rawValue.lowercased())", text: $search).textFieldStyle(.roundedBorder)
+                if records.isEmpty { empty("No \(section.rawValue.lowercased()) yet.") }
                 else {
                     List(records) { record in
                         HStack {
                             Button { _ = store.newTab(url: URL(string: record.url)); store.libraryVisible = false } label: {
                                 VStack(alignment: .leading, spacing: 4) { Text(record.title).lineLimit(1); Text(record.url).font(.caption).foregroundStyle(.secondary).lineLimit(1) }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                             }.buttonStyle(.plain).disabled(!store.isPrivate && store.profileUnavailable(store.activeProfileID))
-                            if section == "Bookmarks" {
+                            if section == .bookmarks {
                                 Button { store.library.bookmarks.removeAll { $0.id == record.id }; store.save() } label: { Image(systemName: "trash") }.buttonStyle(.borderless).help("Remove bookmark").disabled(!store.canModifyLocalMetadata || (!store.isPrivate && store.profileUnavailable(store.activeProfileID)))
                             } else { Text(record.date, style: .date).font(.caption).foregroundStyle(.secondary) }
                         }.padding(.vertical, 5)
                     }
                 }
-                if section == "History" { Button("Clear History and Archive") { store.clearHistory() }.disabled(!store.canModifyLocalMetadata || (!store.isPrivate && store.profileUnavailable(store.activeProfileID))) }
-            } else if section == "Archive" {
+                if section == .history { Button("Clear History and Archive") { store.clearHistory() }.disabled(!store.canModifyLocalMetadata || (!store.isPrivate && store.profileUnavailable(store.activeProfileID))) }
+            } else if section == .archive {
                 Picker("Archive source", selection: $archiveFilter) { Text("All Tabs").tag("All"); Text("Quick Browse").tag("Quick Browse") }.pickerStyle(.segmented)
                 if let archiveError { Text(archiveError).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
                 if archivedTabs.isEmpty { empty(archiveFilter == "All" ? "Archived tabs will appear here." : "Archived Quick Browse pages will appear here.") }
                 else { List(archivedTabs) { tab in archiveRow(tab, profileID: store.activeProfileID) } }
             } else {
-                if store.downloads.isEmpty { empty("Downloads from this window will appear here.") }
-                else { List(store.downloads) { item in VStack(alignment: .leading, spacing: 4) { Text(item.name); Text(item.status).font(.caption).foregroundStyle(.secondary) } } }
-                Text("Downloaded files stay on disk, including files saved from private windows. This list is kept only for this window’s lifetime.").font(.caption).foregroundStyle(.secondary)
+                if let downloadError { Text(downloadError).font(.caption).foregroundStyle(.red) }
+                let downloads = store.downloadsForActiveProfile
+                if downloads.isEmpty { empty("Downloads from this window will appear here.") }
+                else { List(downloads) { downloadRow($0) } }
+                Text("Files you save stay on disk, including from private windows. This list is kept for this window’s lifetime.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }.padding(24).frame(width: 640, height: min(520, max(360, availableHeight)))
+            .onChange(of: store.activeProfileID) { _, _ in downloadError = nil }
+    }
+    private func downloadRow(_ item: DownloadItem) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                switch item.state {
+                case .downloading(let transfer):
+                    ProgressView(transfer.download.progress).progressViewStyle(.linear).controlSize(.small)
+                        .accessibilityLabel("Download progress for \(item.name)")
+                case .canceling: downloadStatus(item.name, "Canceling…")
+                case .saving: downloadStatus(item.name, "Saving…")
+                case .finished: downloadStatus(item.name, "Finished")
+                case .failed(let reason): downloadStatus(item.name, "Failed: \(reason)")
+                case .canceled: downloadStatus(item.name, "Canceled")
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            if case .downloading = item.state {
+                Button("Cancel") { store.cancelDownload(item.id) }
+                    .accessibilityLabel("Cancel download of \(item.name)")
+            }
+            if case .finished = item.state {
+                Button("Open") { useDownloadedFile(item, reveal: false) }
+                    .accessibilityLabel("Open \(item.name)")
+                Button("Show in Finder") { useDownloadedFile(item, reveal: true) }
+                    .accessibilityLabel("Show \(item.name) in Finder")
+            }
+            if !item.state.isActive {
+                Button {
+                    downloadError = nil
+                    store.removeDownloadRecord(item.id)
+                } label: { Image(systemName: "xmark.circle") }
+                    .help("Remove from list").accessibilityLabel("Remove \(item.name) from the list")
+            }
+        }.buttonStyle(.borderless).padding(.vertical, 5)
+    }
+    private func downloadStatus(_ name: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(name).lineLimit(1).truncationMode(.middle)
+            Text(label).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+    private func useDownloadedFile(_ item: DownloadItem, reveal: Bool) {
+        guard let url = store.completedDownloadURL(item.id) else {
+            downloadError = "The original downloaded file is no longer at its saved location."
+            return
+        }
+        downloadError = nil
+        if reveal { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        else if !NSWorkspace.shared.open(url) { downloadError = "macOS could not open this file." }
     }
     private func archiveRow(_ tab: BrowserCore.Tab, profileID: UUID) -> some View {
         HStack(spacing: 10) {

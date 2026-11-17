@@ -6,7 +6,8 @@ extension BrowserStore {
         canModifyLocalMetadata && !isShuttingDown && !profileDataOperationInProgress && (isPrivate || !profileUnavailable(activeProfileID))
     }
     var availableCommands: [BrowserCommand] {
-        BrowserCommand.allCases.filter { command in
+        let addresses = focusedID.map { pinnedAddressActions(for: $0) } ?? .unavailable
+        return BrowserCommand.allCases.filter { command in
             switch command {
             case .pin: return canChangeTabMetadata && selectedTab?.url.isEmpty == false
             case .unpin: return canChangeTabMetadata && selectedTab?.pinned == true
@@ -20,10 +21,10 @@ extension BrowserStore {
             case .expandPinned: return space.pinnedShelfCollapsed == true && canManageSpace(space.id)
             case .renameTab: return focusedID.map { (try? beginSidebarRename($0)) != nil } ?? false
             case .duplicateTab: return focusedID.map(canDuplicateSidebarTab) ?? false
-            case .returnToPinnedURL: return focusedID.map(canReturnToPinnedAddress) ?? false
-            case .returnToPinnedURLKeepingPage: return focusedID.map(canKeepPageWhileReturningToPinnedAddress) ?? false
-            case .editPinnedURL: return focusedID.map(canEditPinnedAddress) ?? false
-            case .useCurrentPinnedURL: return focusedID.map(canUseCurrentAddressAsPinned) ?? false
+            case .returnToPinnedURL: return addresses.canReturn
+            case .returnToPinnedURLKeepingPage: return addresses.canKeepCurrent
+            case .editPinnedURL: return addresses.canEdit
+            case .useCurrentPinnedURL: return addresses.canUseCurrent
             case .restoreSpace: return canUndoSpaceDeletion
             case .splitLeft, .splitRight, .splitTop, .splitBottom:
                 return !isShuttingDown && !awaitingInitialMetadata &&
@@ -49,6 +50,7 @@ extension BrowserStore {
         case .splitBottom: addSplit(at: .bottom)
         case .flipSplit: flipSplit()
         case .library: libraryVisible = true
+        case .downloads: showDownloads()
         case .settings: settingsVisible = true
         case .extensions: requestExtensionManager()
         case .profiles: if !isPrivate { profilesVisible = true }

@@ -28,8 +28,11 @@ struct SiteSearchPill: View {
     @State private var keyword = ""
     @State private var template = ""
     @State private var error: String?
+    @State private var advertisement: AdvertisedSiteSearch?
+    @State private var discoveryTask: Task<Void, Never>?
     private var scale: Double { store.appearance.textScale }
     var body: some View {
+        let page = store.siteSearchDiscoveryPage
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("Site Search").font(.system(size: 21 * scale, weight: .bold))
@@ -40,7 +43,7 @@ struct SiteSearchPill: View {
                 .font(.system(size: 12 * scale)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("Type a shortcut, press Tab, then enter your query. Nothing is sent until you search.")
+                    Text("Type a shortcut, press Tab, then enter your query.")
                         .font(.system(size: 12 * scale)).foregroundStyle(.secondary)
                     if !store.canEditSiteSearches {
                         Text(store.savingEnabled || store.isPrivate ? "Finish the pending profile operation before editing shortcuts." : "Saving is paused. Unlock local data to edit search shortcuts.")
@@ -83,6 +86,11 @@ struct SiteSearchPill: View {
                                 Menu("Use a Preset") {
                                     ForEach(SiteSearch.defaults) { site in Button(site.name) { var copy = site; copy.id = UUID(); edit(copy, isNew: true) } }
                                 }
+                                if let advertisement, advertisement.page == page {
+                                    Button(discoveryTask == nil ? "Use This Site’s Search" : "Reading Site Search…") {
+                                        loadDiscovery(advertisement)
+                                    }.disabled(discoveryTask != nil)
+                                }
                                 Spacer()
                                 if editingID != nil { Button("Cancel Edit", action: clearEditor) }
                                 Button("Save Shortcut", action: save).buttonStyle(.borderedProminent)
@@ -94,6 +102,32 @@ struct SiteSearchPill: View {
             }
         }.padding(24).frame(width: 600, height: min(620, max(360, availableHeight)))
             .tint(store.activeTheme.accent).preferredColorScheme(store.activeTheme.isDark ? .dark : .light)
+            .task(id: page) {
+                advertisement = nil
+                discoveryTask?.cancel()
+                guard let page else { return }
+                let result = await store.discoverSiteSearch(on: page)
+                if !Task.isCancelled { advertisement = result }
+            }
+            .onDisappear { discoveryTask?.cancel() }
+    }
+    private func loadDiscovery(_ advertisement: AdvertisedSiteSearch) {
+        guard discoveryTask == nil else { return }
+        let originalDraft = (editingID, name, keyword, template)
+        error = nil
+        discoveryTask = Task { @MainActor in
+            defer { discoveryTask = nil }
+            do {
+                let site = try await store.loadSiteSearchDraft(advertisement)
+                try Task.checkCancellation()
+                guard originalDraft == (editingID, name, keyword, template) else { return }
+                edit(site, isNew: true)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
     }
     private func edit(_ site: SiteSearch, isNew: Bool = false) {
         editingID = isNew ? nil : site.id; name = site.name; keyword = site.keyword; template = site.template; error = nil

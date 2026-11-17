@@ -1,7 +1,7 @@
 import WebKit
 import BrowserCore
 
-enum SearchInputContext: Equatable {
+enum SearchInputContext: Hashable {
     case primary(spaceID: UUID, profileID: UUID, tabID: UUID?, peekID: UUID?)
     case quick(pageID: UUID, profileID: UUID, peekID: UUID?)
 }

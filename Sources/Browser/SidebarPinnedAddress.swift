@@ -23,6 +23,15 @@ extension BrowserStore {
         let displayedAddress: String
     }
 
+    struct PinnedAddressActions: Equatable {
+        let canReturn: Bool
+        let canKeepCurrent: Bool
+        let canEdit: Bool
+        let canUseCurrent: Bool
+
+        static let unavailable = Self(canReturn: false, canKeepCurrent: false, canEdit: false, canUseCurrent: false)
+    }
+
     private struct PinnedAddress {
         let tab: BrowserCore.Tab
         let profile: UUID
@@ -33,24 +42,23 @@ extension BrowserStore {
         let web: WKWebView?
     }
 
-    func canReturnToPinnedAddress(_ id: UUID) -> Bool {
-        pinnedAddress(for: id)?.isAwayFromHome == true
+    func pinnedAddressActions(for id: UUID) -> PinnedAddressActions {
+        addressActions(for: pinnedAddress(for: id))
     }
 
-    func canKeepPageWhileReturningToPinnedAddress(_ id: UUID) -> Bool {
-        guard canModifyLocalMetadata, !profileDataOperationInProgress, let target = pinnedAddress(for: id),
-              target.isAwayFromHome, let current = target.current else { return false }
-        return QuickBrowseRouting.host(for: current) != nil
+    // The row already has the active Space's tab. Use it for display and resolve the ID again on activation.
+    func pinnedAddressActions(forLocalTab tab: BrowserCore.Tab, in spaceID: UUID) -> PinnedAddressActions {
+        guard tab.pinned, spaceID == space.id, let profile = pinnedAddressProfile else { return .unavailable }
+        return addressActions(for: pinnedAddress(for: tab, profile: profile))
     }
 
-    func canEditPinnedAddress(_ id: UUID) -> Bool {
-        (try? beginPinnedAddressEdit(id)) != nil
-    }
-
-    func canUseCurrentAddressAsPinned(_ id: UUID) -> Bool {
-        guard let target = pinnedAddress(for: id), (try? requireSpaceProfile(target.profile)) != nil,
-              let current = target.current, current != target.home else { return false }
-        return QuickBrowseRouting.host(for: current) != nil
+    private func addressActions(for target: PinnedAddress?) -> PinnedAddressActions {
+        guard let target else { return .unavailable }
+        let canEdit = (try? requireSpaceProfile(target.profile)) != nil
+        let hasNewWebsite = target.current != target.home && target.current.flatMap(QuickBrowseRouting.host(for:)) != nil
+        let canKeep = target.isAwayFromHome && canModifyLocalMetadata && !profileDataOperationInProgress && hasNewWebsite
+        return PinnedAddressActions(canReturn: target.isAwayFromHome, canKeepCurrent: canKeep,
+                                    canEdit: canEdit, canUseCurrent: canEdit && hasNewWebsite)
     }
 
     func beginPinnedAddressEdit(_ id: UUID) throws -> PinnedAddressEdit {
@@ -134,15 +142,22 @@ extension BrowserStore {
         return nil
     }
 
-    private func pinnedAddress(for id: UUID) -> PinnedAddress? {
+    private var pinnedAddressProfile: UUID? {
         let profile = activeProfileID
-        let localTab = space.tabs.first(where: { $0.id == id })
         guard !isShuttingDown, !awaitingInitialMetadata, extensionPopupProfileID == nil,
-              !profileUnavailable(profile), profileID(for: id) == profile,
-              let visible = localTab ?? favorites.first(where: { $0.id == id }),
-              visible.pinned else { return nil }
+              !profileUnavailable(profile) else { return nil }
+        return profile
+    }
 
-        let tab = localTab ?? self.tab(id) ?? visible
+    private func pinnedAddress(for id: UUID) -> PinnedAddress? {
+        guard let profile = pinnedAddressProfile, profileID(for: id) == profile else { return nil }
+        let localTab = space.tabs.first(where: { $0.id == id })
+        guard let visible = localTab ?? favorites.first(where: { $0.id == id }), visible.pinned else { return nil }
+        return pinnedAddress(for: localTab ?? tab(id) ?? visible, profile: profile)
+    }
+
+    private func pinnedAddress(for tab: BrowserCore.Tab, profile: UUID) -> PinnedAddress? {
+        let id = tab.id
         let home = tab.homeURL.flatMap { URL(string: $0) }.flatMap { QuickBrowseRouting.host(for: $0) == nil ? nil : $0 }
 
         let owner = windowGroup?.stores.first { $0.views[id] != nil } ?? self

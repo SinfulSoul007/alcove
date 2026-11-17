@@ -5,12 +5,6 @@ import BrowserCore
 import UniformTypeIdentifiers
 import CryptoKit
 
-struct DownloadItem: Identifiable {
-    let id = UUID()
-    let name: String
-    var status: String
-}
-
 extension BrowserStore {
     @discardableResult func unlockLocalData(keyProvider: (() throws -> SymmetricKey)? = nil, persist: @escaping (MetadataStore, BrowserDocument) throws -> Void = { try $0.save($1) }) -> Bool {
         guard !isPrivate, !savingEnabled, !unlocking, !isShuttingDown else { return false }
@@ -143,9 +137,6 @@ extension BrowserStore {
             mutateLibrary(for: owner) { $0.archive.insert(tab, at: 0) }; discardSharedView(tab.id)
         }
         save()
-    }
-    func updateDownload(_ download: WKDownload, status: String) {
-        if let id = downloadIDs.removeValue(forKey: ObjectIdentifier(download)), let i = downloads.firstIndex(where: { $0.id == id }) { downloads[i].status = status }
     }
     func importLegacySession() {
         guard !isPrivate, savingEnabled else { return }
