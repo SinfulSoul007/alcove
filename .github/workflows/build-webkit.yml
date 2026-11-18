@@ -1,8 +1,8 @@
-name: Build and test WebKit hyperlink auditing control
+name: Build and test WebKit network prediction control
 
 on:
   push:
-    branches: [research/webkit-privacy-primitives]
+    branches: [research/webkit-network-prediction]
 
 permissions:
   contents: read
@@ -60,7 +60,7 @@ jobs:
         timeout-minutes: 351
         run: |
           set -euo pipefail
-          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing; do
+          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction; do
             patch="$GITHUB_WORKSPACE/diagnostics/$name.patch"
             git apply --check "$patch"
             git apply "$patch"
@@ -103,13 +103,15 @@ jobs:
           product="$RUNNER_TEMP/WebKit/WebKitBuild/Release"
           scratch=$(mktemp -d "$RUNNER_TEMP/alcove-webkit-probe.XXXXXX")
           server=''
+          prediction_server=''
           cleanup() {
             if [[ -n "$server" ]]; then kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true; fi
+            if [[ -n "$prediction_server" ]]; then kill "$prediction_server" 2>/dev/null || true; wait "$prediction_server" 2>/dev/null || true; fi
             rm -rf "$scratch"
           }
           trap cleanup EXIT
           xcrun swiftc -parse-as-library diagnostics/webkit-extension-probe.swift diagnostics/webkit-request-cache-probe.swift \
-            diagnostics/webkit-hyperlink-auditing-probe.swift -o "$scratch/probe"
+            diagnostics/webkit-hyperlink-auditing-probe.swift diagnostics/webkit-network-prediction-probe.swift -o "$scratch/probe"
           python3 diagnostics/webkit-probe-server.py "$scratch/port" > "$scratch/requests.log" 2>&1 &
           server=$!
           for attempt in {1..100}; do
@@ -118,10 +120,23 @@ jobs:
             sleep 0.1
           done
           test -s "$scratch/port"
+          bash diagnostics/webkit-prediction-tls.sh "$scratch"
+          python3 diagnostics/webkit-probe-server.py "$scratch/prediction-port" "$scratch/loopback.pem" "$scratch/loopback.key" > "$scratch/prediction.log" 2>&1 &
+          prediction_server=$!
+          for attempt in {1..100}; do
+            [[ ! -s "$scratch/prediction-port" ]] || break
+            kill -0 "$prediction_server"
+            sleep 0.1
+          done
+          test -s "$scratch/prediction-port"
           navigation_status=0
           cache_status=0
           auditing_status=0
+          prediction_status=0
           status=0
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            ALCOVE_PREDICTION_TLS_CERT_DER="$scratch/loopback.der" \
+            "$scratch/probe" "https://127.0.0.1:$(cat "$scratch/prediction-port")/" --network-prediction-only || prediction_status=$?
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
             "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --hyperlink-auditing-only || auditing_status=$?
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
@@ -131,6 +146,8 @@ jobs:
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
             "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --require-runtime-url --require-blocking || status=$?
           cat "$scratch/requests.log"
+          cat "$scratch/prediction.log"
+          if (( prediction_status != 0 )); then exit "$prediction_status"; fi
           if (( auditing_status != 0 )); then exit "$auditing_status"; fi
           if (( cache_status != 0 )); then exit "$cache_status"; fi
           if (( navigation_status != 0 )); then exit "$navigation_status"; fi

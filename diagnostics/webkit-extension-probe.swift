@@ -68,8 +68,9 @@ struct SystemWebKitExtensionProbe {
             }
             if CommandLine.arguments.contains("--runtime-url-only") { return }
         }
+        let predictionTest = CommandLine.arguments.contains("--network-prediction-only")
         guard let argument = CommandLine.arguments.dropFirst().first,
-              let server = URL(string: argument), server.scheme == "http", server.host == "127.0.0.1",
+              let server = URL(string: argument), server.scheme == (predictionTest ? "https" : "http"), server.host == "127.0.0.1",
               server.port != nil else { throw CocoaError(.fileReadInvalidFileName) }
         if CommandLine.arguments.contains("--navigation-target-only") {
             let passed = try await runNavigationTarget(root: root.appendingPathComponent("navigation"), server: server)
@@ -93,6 +94,15 @@ struct SystemWebKitExtensionProbe {
             let passed = try await runHyperlinkAuditing(server: server)
             if !passed {
                 print("FAIL: the per-page privacy control must suppress hyperlink pings")
+                try? FileManager.default.removeItem(at: root)
+                exit(1)
+            }
+            return
+        }
+        if predictionTest {
+            let passed = try await runNetworkPrediction(server: server)
+            if !passed {
+                print("FAIL: the WebKit network-prediction setting must suppress speculative loads")
                 try? FileManager.default.removeItem(at: root)
                 exit(1)
             }

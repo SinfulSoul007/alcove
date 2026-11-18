@@ -3,6 +3,8 @@ from html import escape
 from pathlib import Path
 from threading import Lock
 from urllib.parse import parse_qs, urlsplit
+import json
+import ssl
 import sys
 
 class Fixture(BaseHTTPRequestHandler):
@@ -21,7 +23,18 @@ class Fixture(BaseHTTPRequestHandler):
             self.counts[request.path] = self.counts.get(request.path, 0) + 1
 
         mime = "text/html; charset=utf-8"
-        if request.path.startswith("/link-policy/") and request.path.endswith("/source"):
+        if request.path.startswith("/network-prediction/") and request.path.endswith("/source"):
+            directory = request.path.rsplit("/", 1)[0]
+            safe_directory = escape(directory, quote=True)
+            rules = json.dumps({"prefetch": [{"source": "list", "urls": [directory + "/rule-target"], "eagerness": "immediate"}]})
+            rules = rules.replace("<", "\\u003c")
+            body = ("<!doctype html><title>Owned prediction fixture</title>"
+                    f"<link rel='prefetch' href='{safe_directory}/link-target'>"
+                    f"<script type='speculationrules'>{rules}</script>"
+                    f"<script src='{safe_directory}/ordinary.js'></script>")
+        elif request.path.startswith("/network-prediction/") and request.path.endswith("/ordinary.js"):
+            body, mime = "window.ordinaryScriptLoaded = true;", "application/javascript"
+        elif request.path.startswith("/link-policy/") and request.path.endswith("/source"):
             directory = escape(request.path.rsplit("/", 1)[0], quote=True)
             body = ("<!doctype html><title>Owned hyperlink fixture</title>"
                     f"<a id='destination' href='{directory}/destination' ping='{directory}/ping'>Open</a>")
@@ -69,5 +82,11 @@ class Fixture(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 with ThreadingHTTPServer(("127.0.0.1", 0), Fixture) as server:
+    if len(sys.argv) == 4:
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.load_cert_chain(sys.argv[2], sys.argv[3])
+        server.socket = tls.wrap_socket(server.socket, server_side=True)
+    elif len(sys.argv) != 2:
+        raise SystemExit("usage: webkit-probe-server.py PORT_FILE [CERTIFICATE KEY]")
     Path(sys.argv[1]).write_text(str(server.server_port))
     server.serve_forever()

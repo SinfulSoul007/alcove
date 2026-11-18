@@ -1,0 +1,117 @@
+diff --git a/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml b/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+index ed60d774cbadf85da79f2c1238cd43f1473822fb..d8b974414392dc04d5b1f5ece0b934745d03e677 100644
+--- a/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
++++ b/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+@@ -5862,6 +5862,18 @@ NeedsStorageAccessFromFileURLsQuirk:
+     WebCore:
+       default: true
+
++NetworkPredictionEnabled:
++  type: bool
++  status: embedder
++  category: networking
++  defaultValue:
++    WebKitLegacy:
++      default: true
++    WebKit:
++      default: true
++    WebCore:
++      default: true
++
+ NotificationEventEnabled:
+   type: bool
+   status: internal
+diff --git a/Source/WebCore/dom/Document.cpp b/Source/WebCore/dom/Document.cpp
+index b7163e5024d945fe59bce93c15bc0aeea05110c0..97a8be7b97a4d5de768b0ab2abe8ca6af49b7019 100644
+--- a/Source/WebCore/dom/Document.cpp
++++ b/Source/WebCore/dom/Document.cpp
+@@ -12287,7 +12287,7 @@ void Document::prefetch(const URL& url, const Vector<String>& tags, std::optiona
+ // https://html.spec.whatwg.org/C#process-the-speculation-rules-header
+ void Document::processSpeculationRulesHeader(const String& headerValue, const URL& baseURL)
+ {
+-    if (!settings().speculationRulesPrefetchEnabled())
++    if (!settings().networkPredictionEnabled() || !settings().speculationRulesPrefetchEnabled())
+         return;
+
+     // 1. Let parsedList be the result of getting a structured field value given `Speculation-Rules` and "list" from response's header list.
+@@ -12315,6 +12315,8 @@ void Document::processSpeculationRulesHeader(const String& headerValue, const UR
+
+         // 3.4.2. Queue a global task on the speculation rules task source given document's relevant global object to perform the following steps
+         eventLoop().queueTask(TaskSource::SpeculationRules, [protectedThis = Ref { *this }, speculationRulesURL] {
++            if (!protectedThis->settings().networkPredictionEnabled())
++                return;
+             auto loadableSpeculationRules = LoadableSpeculationRules::create(protectedThis.get(), speculationRulesURL);
+             if (loadableSpeculationRules->load(protectedThis.get(), speculationRulesURL))
+                 protectedThis->m_loadableSpeculationRules.append(WTF::move(loadableSpeculationRules));
+diff --git a/Source/WebCore/loader/FrameLoader.cpp b/Source/WebCore/loader/FrameLoader.cpp
+index 0191bc145bab7e1ffe279d0048c527123e440631..3b85eea2c7d49da5929ea189439487cff5431378 100644
+--- a/Source/WebCore/loader/FrameLoader.cpp
++++ b/Source/WebCore/loader/FrameLoader.cpp
+@@ -5004,6 +5004,8 @@ void FrameLoader::prefetchDNSIfNeeded(const URL& url)
+
+ void FrameLoader::prefetch(const URL& url, const Vector<String>& tags, std::optional<ReferrerPolicy> referrerPolicy, bool lowPriority)
+ {
++    if (!m_frame->settings().networkPredictionEnabled())
++        return;
+     m_documentPrefetcher->prefetch(url, tags, referrerPolicy, lowPriority);
+ }
+
+diff --git a/Source/WebCore/loader/LinkLoader.cpp b/Source/WebCore/loader/LinkLoader.cpp
+index 764cdbc98b60544eaba7d6a02e04ffefed9d556c..b7deb62b60024acc01eba1ac7091ae8bc6134264 100644
+--- a/Source/WebCore/loader/LinkLoader.cpp
++++ b/Source/WebCore/loader/LinkLoader.cpp
+@@ -416,7 +416,7 @@ RefPtr<LinkPreloadResourceClient> LinkLoader::preloadIfNeeded(const LinkLoadPara
+
+ void LinkLoader::prefetchIfNeeded(const LinkLoadParameters& params, Document& document)
+ {
+-    if (!params.href.isValid() || !document.frame())
++    if (!document.settings().networkPredictionEnabled() || !params.href.isValid() || !document.frame())
+         return;
+
+     ASSERT(document.settings().linkPrefetchEnabled());
+diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKPreferences.mm b/Source/WebKit/UIProcess/API/Cocoa/WKPreferences.mm
+index cf94d626d7e47426be9d075ad0e4069b8f77534f..c14526632c95362a678a288091c52a558980ce3e 100644
+--- a/Source/WebKit/UIProcess/API/Cocoa/WKPreferences.mm
++++ b/Source/WebKit/UIProcess/API/Cocoa/WKPreferences.mm
+@@ -777,6 +777,16 @@ - (void)_setHyperlinkAuditingEnabled:(BOOL)enabled
+     protectedPreferences(self)->setHyperlinkAuditingEnabled(enabled);
+ }
+
++- (BOOL)_networkPredictionEnabled
++{
++    return protectedPreferences(self)->networkPredictionEnabled();
++}
++
++- (void)_setNetworkPredictionEnabled:(BOOL)enabled
++{
++    protectedPreferences(self)->setNetworkPredictionEnabled(enabled);
++}
++
+ - (BOOL)_enumeratingAllNetworkInterfacesEnabled
+ {
+     return protectedPreferences(self)->enumeratingAllNetworkInterfacesEnabled();
+diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKPreferencesPrivate.h b/Source/WebKit/UIProcess/API/Cocoa/WKPreferencesPrivate.h
+index fdee2de050ce5dc0c7be796dacf5ee1905750b09..fe166226a4ebe573b87d558755ead7ef4564ac08 100644
+--- a/Source/WebKit/UIProcess/API/Cocoa/WKPreferencesPrivate.h
++++ b/Source/WebKit/UIProcess/API/Cocoa/WKPreferencesPrivate.h
+@@ -114,6 +114,7 @@ typedef NS_ENUM(NSInteger, _WKPitchCorrectionAlgorithm) {
+
+ @property (nonatomic, setter=_setLoadsImagesAutomatically:) BOOL _loadsImagesAutomatically WK_API_AVAILABLE(macos(10.13), ios(11.0));
+ @property (nonatomic, setter=_setHyperlinkAuditingEnabled:) BOOL _hyperlinkAuditingEnabled;
++@property (nonatomic, setter=_setNetworkPredictionEnabled:) BOOL _networkPredictionEnabled;
+
+ @property (nonatomic, setter=_setPeerConnectionEnabled:) BOOL _peerConnectionEnabled WK_API_AVAILABLE(macos(10.13.4), ios(11.3));
+ @property (nonatomic, setter=_setMediaDevicesEnabled:) BOOL _mediaDevicesEnabled WK_API_AVAILABLE(macos(10.13), ios(11.0));
+diff --git a/Source/WebKit/UIProcess/WebPageProxy.cpp b/Source/WebKit/UIProcess/WebPageProxy.cpp
+index 2102c95fa4a0ebf53eba76886a5ed3a54909fe4b..02bc00e856c16835fcdc148932da2a4db58bfb07 100644
+--- a/Source/WebKit/UIProcess/WebPageProxy.cpp
++++ b/Source/WebKit/UIProcess/WebPageProxy.cpp
+@@ -7160,7 +7160,7 @@ void WebPageProxy::updateOpener(IPC::Connection& connection, WebCore::FrameIdent
+ void WebPageProxy::preconnectTo(ResourceRequest&& request)
+ {
+     Ref websiteDataStore = m_websiteDataStore;
+-    if (!websiteDataStore->configuration().allowsServerPreconnect())
++    if (!protectedPreferences()->networkPredictionEnabled() || !websiteDataStore->configuration().allowsServerPreconnect())
+         return;
+
+     auto storedCredentialsPolicy = m_canUseCredentialStorage ? WebCore::StoredCredentialsPolicy::Use : WebCore::StoredCredentialsPolicy::DoNotUse;
