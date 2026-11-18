@@ -1,8 +1,8 @@
-name: Build and test WebKit network prediction control
+name: Build and test WebKit extension privacy controls
 
 on:
   push:
-    branches: [research/webkit-network-prediction]
+    branches: [research/webkit-rtc-policy]
 
 permissions:
   contents: read
@@ -55,12 +55,13 @@ jobs:
           df -h "$RUNNER_TEMP"
 
       - name: Compile the macOS engine
+        id: compile
         working-directory: ${{ runner.temp }}/WebKit
         shell: bash
         timeout-minutes: 351
         run: |
           set -euo pipefail
-          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction; do
+          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy; do
             patch="$GITHUB_WORKSPACE/diagnostics/$name.patch"
             git apply --check "$patch"
             git apply "$patch"
@@ -104,14 +105,17 @@ jobs:
           scratch=$(mktemp -d "$RUNNER_TEMP/alcove-webkit-probe.XXXXXX")
           server=''
           prediction_server=''
+          rtc_server=''
           cleanup() {
             if [[ -n "$server" ]]; then kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true; fi
             if [[ -n "$prediction_server" ]]; then kill "$prediction_server" 2>/dev/null || true; wait "$prediction_server" 2>/dev/null || true; fi
+            if [[ -n "$rtc_server" ]]; then kill "$rtc_server" 2>/dev/null || true; wait "$rtc_server" 2>/dev/null || true; fi
             rm -rf "$scratch"
           }
           trap cleanup EXIT
           xcrun swiftc -parse-as-library diagnostics/webkit-extension-probe.swift diagnostics/webkit-request-cache-probe.swift \
-            diagnostics/webkit-hyperlink-auditing-probe.swift diagnostics/webkit-network-prediction-probe.swift -o "$scratch/probe"
+            diagnostics/webkit-hyperlink-auditing-probe.swift diagnostics/webkit-network-prediction-probe.swift \
+            diagnostics/webkit-rtc-policy-probe.swift -o "$scratch/probe"
           python3 diagnostics/webkit-probe-server.py "$scratch/port" > "$scratch/requests.log" 2>&1 &
           server=$!
           for attempt in {1..100}; do
@@ -129,11 +133,22 @@ jobs:
             sleep 0.1
           done
           test -s "$scratch/prediction-port"
+          python3 diagnostics/webkit-stun-fixture.py "$scratch/rtc-port" > "$scratch/rtc.log" 2>&1 &
+          rtc_server=$!
+          for attempt in {1..100}; do
+            [[ ! -s "$scratch/rtc-port" ]] || break
+            kill -0 "$rtc_server"
+            sleep 0.1
+          done
+          test -s "$scratch/rtc-port"
           navigation_status=0
           cache_status=0
           auditing_status=0
           prediction_status=0
+          rtc_status=0
           status=0
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/rtc-port")/" --rtc-policy-only || rtc_status=$?
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
             ALCOVE_PREDICTION_TLS_CERT_DER="$scratch/loopback.der" \
             "$scratch/probe" "https://127.0.0.1:$(cat "$scratch/prediction-port")/" --network-prediction-only || prediction_status=$?
@@ -147,8 +162,35 @@ jobs:
             "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --require-runtime-url --require-blocking || status=$?
           cat "$scratch/requests.log"
           cat "$scratch/prediction.log"
+          cat "$scratch/rtc.log"
+          if (( rtc_status != 0 )); then exit "$rtc_status"; fi
           if (( prediction_status != 0 )); then exit "$prediction_status"; fi
           if (( auditing_status != 0 )); then exit "$auditing_status"; fi
           if (( cache_status != 0 )); then exit "$cache_status"; fi
           if (( navigation_status != 0 )); then exit "$navigation_status"; fi
           exit "$status"
+
+      - name: Keep the compiled engine for native integration
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          product="$RUNNER_TEMP/WebKit/WebKitBuild/Release"
+          destination="$RUNNER_TEMP/alcove-webkit-runtime"
+          mkdir "$destination"
+          tar --exclude='*.dSYM' --exclude='*.a' --exclude='*.o' \
+            -czf "$destination/Alcove-WebKitRuntime.tar.gz" -C "$product" .
+          printf '%s\n' "$GITHUB_SHA" > "$destination/AlcoveSource.txt"
+          printf '%s\n' "$WEBKIT_REVISION" > "$destination/WebKitSource.txt"
+          shasum -a 256 diagnostics/*.patch > "$destination/PatchChecksums.txt"
+          (cd "$destination" && shasum -a 256 Alcove-WebKitRuntime.tar.gz > SHA256SUMS.txt)
+
+      - name: Upload the compiled native runtime
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Alcove-WebKit-native-runtime
+          path: ${{ runner.temp }}/alcove-webkit-runtime/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

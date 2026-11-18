@@ -108,6 +108,15 @@ struct SystemWebKitExtensionProbe {
             }
             return
         }
+        if CommandLine.arguments.contains("--rtc-policy-only") {
+            let passed = try await runRTCPolicy(server: server)
+            if !passed {
+                print("FAIL: WebRTC policy must control native UDP routes in its page")
+                try? FileManager.default.removeItem(at: root)
+                exit(1)
+            }
+            return
+        }
         try await runOffscreen(root: root.appendingPathComponent("mv3"))
         try await runBlocking(root: root.appendingPathComponent("mv2"), server: server,
                               requireBlocking: CommandLine.arguments.contains("--require-blocking"))

@@ -1,0 +1,128 @@
+diff --git a/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml b/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+index d8b974414392dc04d5b1f5ece0b934745d03e677..543a315be05b09ba417902f68337f5723c2812a6 100644
+--- a/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
++++ b/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+@@ -9706,6 +9706,18 @@ WebRTCH265CodecEnabled:
+       "PLATFORM(COCOA)": true
+       default: false
+
++WebRTCIPHandlingPolicy:
++  type: String
++  status: embedder
++  category: networking
++  defaultValue:
++    WebKitLegacy:
++      default: '"default"_str'
++    WebKit:
++      default: '"default"_str'
++    WebCore:
++      default: '"default"_str'
++
+ WebRTCInterfaceMonitoringViaNWEnabled:
+   type: bool
+   status: internal
+diff --git a/Source/WebCore/platform/mediastream/libwebrtc/LibWebRTCProvider.cpp b/Source/WebCore/platform/mediastream/libwebrtc/LibWebRTCProvider.cpp
+index 61c83371dcb794a564abcddfa8dd9c7fe1bcc0e0..a8438a556f0af11f2044bdb4f9b4ccb2fdfeeda9 100644
+--- a/Source/WebCore/platform/mediastream/libwebrtc/LibWebRTCProvider.cpp
++++ b/Source/WebCore/platform/mediastream/libwebrtc/LibWebRTCProvider.cpp
+@@ -420,7 +420,7 @@ void LibWebRTCProvider::setEnableWebRTCEncryption(bool enableWebRTCEncryption)
+     m_factory->SetOptions(options);
+ }
+
+-webrtc::scoped_refptr<webrtc::PeerConnectionInterface> LibWebRTCProvider::createPeerConnection(webrtc::PeerConnectionObserver& observer, webrtc::NetworkManager& networkManager, webrtc::PacketSocketFactory& packetSocketFactory, webrtc::PeerConnectionInterface::RTCConfiguration&& configuration, std::unique_ptr<webrtc::AsyncDnsResolverFactoryInterface>&& asyncDnsResolverFactory)
++webrtc::scoped_refptr<webrtc::PeerConnectionInterface> LibWebRTCProvider::createPeerConnection(webrtc::PeerConnectionObserver& observer, webrtc::NetworkManager& networkManager, webrtc::PacketSocketFactory& packetSocketFactory, webrtc::PeerConnectionInterface::RTCConfiguration&& configuration, std::unique_ptr<webrtc::AsyncDnsResolverFactoryInterface>&& asyncDnsResolverFactory, uint32_t portAllocatorFlags)
+ {
+     auto* factory = this->factory();
+     if (!factory)
+@@ -432,6 +432,7 @@ webrtc::scoped_refptr<webrtc::PeerConnectionInterface> LibWebRTCProvider::create
+     factoryAndThreads.signalingThread->BlockingCall([&]() {
+         auto basicPortAllocator = makeUniqueWithoutFastMallocCheck<webrtc::BasicPortAllocator>(webrtc::CreateEnvironment(), &networkManager, &packetSocketFactory);
+
++        basicPortAllocator->set_flags(basicPortAllocator->flags() | portAllocatorFlags);
+         basicPortAllocator->set_allow_tcp_listen(false);
+         portAllocator = WTF::move(basicPortAllocator);
+     });
+diff --git a/Source/WebCore/platform/mediastream/libwebrtc/LibWebRTCProvider.h b/Source/WebCore/platform/mediastream/libwebrtc/LibWebRTCProvider.h
+index 7093817431628c8e2e87a9df94ef10ee03a99e21..e0b6bae51dc068f88dc3a2fffff70909c36fd9f6 100644
+--- a/Source/WebCore/platform/mediastream/libwebrtc/LibWebRTCProvider.h
++++ b/Source/WebCore/platform/mediastream/libwebrtc/LibWebRTCProvider.h
+@@ -124,7 +124,7 @@ public:
+ protected:
+     LibWebRTCProvider();
+
+-    webrtc::scoped_refptr<webrtc::PeerConnectionInterface> createPeerConnection(webrtc::PeerConnectionObserver&, webrtc::NetworkManager&, webrtc::PacketSocketFactory&, webrtc::PeerConnectionInterface::RTCConfiguration&&, std::unique_ptr<webrtc::AsyncDnsResolverFactoryInterface>&&);
++    webrtc::scoped_refptr<webrtc::PeerConnectionInterface> createPeerConnection(webrtc::PeerConnectionObserver&, webrtc::NetworkManager&, webrtc::PacketSocketFactory&, webrtc::PeerConnectionInterface::RTCConfiguration&&, std::unique_ptr<webrtc::AsyncDnsResolverFactoryInterface>&&, uint32_t portAllocatorFlags = 0);
+
+     Ref<webrtc::PeerConnectionFactoryInterface> createPeerConnectionFactory(webrtc::Thread* networkThread, webrtc::Thread* signalingThread);
+     virtual std::unique_ptr<webrtc::VideoDecoderFactory> createDecoderFactory();
+diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKPreferences.mm b/Source/WebKit/UIProcess/API/Cocoa/WKPreferences.mm
+index c14526632c95362a678a288091c52a558980ce3e..21786e72f1272c9b403d1bef307f7d36648200f9 100644
+--- a/Source/WebKit/UIProcess/API/Cocoa/WKPreferences.mm
++++ b/Source/WebKit/UIProcess/API/Cocoa/WKPreferences.mm
+@@ -787,6 +787,19 @@ - (void)_setNetworkPredictionEnabled:(BOOL)enabled
+     protectedPreferences(self)->setNetworkPredictionEnabled(enabled);
+ }
+
++- (NSString *)_webRTCIPHandlingPolicy
++{
++    return protectedPreferences(self)->webRTCIPHandlingPolicy().createNSString().autorelease();
++}
++
++- (void)_setWebRTCIPHandlingPolicy:(NSString *)policy
++{
++    if (![policy isEqualToString:@"default"] && ![policy isEqualToString:@"default_public_and_private_interfaces"]
++        && ![policy isEqualToString:@"default_public_interface_only"] && ![policy isEqualToString:@"disable_non_proxied_udp"])
++        return;
++    protectedPreferences(self)->setWebRTCIPHandlingPolicy(policy);
++}
++
+ - (BOOL)_enumeratingAllNetworkInterfacesEnabled
+ {
+     return protectedPreferences(self)->enumeratingAllNetworkInterfacesEnabled();
+diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKPreferencesPrivate.h b/Source/WebKit/UIProcess/API/Cocoa/WKPreferencesPrivate.h
+index fe166226a4ebe573b87d558755ead7ef4564ac08..77c5b37590c49889e16c86fa249bf49536a00c0f 100644
+--- a/Source/WebKit/UIProcess/API/Cocoa/WKPreferencesPrivate.h
++++ b/Source/WebKit/UIProcess/API/Cocoa/WKPreferencesPrivate.h
+@@ -115,6 +115,7 @@ typedef NS_ENUM(NSInteger, _WKPitchCorrectionAlgorithm) {
+ @property (nonatomic, setter=_setLoadsImagesAutomatically:) BOOL _loadsImagesAutomatically WK_API_AVAILABLE(macos(10.13), ios(11.0));
+ @property (nonatomic, setter=_setHyperlinkAuditingEnabled:) BOOL _hyperlinkAuditingEnabled;
+ @property (nonatomic, setter=_setNetworkPredictionEnabled:) BOOL _networkPredictionEnabled;
++@property (nonatomic, copy, setter=_setWebRTCIPHandlingPolicy:) NSString *_webRTCIPHandlingPolicy;
+
+ @property (nonatomic, setter=_setPeerConnectionEnabled:) BOOL _peerConnectionEnabled WK_API_AVAILABLE(macos(10.13.4), ios(11.3));
+ @property (nonatomic, setter=_setMediaDevicesEnabled:) BOOL _mediaDevicesEnabled WK_API_AVAILABLE(macos(10.13), ios(11.0));
+diff --git a/Source/WebKit/WebProcess/Network/webrtc/LibWebRTCProvider.cpp b/Source/WebKit/WebProcess/Network/webrtc/LibWebRTCProvider.cpp
+index f1e62936cbce89d7ebf0088021479f75d22a6844..ea0ef028bbcc25f320bdc52e88b9d741fc2a1cb1 100644
+--- a/Source/WebKit/WebProcess/Network/webrtc/LibWebRTCProvider.cpp
++++ b/Source/WebKit/WebProcess/Network/webrtc/LibWebRTCProvider.cpp
+@@ -47,6 +47,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+ // See Bug 274508: Disable thread-safety-reference-return warnings in libwebrtc
+ IGNORE_CLANG_WARNINGS_BEGIN("thread-safety-reference-return")
+ #include <webrtc/pc/peer_connection_factory.h>
++#include <webrtc/p2p/base/port_allocator.h>
+ IGNORE_CLANG_WARNINGS_END
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+
+@@ -81,7 +82,21 @@ webrtc::scoped_refptr<webrtc::PeerConnectionInterface> LibWebRTCProvider::create
+     networkManager->setEnumeratingAllNetworkInterfacesEnabled(isEnumeratingAllNetworkInterfacesEnabled());
+     networkManager->setEnumeratingVisibleNetworkInterfacesEnabled(isEnumeratingVisibleNetworkInterfacesEnabled());
+
+-    return WebCore::LibWebRTCProvider::createPeerConnection(observer, *networkManager, *socketFactory, WTF::move(configuration), makeUnique<LibWebRTCDnsResolverFactory>());
++    uint32_t portAllocatorFlags = 0;
++    Ref webPage { m_webPage.get() };
++    if (RefPtr page = webPage->corePage()) {
++        auto& policy = page->settings().webRTCIPHandlingPolicy();
++        if (policy == "default_public_and_private_interfaces"_s || policy == "default_public_interface_only"_s)
++            portAllocatorFlags |= webrtc::PORTALLOCATOR_DISABLE_ADAPTER_ENUMERATION;
++        if (policy == "default_public_interface_only"_s)
++            portAllocatorFlags |= webrtc::PORTALLOCATOR_DISABLE_DEFAULT_LOCAL_CANDIDATE;
++        if (policy == "disable_non_proxied_udp"_s) {
++            portAllocatorFlags |= webrtc::PORTALLOCATOR_DISABLE_ADAPTER_ENUMERATION | webrtc::PORTALLOCATOR_DISABLE_UDP
++                | webrtc::PORTALLOCATOR_DISABLE_STUN | webrtc::PORTALLOCATOR_DISABLE_UDP_RELAY;
++        }
++    }
++
++    return WebCore::LibWebRTCProvider::createPeerConnection(observer, *networkManager, *socketFactory, WTF::move(configuration), makeUnique<LibWebRTCDnsResolverFactory>(), portAllocatorFlags);
+ }
+
+ void LibWebRTCProvider::disableNonLocalhostConnections()
