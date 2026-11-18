@@ -211,15 +211,17 @@ jobs:
 
           Open Alcove → Extensions → Browse Chrome Web Store to find extensions. Alcove’s Review Extension button opens publisher, compatibility and permission details for the selected profile. Compatible extensions can open regular and compact popup windows, including background windows.
 
+          Add Extension File accepts ZIP releases that place the manifest inside one top-level folder, plus signed Chrome packages produced with compatible ZIP64 headers. Packages go through the same review before installation. Runtime compatibility varies by extension.
+
           Use Update → Check for Store Update on an installed Chrome Web Store extension. Newer versions open a review. Installed extensions retain their enabled or disabled state, and saved permission exclusions carry forward.
 
-          The first launch opens with a short handwritten Alcove greeting. You can skip it, replay it from the app menu, or use Reduce Motion to go directly to setup.
+          On a fresh install, the opening artwork appears while Alcove prepares local data. The handwritten greeting follows and fades into setup. You can skip it, replay it from the app menu, or use Reduce Motion to go directly to setup. The data recovery controls appear if startup needs attention.
 
           Split View can show up to four pages side by side or stacked. Drag a tab onto a row edge or the edge of a page in the same Space. Split groups and their divider proportions restore with normal windows after Quit.
 
           The native extension manager has limited tested compatibility with uBlock Origin Lite. Full uBlock Origin support is still in development. Native extension APIs need macOS 15.4+. Private request-blocking extensions need a fixed system WebKit (624.1.16 or later).
 
-          Alcove 0.17 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
+          Alcove 0.18 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
 
           SHA256SUMS.txt contains checksums for both installers. Checksums detect changed bytes; they do not establish developer identity.
           NOTE

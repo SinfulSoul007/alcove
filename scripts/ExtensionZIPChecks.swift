@@ -14,6 +14,8 @@ struct OwnedZIPFile {
     var mode:UInt32 = 0o100644 << 16
     var descriptor = false
     var descriptorSignature = true
+    var localVersion:UInt16 = 20
+    var localExtra = Data()
 }
 func ownedZIP(_ files:[OwnedZIPFile]) -> Data {
     var result = Data(), central = Data()
@@ -22,9 +24,9 @@ func ownedZIP(_ files:[OwnedZIPFile]) -> Data {
     for file in files {
         let name = file.rawName ?? Data(file.name.utf8), payload = file.compressed ?? file.contents, flags = file.flags | (file.descriptor ? 8 : 0)
         let offset = UInt32(result.count)
-        result += le(0x04034b50,4) + u16(20) + u16(flags) + u16(file.method) + le(0,4)
+        result += le(0x04034b50,4) + u16(file.localVersion) + u16(flags) + u16(file.method) + le(0,4)
         result += le(file.descriptor ? 0 : file.checksum,4) + le(file.descriptor ? 0 : UInt32(payload.count),4) + le(file.descriptor ? 0 : UInt32(file.contents.count),4)
-        result += u16(UInt16(name.count)) + u16(0) + name + payload
+        result += u16(UInt16(name.count)) + u16(UInt16(file.localExtra.count)) + name + file.localExtra + payload
         if file.descriptor { if file.descriptorSignature {result += le(0x08074b50,4)}; result += le(file.checksum,4) + le(UInt32(payload.count),4) + le(UInt32(file.contents.count),4) }
         central += le(0x02014b50,4) + u16(0x0314) + u16(20) + u16(flags) + u16(file.method) + le(0,4)
         central += le(file.checksum,4) + le(UInt32(payload.count),4) + le(UInt32(file.contents.count),4)
@@ -57,6 +59,20 @@ func runExtensionZIPChecks(_ check:(Bool,String)->Void) throws {
     var nested = OwnedZIPFile(); nested.name = "assets/hello.txt"
     check(try ExtensionZIP.read(ownedZIP([directory,nested])).filter({!$0.isDirectory}).first?.path == "assets/hello.txt","Directory records and nested files retain their intended structure")
     func rejected(_ input:Data,limits:ExtensionPackageLimits = .default) -> Bool { do { _ = try ExtensionZIP.read(input,limits:limits); return false } catch { return true } }
+    var reservedField = OwnedZIPFile()
+    reservedField.localVersion = 45
+    reservedField.localExtra = Data([1,0,16,0]) + Data(repeating:0,count:16)
+    check((try? ExtensionZIP.read(ownedZIP([reservedField]))) == files,
+          "A reserved zeroed ZIP64 local field preserves verified 32-bit resource sizes")
+    var nonemptyField = reservedField
+    nonemptyField.localExtra[4] = 1
+    check(rejected(ownedZIP([nonemptyField])), "A nonempty ZIP64 local field is rejected")
+    var streamingField = reservedField
+    streamingField.descriptor = true
+    check(rejected(ownedZIP([streamingField])), "A reserved ZIP64 local field cannot change descriptor interpretation")
+    var missingField = reservedField
+    missingField.localExtra = Data()
+    check(rejected(ownedZIP([missingField])), "Claims of a newer local format require the exact reserved field")
     for name in ["../escape","/tmp/escape","C:/escape","a\\escape","a/../escape","a//escape","a/./escape"] {
         var unsafe = OwnedZIPFile(); unsafe.name = name
         check(rejected(ownedZIP([unsafe])),"ZIP paths cannot escape or ambiguously alias their root: " + name)
