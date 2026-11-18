@@ -89,6 +89,15 @@ struct SystemWebKitExtensionProbe {
             }
             return
         }
+        if CommandLine.arguments.contains("--hyperlink-auditing-only") {
+            let passed = try await runHyperlinkAuditing(server: server)
+            if !passed {
+                print("FAIL: the per-page privacy control must suppress hyperlink pings")
+                try? FileManager.default.removeItem(at: root)
+                exit(1)
+            }
+            return
+        }
         try await runOffscreen(root: root.appendingPathComponent("mv3"))
         try await runBlocking(root: root.appendingPathComponent("mv2"), server: server,
                               requireBlocking: CommandLine.arguments.contains("--require-blocking"))

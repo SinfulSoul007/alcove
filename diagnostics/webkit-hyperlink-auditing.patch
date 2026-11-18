@@ -1,0 +1,69 @@
+diff --git a/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml b/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+index 9a4de29f1267fb3273937b077c321d911d899075..ed60d774cbadf85da79f2c1238cd43f1473822fb 100644
+--- a/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
++++ b/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+@@ -3694,6 +3694,18 @@ HostedBlurMaterialInMediaControlsEnabled:
+     WebCore:
+       default: false
+
++HyperlinkAuditingEnabled:
++  type: bool
++  status: embedder
++  category: networking
++  defaultValue:
++    WebKitLegacy:
++      default: true
++    WebKit:
++      default: true
++    WebCore:
++      default: true
++
+ ICECandidateFilteringEnabled:
+   type: bool
+   status: internal
+diff --git a/Source/WebCore/html/HTMLAnchorElement.cpp b/Source/WebCore/html/HTMLAnchorElement.cpp
+index 73b3b1129f8d9b9d9530f9180e709d81bd02cd34..9bd00599225a00252cb130033de041401305f043 100644
+--- a/Source/WebCore/html/HTMLAnchorElement.cpp
++++ b/Source/WebCore/html/HTMLAnchorElement.cpp
+@@ -343,7 +343,7 @@ bool HTMLAnchorElement::isLiveLink() const
+
+ void HTMLAnchorElement::sendPings(const URL& destinationURL)
+ {
+-    if (!document().frame())
++    if (!document().settings().hyperlinkAuditingEnabled() || !document().frame())
+         return;
+
+     const auto& pingValue = attributeWithoutSynchronization(pingAttr);
+diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKPreferences.mm b/Source/WebKit/UIProcess/API/Cocoa/WKPreferences.mm
+index cafe0a60c421a8613e609dec1b155d07194a4f99..cf94d626d7e47426be9d075ad0e4069b8f77534f 100644
+--- a/Source/WebKit/UIProcess/API/Cocoa/WKPreferences.mm
++++ b/Source/WebKit/UIProcess/API/Cocoa/WKPreferences.mm
+@@ -767,6 +767,16 @@ - (void)_setInterruptAudioOnPageVisibilityChangeEnabled:(BOOL)enabled
+     protectedPreferences(self)->setInterruptAudioOnPageVisibilityChangeEnabled(enabled);
+ }
+
++- (BOOL)_hyperlinkAuditingEnabled
++{
++    return protectedPreferences(self)->hyperlinkAuditingEnabled();
++}
++
++- (void)_setHyperlinkAuditingEnabled:(BOOL)enabled
++{
++    protectedPreferences(self)->setHyperlinkAuditingEnabled(enabled);
++}
++
+ - (BOOL)_enumeratingAllNetworkInterfacesEnabled
+ {
+     return protectedPreferences(self)->enumeratingAllNetworkInterfacesEnabled();
+diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKPreferencesPrivate.h b/Source/WebKit/UIProcess/API/Cocoa/WKPreferencesPrivate.h
+index 2ee3730af9dbbc089b0421b4c8529ba0a834dc1b..fdee2de050ce5dc0c7be796dacf5ee1905750b09 100644
+--- a/Source/WebKit/UIProcess/API/Cocoa/WKPreferencesPrivate.h
++++ b/Source/WebKit/UIProcess/API/Cocoa/WKPreferencesPrivate.h
+@@ -113,6 +113,7 @@ typedef NS_ENUM(NSInteger, _WKPitchCorrectionAlgorithm) {
+ @property (nonatomic, setter=_setApplePayCapabilityDisclosureAllowed:) BOOL _applePayCapabilityDisclosureAllowed WK_API_AVAILABLE(macos(10.12), ios(10.0));
+
+ @property (nonatomic, setter=_setLoadsImagesAutomatically:) BOOL _loadsImagesAutomatically WK_API_AVAILABLE(macos(10.13), ios(11.0));
++@property (nonatomic, setter=_setHyperlinkAuditingEnabled:) BOOL _hyperlinkAuditingEnabled;
+
+ @property (nonatomic, setter=_setPeerConnectionEnabled:) BOOL _peerConnectionEnabled WK_API_AVAILABLE(macos(10.13.4), ios(11.3));
+ @property (nonatomic, setter=_setMediaDevicesEnabled:) BOOL _mediaDevicesEnabled WK_API_AVAILABLE(macos(10.13), ios(11.0));

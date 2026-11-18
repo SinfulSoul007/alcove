@@ -21,7 +21,11 @@ class Fixture(BaseHTTPRequestHandler):
             self.counts[request.path] = self.counts.get(request.path, 0) + 1
 
         mime = "text/html; charset=utf-8"
-        if request.path.startswith("/rule-cache/"):
+        if request.path.startswith("/link-policy/") and request.path.endswith("/source"):
+            directory = escape(request.path.rsplit("/", 1)[0], quote=True)
+            body = ("<!doctype html><title>Owned hyperlink fixture</title>"
+                    f"<a id='destination' href='{directory}/destination' ping='{directory}/ping'>Open</a>")
+        elif request.path.startswith("/rule-cache/"):
             if request.path.endswith("/candidate.js"):
                 self.respond("window.cacheFixtureScriptRan = true;", "application/javascript", "public, max-age=600")
                 return
@@ -40,6 +44,20 @@ class Fixture(BaseHTTPRequestHandler):
         else:
             body = "<!doctype html><title>Owned loopback page</title>"
         self.respond(body, mime)
+
+    def do_POST(self):
+        path = urlsplit(self.path).path
+        if not path.startswith("/link-policy/") or not path.endswith(("/ping", "/beacon")):
+            self.send_error(404)
+            return
+        size = int(self.headers.get("Content-Length", "0"))
+        if size > 1024:
+            self.send_error(413)
+            return
+        self.rfile.read(size)
+        with self.lock:
+            self.counts[path] = self.counts.get(path, 0) + 1
+        self.respond("", "text/plain; charset=utf-8")
 
     def respond(self, body, mime, cache_control="no-store"):
         data = body.encode()
