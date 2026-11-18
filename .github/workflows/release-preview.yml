@@ -175,6 +175,10 @@ jobs:
           cat > release-notes.txt <<'NOTE'
           Universal macOS 14+ preview for Apple Silicon and Intel.
 
+          If the active tab scrolls out of view, click the arrow in its sidebar section to bring it back. A dot marks the collapsed folder or Pinned heading that contains the active tab. The arrow can reveal an offscreen folder while keeping it closed.
+
+          Open an official Chrome Web Store listing in a regular Alcove tab or in the extension manager and choose Add to Alcove. Review the signed package and its permissions for the current profile. For an installed Store extension, the same button checks for an update.
+
           Open Playing Tabs from the sidebar to find pages playing audio or video in the current window and profile. Pause playback from there or jump to its tab. Use the website's player to resume playback.
 
           Clear Today, day-based archiving and optional tab suspension keep tabs with active playback or camera and microphone capture open. Suspension unloads idle pages and keeps their tabs and addresses. Unsaved forms in unloaded pages can be lost.
@@ -209,7 +213,7 @@ jobs:
 
           Hold Control and press Tab to browse up to five recent tabs in the active window and profile. Release Control to switch, press Escape to cancel, or press Control-W to close the highlighted tab.
 
-          Open Alcove → Extensions → Browse Chrome Web Store to find extensions. Alcove’s Review Extension button opens publisher, compatibility and permission details for the selected profile. Compatible extensions can open regular and compact popup windows, including background windows.
+          Open Alcove → Extensions → Browse Chrome Web Store to find extensions. Compatible extensions can open regular and compact popup windows, including background windows.
 
           Add Extension File accepts ZIP releases that place the manifest inside one top-level folder, plus signed Chrome packages produced with compatible ZIP64 headers. Packages go through the same review before installation. Runtime compatibility varies by extension.
 
@@ -221,7 +225,7 @@ jobs:
 
           The native extension manager has limited tested compatibility with uBlock Origin Lite. Full uBlock Origin support is still in development. Native extension APIs need macOS 15.4+. Private request-blocking extensions need a fixed system WebKit (624.1.16 or later).
 
-          Alcove 0.18 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
+          Alcove 0.19 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
 
           SHA256SUMS.txt contains checksums for both installers. Checksums detect changed bytes; they do not establish developer identity.
           NOTE
