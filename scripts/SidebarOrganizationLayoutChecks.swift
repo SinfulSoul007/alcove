@@ -118,6 +118,73 @@ import BrowserCore
                 }
             }
         }
+        window.setContentSize(NSSize(width: 960, height: 540))
+        await settle(); hosting.layoutSubtreeIfNeeded()
+        let overflowShelves = descendants(hosting, NSScrollView.self).filter {
+            let frame = $0.convert($0.bounds, to: nil)
+            return frame.width > 100 && frame.height > 30 && frame.maxX < 245
+        }.sorted { $0.convert($0.bounds, to: nil).minY < $1.convert($1.bounds, to: nil).minY }
+        func overflowButton(_ direction: String) -> NSButton? {
+            descendants(hosting, NSButton.self).first {
+                $0.toolTip == "Show active tab" && $0.image?.accessibilityDescription == "Active tab \(direction)"
+            }
+        }
+        func scroll(_ shelf: NSScrollView, to y: CGFloat) async {
+            shelf.contentView.scroll(to: NSPoint(x: 0, y: y))
+            shelf.reflectScrolledClipView(shelf.contentView)
+            await settle(); hosting.layoutSubtreeIfNeeded()
+        }
+        if overflowShelves.count == 3 {
+            let today = overflowShelves[0], pins = overflowShelves[1], favorites = overflowShelves[2]
+            let pinOffset = pins.contentView.bounds.origin, favoriteOffset = favorites.contentView.bounds.origin
+            let bottom = max(0, (today.documentView?.bounds.height ?? 0) - today.contentView.bounds.height)
+            await scroll(today, to: bottom)
+            let above = overflowButton("above")
+            check(above != nil, "Scrolling the active Today tab out of view shows its return control above")
+            if above != nil, let output = ProcessInfo.processInfo.environment["ALCOVE_SIDEBAR_SCREENSHOT_DIR"],
+               let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
+                hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])?.write(to:
+                    URL(fileURLWithPath: output).appendingPathComponent("active-tab-above.png"))
+            }
+            above?.performClick(nil)
+            await settle(); hosting.layoutSubtreeIfNeeded()
+            check(above != nil && today.contentView.bounds.origin.y < bottom / 2 && store.selectedID == pageID &&
+                  pins.contentView.bounds.origin == pinOffset && favorites.contentView.bounds.origin == favoriteOffset,
+                  "The control reveals the existing selection in Today without moving either saved shelf")
+            check(overflowButton("above") == nil, "The return control disappears once the active row is visible")
+            if let last = store.sidebarLists.today.last?.id {
+                store.selectAny(last)
+                await scroll(today, to: 0)
+                check(overflowButton("below") != nil, "An unmounted active Today row below the viewport shows the lower control")
+            }
+            if let pinned = store.sidebarLists.saved.tabsByFolder["Projects"]?.last?.id {
+                store.selectAny(pinned)
+                await scroll(pins, to: 0)
+                let button = overflowButton("below")
+                button?.performClick(nil)
+                await settle(); hosting.layoutSubtreeIfNeeded()
+                check(button != nil && pins.contentView.bounds.origin.y > 0 && store.selectedID == pinned,
+                      "The return control reveals the active tab inside an expanded pinned folder")
+                try store.setTabFolderExpanded("Projects", expanded: false, in: store.space.id)
+                await settle(); hosting.layoutSubtreeIfNeeded()
+                check(overflowButton("above") == nil && overflowButton("below") == nil && store.selectedID == pinned,
+                      "A collapsed folder stays closed with its active tab selected and no stale return control")
+                try store.setTabFolderExpanded("Projects", expanded: true, in: store.space.id)
+            }
+            if let favorite = store.favorites.last?.id {
+                store.selectAny(favorite)
+                await scroll(favorites, to: 0)
+                let button = overflowButton("below")
+                button?.performClick(nil)
+                await settle(); hosting.layoutSubtreeIfNeeded()
+                check(button != nil && favorites.contentView.bounds.origin.y > 0 && store.selectedID == favorite,
+                      "The return control reveals the active Favorite in its own shelf")
+            }
+            store.selectAny(pageID)
+        } else {
+            check(false, "The overflow fixture receives all three native shelves")
+        }
         window.setContentSize(NSSize(width: 760, height: 400))
         store.togglePin(pageID)
         await settle(); hosting.layoutSubtreeIfNeeded()

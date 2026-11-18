@@ -9,11 +9,13 @@ enum SidebarFolderLinkFormat {
 final class SidebarSpaceLists {
     let space: Space
     let today: [BrowserCore.Tab]
+    let todayPositions: [UUID: Int]
     let saved: SidebarSavedLayout
 
     init(space: Space) {
         self.space = space
         today = space.tabs.filter { !$0.pinned && !$0.url.isEmpty }
+        todayPositions = sidebarTabPositions(today)
         saved = SidebarSavedLayout(space: space)
     }
 }
@@ -24,6 +26,7 @@ struct SidebarSavedLayout {
     let topLevelTabs: [BrowserCore.Tab]
     let tabsByFolder: [String: [BrowserCore.Tab]]
     let folders: [SidebarFolderTree.Row]
+    let visiblePositions: [UUID: Int]
     private let visibleTabCount: Int
     private let emptyFolderCount: Int
 
@@ -40,14 +43,15 @@ struct SidebarSavedLayout {
         topLevelTabs = grouped[nil] ?? []
         tabsByFolder = byFolder
 
-        var visibleTabs = topLevelTabs.count
+        var visibleTabs = topLevelTabs
         var emptyFolders = 0
         for folder in folders where folder.expanded {
-            let tabCount = byFolder[folder.name]?.count ?? 0
-            visibleTabs += tabCount
-            if tabCount == 0 && tree.children(of: folder.name).isEmpty { emptyFolders += 1 }
+            let folderTabs = byFolder[folder.name, default: []]
+            visibleTabs.append(contentsOf: folderTabs)
+            if folderTabs.isEmpty && tree.children(of: folder.name).isEmpty { emptyFolders += 1 }
         }
-        visibleTabCount = visibleTabs
+        visibleTabCount = visibleTabs.count
+        visiblePositions = sidebarTabPositions(visibleTabs)
         emptyFolderCount = emptyFolders
     }
 
@@ -122,15 +126,15 @@ struct SidebarSavedTabs: View {
 
     private func pinnedList(in spaceID: UUID) -> some View {
         let empty = layout.topLevelTabs.isEmpty && layout.folders.isEmpty
-        return ScrollView {
+        return SidebarTabScrollView(positions: layout.visiblePositions, focusedTab: store.focusedID, theme: theme, motion: motion) {
             LazyVStack(alignment: .leading, spacing: 3) {
-                ForEach(layout.topLevelTabs) { tab in savedRow(tab) }
+                ForEach(layout.topLevelTabs) { tab in savedRow(tab).sidebarTabScrollTarget(tab.id) }
                 ForEach(layout.folders) { folder in
                     folderHeader(folder, in: spaceID)
                     if folder.expanded {
                         let tabs = layout.tabsByFolder[folder.name, default: []]
                         ForEach(tabs) { tab in
-                            savedRow(tab).padding(.leading, indentation(folder.depth + 1))
+                            savedRow(tab).padding(.leading, indentation(folder.depth + 1)).sidebarTabScrollTarget(tab.id)
                         }
                         if tabs.isEmpty && layout.tree.children(of: folder.name).isEmpty {
                             Text("Drop tabs here").font(.system(size: 11))

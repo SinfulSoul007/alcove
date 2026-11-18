@@ -381,7 +381,8 @@ struct BrowserUI: View {
             }.padding(.horizontal, 8).padding(.bottom, 8)
             VStack(alignment: .leading, spacing: 0) {
                 if !favorites.isEmpty {
-                    ScrollView(.vertical, showsIndicators: false) {
+                    SidebarTabScrollView(positions: sidebarTabPositions(favorites), focusedTab: store.focusedID,
+                                         theme: theme, motion: motion, showsIndicators: false) {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 7), count: columns), spacing: 7) {
                         ForEach(favorites) { tab in
                             let actions = tab.pinned ? store.pinnedAddressActions(for: tab.id) : .unavailable
@@ -405,6 +406,7 @@ struct BrowserUI: View {
                                             .padding(4)
                                     }
                                 }
+                                .sidebarTabScrollTarget(tab.id)
                         }
                     }
                     }.frame(height: favoritesHeight).accessibilityLabel("Favorites").padding(.horizontal, 8).padding(.bottom, 8).onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .favorites))
@@ -438,10 +440,11 @@ struct BrowserUI: View {
                     }
                     Button { store.showCommand(new: true) } label: { Label("New Tab", systemImage: "plus").font(.system(size: 12)).opacity(0.5) }.buttonStyle(.plain)
                 }.padding(.horizontal, 18).frame(height: 32).onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .today))
-                ScrollView {
+                SidebarTabScrollView(positions: lists.todayPositions, focusedTab: store.focusedID, theme: theme, motion: motion) {
                     LazyVStack(alignment: .leading, spacing: 3) {
                         ForEach(today) { tab in
                             SidebarTabRow(tab: tab, spaceID: space.id, store: store, theme: theme, appearance: appearance, motion: motion)
+                                .sidebarTabScrollTarget(tab.id)
                         }
                     }.padding(.horizontal, 8)
                 }.accessibilityLabel("Today tabs").onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .today))
