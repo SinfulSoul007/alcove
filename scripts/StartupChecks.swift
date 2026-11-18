@@ -250,12 +250,22 @@ final class KeyGate: @unchecked Sendable {
         waitingWindow.isReleasedWhenClosed = false
         waitingWindow.contentView = waitingHost
         waitingHost.layoutSubtreeIfNeeded()
-        try await Task.sleep(for: .milliseconds(2300))
-        waitingHost.layoutSubtreeIfNeeded()
-        let waitingBitmap = waitingHost.bitmapImageRepForCachingDisplay(in: waitingHost.bounds)!
-        waitingHost.cacheDisplay(in: waitingHost.bounds, to: waitingBitmap)
-        let waitingStatus = try recognizedText(in: waitingBitmap.cgImage!)
-        check(fresh.unlocking && waitingStatus.contains("Open Private Window"),
+        let clock = ContinuousClock()
+        let statusDeadline = clock.now + .seconds(8)
+        try await Task.sleep(for: .seconds(2))
+        var showsPrivateWindowAction = false
+        while fresh.unlocking && clock.now < statusDeadline {
+            waitingHost.layoutSubtreeIfNeeded()
+            if let bitmap = waitingHost.bitmapImageRepForCachingDisplay(in: waitingHost.bounds) {
+                waitingHost.cacheDisplay(in: waitingHost.bounds, to: bitmap)
+                if let image = bitmap.cgImage, try recognizedText(in: image).contains("Open Private Window") {
+                    showsPrivateWindowAction = true
+                    break
+                }
+            }
+            try await Task.sleep(for: .milliseconds(160))
+        }
+        check(fresh.unlocking && showsPrivateWindowAction,
               "A slow fresh lookup reveals the Keychain status and private browsing")
         waitingWindow.close()
         freshGate.release.signal()
