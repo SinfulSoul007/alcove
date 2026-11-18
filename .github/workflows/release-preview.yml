@@ -175,6 +175,12 @@ jobs:
           cat > release-notes.txt <<'NOTE'
           Universal macOS 14+ preview for Apple Silicon and Intel.
 
+          Open Playing Tabs from the sidebar to find pages playing audio or video in the current window and profile. Pause playback from there or jump to its tab. Use the website's player to resume playback.
+
+          Clear Today, day-based archiving and optional tab suspension keep tabs with active playback or camera and microphone capture open. Suspension unloads idle pages and keeps their tabs and addresses. Unsaved forms in unloaded pages can be lost.
+
+          When the sidebar is narrow, Extensions moves beside the address field so the traffic lights, navigation buttons and resize handle stay accessible.
+
           Alcove reuses its tab and folder lists while you drag the sidebar edge or resize the window. Use Copy All Links or Copy All Links as Markdown from a pinned folder’s menu to include links inside its subfolders.
 
           Use File → Import Bookmarks HTML to bring a browser export into a new Space with its nested folders. In Site Search Settings, Use This Site’s Search fills in an editable shortcut when the current page advertises an OpenSearch description that Alcove supports.
@@ -213,7 +219,7 @@ jobs:
 
           The native extension manager has limited tested compatibility with uBlock Origin Lite. Full uBlock Origin support is still in development. Native extension APIs need macOS 15.4+. Private request-blocking extensions need a fixed system WebKit (624.1.16 or later).
 
-          Alcove 0.16 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
+          Alcove 0.17 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
 
           SHA256SUMS.txt contains checksums for both installers. Checksums detect changed bytes; they do not establish developer identity.
           NOTE
