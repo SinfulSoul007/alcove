@@ -59,6 +59,15 @@ struct SystemWebKitExtensionProbe {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-webkit-probe-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        if CommandLine.arguments.contains("--require-runtime-url") {
+            do { try await runRuntimeURL(root: root) }
+            catch {
+                print("FAIL: the extension runtime URL function lost its native owner or rejected a supported call")
+                try? FileManager.default.removeItem(at: root)
+                exit(1)
+            }
+            if CommandLine.arguments.contains("--runtime-url-only") { return }
+        }
         try await runOffscreen(root: root.appendingPathComponent("mv3"))
         guard let argument = CommandLine.arguments.dropFirst().first,
               let server = URL(string: argument), server.scheme == "http", server.host == "127.0.0.1",
@@ -109,6 +118,47 @@ struct SystemWebKitExtensionProbe {
             try await Task.sleep(for: .milliseconds(20))
         }
         throw URLError(.timedOut)
+    }
+
+    @available(macOS 15.4, *)
+    @MainActor static func runRuntimeURL(root: URL) async throws {
+        func observe(_ name: String) async throws -> URL {
+            let (controller, context, _, page) = try await create(root.appendingPathComponent(name),
+                manifest: ["manifest_version": 2, "name": name, "version": "1", "options_page": "options.html"],
+                resources: [:], permissions: [])
+            defer { try? controller.unload(context) }
+            let result = try await page.evaluateJavaScript("""
+                (() => {
+                    const runtime = browser.runtime;
+                    const alias = runtime.getURL;
+                    const copied = {lookup: alias};
+                    const safe = (fn) => { try { return fn() ?? null; } catch (_) { return null; } };
+                    const rejects = (fn) => { try { fn(); return false; } catch (_) { return true; } };
+                    return {root:runtime.getURL(''), direct:runtime.getURL('options.html'),
+                        moved:safe(() => copied.lookup('options.html')),
+                        called:safe(() => alias.call({}, 'options.html')),
+                        stable:alias === runtime.getURL, callable:typeof alias === 'function',
+                        rejectsMissing:rejects(() => alias()), rejectsNumber:rejects(() => alias(17))};
+                })()
+                """) as? [String: Any]
+            let base = context.baseURL
+            let expected = base.appendingPathComponent("options.html").absoluteString
+            print("RUNTIME_URL_OWNER \(name) direct=\(result?["direct"] as? String == expected) moved=\(result?["moved"] as? String == expected) called=\(result?["called"] as? String == expected)")
+            guard result?["root"] as? String == base.absoluteString,
+                  result?["direct"] as? String == expected,
+                  result?["moved"] as? String == expected, result?["called"] as? String == expected,
+                  result?["stable"] as? Bool == true, result?["callable"] as? Bool == true,
+                  result?["rejectsMissing"] as? Bool == true, result?["rejectsNumber"] as? Bool == true else {
+                throw CocoaError(.coderInvalidValue)
+            }
+            return base
+        }
+        let first = try await observe("Owned URL runtime A")
+        let second = try await observe("Owned URL runtime B")
+        guard first.host != nil, second.host != nil, first.host != second.host else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        print("RUNTIME_URL_OWNERS_VERIFIED")
     }
 
     @available(macOS 15.4, *)

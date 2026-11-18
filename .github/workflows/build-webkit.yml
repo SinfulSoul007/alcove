@@ -1,8 +1,8 @@
-name: Build and test the WebKit request-blocking probe
+name: Build and test WebKit runtime ownership and request blocking
 
 on:
   push:
-    branches: [research/webkit-fast-probe]
+    branches: [research/webkit-runtime-url]
 
 permissions:
   contents: read
@@ -35,6 +35,14 @@ jobs:
           fi
           df -h "$RUNNER_TEMP"
 
+      - name: Verify JavaScriptCore callable ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun clang++ -fobjc-arc -std=c++20 -Wall -Wextra -Werror -framework Foundation -framework JavaScriptCore \
+            diagnostics/webkit-runtime-ownership-check.mm -o "$RUNNER_TEMP/owned-runtime-check"
+          "$RUNNER_TEMP/owned-runtime-check"
+
       - name: Check out pinned upstream WebKit
         shell: bash
         run: |
@@ -52,9 +60,11 @@ jobs:
         timeout-minutes: 351
         run: |
           set -euo pipefail
-          patch="$GITHUB_WORKSPACE/diagnostics/webkit-before-send-cancellation.patch"
-          git apply --check "$patch"
-          git apply "$patch"
+          for name in webkit-before-send-cancellation webkit-runtime-owner; do
+            patch="$GITHUB_WORKSPACE/diagnostics/$name.patch"
+            git apply --check "$patch"
+            git apply "$patch"
+          done
           git diff --check
           # Keep the working O1 configuration. The probe needs neither IDE indices nor debug symbols.
           Tools/Scripts/set-webkit-configuration --release --force-optimization-level=O1 --lto-mode=none
@@ -86,7 +96,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
-      - name: Require before-send cancellation in the built framework
+      - name: Verify runtime ownership and before-send cancellation in the built framework
         shell: bash
         run: |
           set -euo pipefail
@@ -109,6 +119,6 @@ jobs:
           test -s "$scratch/port"
           status=0
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
-            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --require-blocking || status=$?
+            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --require-runtime-url --require-blocking || status=$?
           cat "$scratch/requests.log"
           exit "$status"

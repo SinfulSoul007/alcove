@@ -1,0 +1,78 @@
+diff --git a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm
+index 849c262..ee630dd 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm
++++ b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm
+@@ -47,6 +47,7 @@
+ #import "WebFrame.h"
+ #import "WebPage.h"
+ #import "WebProcess.h"
++#import <JavaScriptCore/JSObjectRefPrivate.h>
+ #import <WebCore/SecurityOrigin.h>
+ #import <wtf/BlockPtr.h>
+ #import <wtf/CallbackAggregator.h>
+@@ -170,11 +171,37 @@ - (instancetype)initWithAggregator:(WebKit::ReplyCallbackAggregator&)aggregator
+     return false;
+ }
+ 
+-NSURL *WebExtensionAPIRuntime::getURL(const String& resourcePath, NSString **outExceptionString)
++JSValueRef JSWebExtensionAPIRuntime::getURL(JSContextRef context, JSObjectRef object, JSStringRef propertyName, JSValueRef*)
+ {
+-    // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/getURL
++    RefPtr runtime = toWebExtensionAPIRuntime(context, object);
++    if (!runtime) [[unlikely]]
++        return JSValueMakeUndefined(context);
+ 
+-    return URL { extensionContext().baseURL(), resourcePath }.createNSURL().autorelease();
++    if (auto cached = JSObjectGetPrivateProperty(context, object, propertyName))
++        return cached;
++
++    // The callable belongs to this extension even when JavaScript stores it on another object.
++    URL baseURL = runtime->extensionContext().baseURL();
++    JSContext *scriptContext = [JSContext contextWithJSGlobalContextRef:JSContextGetGlobalContext(context)];
++    JSValue *function = [JSValue valueWithObject:^JSValue * {
++        JSContext *callContext = JSContext.currentContext;
++        JSValue *path = JSContext.currentArguments.firstObject;
++        if (!path.isString) {
++            auto argument = path ? "resourcePath"_s : nullString();
++            auto message = path ? "a string is expected"_s : "a required argument is missing"_s;
++            auto error = toJSError(callContext.JSGlobalContextRef, "runtime.getURL()"_s, argument, message);
++            callContext.exception = [JSValue valueWithJSValueRef:error inContext:callContext];
++            return [JSValue valueWithUndefinedInContext:callContext];
++        }
++
++        NSURL *resource = URL { baseURL, String(path.toString) }.createNSURL().autorelease();
++        if (!resource)
++            return [JSValue valueWithNullInContext:callContext];
++        return [JSValue valueWithObject:resource.absoluteString inContext:callContext];
++    } inContext:scriptContext];
++    auto result = function.JSValueRef;
++    JSObjectSetPrivateProperty(context, object, propertyName, result);
++    return result;
+ }
+ 
+ NSDictionary *WebExtensionAPIRuntime::getManifest()
+diff --git a/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h b/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h
+index 9a2575c..288d8c7 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h
++++ b/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h
+@@ -67,7 +67,6 @@ public:
+ #if PLATFORM(COCOA)
+     bool isPropertyAllowed(const ASCIILiteral& propertyName, WebPage*);
+ 
+-    NSURL *getURL(const String& resourcePath, NSString **outExceptionString);
+     NSDictionary *getManifest();
+     String getVersion();
+     void getPlatformInfo(Ref<WebExtensionCallbackHandler>&&);
+diff --git a/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl b/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl
+index 9787ece..938ebac 100644
+--- a/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl
++++ b/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl
+@@ -30,7 +30,7 @@
+ 
+     [ImplementedAs=runtimeIdentifier] readonly attribute DOMString id;
+ 
+-    [URL, ConvertNullStringTo=Null, RaisesException] DOMString getURL(DOMString resourcePath);
++    [Custom] readonly attribute any getURL;
+     [NSDictionary] any getManifest();
+     DOMString getVersion();
+     double getFrameId(any target);
