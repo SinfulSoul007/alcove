@@ -1,0 +1,243 @@
+diff --git a/Source/WebKit/Shared/Extensions/WebExtensionConstants.h b/Source/WebKit/Shared/Extensions/WebExtensionConstants.h
+index e0b91cd0333b5ee1ac7b7afa9336310dd8031db9..9672b2d2c5318bb02114edb1760e6874c3b4de5f 100644
+--- a/Source/WebKit/Shared/Extensions/WebExtensionConstants.h
++++ b/Source/WebKit/Shared/Extensions/WebExtensionConstants.h
+@@ -32,6 +32,9 @@ namespace WebKit {
+ // MARK: Alarms
+ static constexpr auto webExtensionMinimumAlarmInterval = 30_s;
+
++// MARK: Web Request
++static constexpr unsigned webExtensionMaximumHandlerBehaviorChanges = 20;
++
+ // MARK: Message Passing
+ /// This matches the maximum message length enforced by Chromium in its `MessageFromJSONString()` function.
+ static constexpr size_t webExtensionMaxMessageLength = 1024 * 1024 * 64;
+diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
+index eda89257201477e0c48231e2acdf96d8eaadd9f5..c92217f4b68f896afe53cdeb568ac2b11e470088 100644
+--- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
++++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
+@@ -28,6 +28,7 @@
+ #endif
+
+ #import "config.h"
++#import "MessageSenderInlines.h"
+ #import "WebExtensionContext.h"
+
+ #if ENABLE(WK_WEB_EXTENSIONS)
+@@ -79,6 +80,7 @@
+ #import "WebPageProxy.h"
+ #import "WebPageProxyIdentifier.h"
+ #import "WebPreferences.h"
++#import "WebProcessMessages.h"
+ #import "WebScriptMessageHandler.h"
+ #import "WebUserContentControllerProxy.h"
+ #import "WebsiteDataFetchOption.h"
+@@ -1654,6 +1656,49 @@ static String permissionNotification(WebExtensionContext::PermissionNotification
+
+ // MARK: webRequest
+
++bool WebExtensionContext::isWebRequestMessageAllowed(IPC::Decoder& message)
++{
++    return isLoadedAndPrivilegedMessage(message) && hasPermission(WebExtensionPermission::webRequest());
++}
++
++void WebExtensionContext::webRequestHandlerBehaviorChanged(CompletionHandler<void(Expected<void, WebExtensionError>&&)>&& completionHandler)
++{
++    RefPtr controller = protectedExtensionController();
++    if (!controller)
++        return completionHandler(toWebExtensionError(@"webRequest.handlerBehaviorChanged()", nullString(), @"the extension is no longer loaded"));
++
++    auto now = MonotonicTime::now();
++    auto cutoff = now - 600_s;
++    while (!m_webRequestCacheChanges.isEmpty() && m_webRequestCacheChanges.first() <= cutoff)
++        m_webRequestCacheChanges.removeFirst();
++    if (m_webRequestCacheChanges.size() >= webExtensionMaximumHandlerBehaviorChanges)
++        return completionHandler(toWebExtensionError(@"webRequest.handlerBehaviorChanged()", nullString(), @"too many cache invalidations in ten minutes"));
++    m_webRequestCacheChanges.append(now);
++
++    Ref callbackAggregator = MainRunLoopCallbackAggregator::create([completionHandler = WTF::move(completionHandler)]() mutable {
++        completionHandler({ });
++    });
++
++    // A rule change only needs renderer resources evicted. Website data removal would
++    // also discard back/forward pages and cached renderer processes.
++    auto invalidateStore = [&](WebsiteDataStore& store) {
++        if (!store.isPersistent() && !hasAccessToPrivateData())
++            return;
++        for (Ref process : store.processes()) {
++            if (process->websiteDataStore() == &store && process->state() == WebProcessProxy::State::Running)
++                process->sendWithAsyncReply(Messages::WebProcess::ClearExtensionResourceMemoryCache(), [callbackAggregator] { });
++        }
++    };
++
++    RefPtr defaultStore = controller->websiteDataStore();
++    if (defaultStore)
++        invalidateStore(*defaultStore);
++    for (Ref store : controller->allWebsiteDataStores()) {
++        if (store.ptr() != defaultStore.get())
++            invalidateStore(store);
++    }
++}
++
+ bool WebExtensionContext::hasPermissionToSendWebRequestEvent(WebExtensionTab* tab, const URL& resourceURL, const ResourceLoadInfo& loadInfo)
+ {
+     if (!tab)
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
+index 935e2843b0a7bdaf6171678d90d97991449be176..0df4638a19650adb241cf3f7b7b610fc317836e4 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
+@@ -64,6 +64,7 @@
+ #include <WebCore/ContentRuleListResults.h>
+ #include <wtf/CompletionHandler.h>
+ #include <wtf/Deque.h>
++#include <wtf/MonotonicTime.h>
+ #include <wtf/Forward.h>
+ #include <wtf/HashCountedSet.h>
+ #include <wtf/HashMap.h>
+@@ -1010,6 +1011,8 @@ private:
+     void fireWindowsEventIfNeeded(WebExtensionEventListenerType, std::optional<WebExtensionWindowParameters>);
+
+     // webRequest support.
++    bool isWebRequestMessageAllowed(IPC::Decoder&);
++    void webRequestHandlerBehaviorChanged(CompletionHandler<void(Expected<void, WebExtensionError>&&)>&&);
+     bool hasPermissionToSendWebRequestEvent(WebExtensionTab*, const URL& resourceURL, const ResourceLoadInfo&);
+
+     // IPC::MessageReceiver.
+@@ -1059,6 +1062,7 @@ private:
+     HashMap<URL, PermissionState> m_cachedPermissionStates;
+
+     size_t m_pendingPermissionRequests { 0 };
++    Deque<MonotonicTime> m_webRequestCacheChanges;
+
+     bool m_requestedOptionalAccessToAllHosts { false };
+     bool m_hasAccessToPrivateData { false };
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.messages.in b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.messages.in
+index 2baa6bbf2a80843e22f6e3b089578b2a68f0df7b..8cf0fdb0ea1122b7c383bca8197102a88acd7826 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.messages.in
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.messages.in
+@@ -186,6 +186,8 @@ messages -> WebExtensionContext {
+     [Validator=isWebNavigationMessageAllowed] WebNavigationGetAllFrames(WebKit::WebExtensionTabIdentifier tabIdentifier) -> (Expected<Vector<WebKit::WebExtensionFrameParameters>, WebKit::WebExtensionError> result)
+     [Validator=isWebNavigationMessageAllowed] WebNavigationGetFrame(WebKit::WebExtensionTabIdentifier tabIdentifier, WebKit::WebExtensionFrameIdentifier frameIdentifier) -> (Expected<std::optional<WebKit::WebExtensionFrameParameters>, WebKit::WebExtensionError> result)
+
++    [Validator=isWebRequestMessageAllowed] WebRequestHandlerBehaviorChanged() -> (Expected<void, WebKit::WebExtensionError> result)
++
+     // Windows APIs
+     [Validator=isLoadedAndPrivilegedMessage] WindowsCreate(WebKit::WebExtensionWindowParameters creationParameters) -> (Expected<std::optional<WebKit::WebExtensionWindowParameters>, WebKit::WebExtensionError> result)
+     [Validator=isLoadedAndPrivilegedMessage] WindowsGet(WebKit::WebPageProxyIdentifier webPageProxyIdentifier, WebKit::WebExtensionWindowIdentifier windowIdentifier, OptionSet<WebKit::WebExtensionWindowTypeFilter> filter, WebKit::WebExtensionWindow::PopulateTabs populate) -> (Expected<WebKit::WebExtensionWindowParameters, WebKit::WebExtensionError> result)
+diff --git a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebRequestCocoa.mm b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebRequestCocoa.mm
+index f40441a2f421719c5aeb02ed099a37b71532b94c..60d4f17985d06f8375dd4023d8293d126bd8cd0c 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebRequestCocoa.mm
++++ b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebRequestCocoa.mm
+@@ -29,9 +29,13 @@
+
+ #import "config.h"
+ #import "FormDataReference.h"
++#import "MessageSenderInlines.h"
+ #import "ResourceLoadInfo.h"
+ #import "WebExtensionAPINamespace.h"
+ #import "WebExtensionAPIWebRequest.h"
++#import "WebExtensionConstants.h"
++#import "WebExtensionContextMessages.h"
++#import "WebProcess.h"
+ #import <JavaScriptCore/JSValue.h>
+ #import <WebCore/HTTPStatusCodes.h>
+ #import <WebCore/ResourceResponse.h>
+@@ -72,6 +76,23 @@
+
+ namespace WebKit {
+
++unsigned WebExtensionAPIWebRequest::maximumHandlerBehaviorChanges() const
++{
++    return webExtensionMaximumHandlerBehaviorChanges;
++}
++
++void WebExtensionAPIWebRequest::handlerBehaviorChanged(Ref<WebExtensionCallbackHandler>&& callback)
++{
++    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::WebRequestHandlerBehaviorChanged(), [protectedThis = Ref { *this }, callback = WTF::move(callback)](Expected<void, WebExtensionError>&& result) {
++        if (!result) {
++            callback->reportError(result.error().createNSString().get());
++            return;
++        }
++
++        callback->call();
++    }, extensionContext().identifier());
++}
++
+ WebExtensionAPIWebRequestEvent& WebExtensionAPIWebRequest::onBeforeRequest()
+ {
+     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onBeforeRequest
+diff --git a/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIWebRequest.h b/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIWebRequest.h
+index 5bab1f49173ca65d5527f0cbe4f1bce59bb2b9df..49ccc45c4a15e579e884d8e3adec381a8299e749 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIWebRequest.h
++++ b/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIWebRequest.h
+@@ -40,6 +40,9 @@ class WebExtensionAPIWebRequest : public WebExtensionAPIObject, public JSWebExte
+
+ public:
+ #if PLATFORM(COCOA)
++    unsigned maximumHandlerBehaviorChanges() const;
++    void handlerBehaviorChanged(Ref<WebExtensionCallbackHandler>&&);
++
+     WebExtensionAPIWebRequestEvent& onBeforeRequest();
+     WebExtensionAPIWebRequestEvent& onBeforeSendHeaders();
+     WebExtensionAPIWebRequestEvent& onSendHeaders();
+diff --git a/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIWebRequest.idl b/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIWebRequest.idl
+index 48cb3ab2ad0cf995bc3b25c0126667bbdc156f79..2e15692877ed26da3e81fad8b7808f9c0f534ca9 100644
+--- a/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIWebRequest.idl
++++ b/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIWebRequest.idl
+@@ -29,6 +29,9 @@
+     ReturnsPromiseWhenCallbackIsOmitted,
+ ] interface WebExtensionAPIWebRequest {
+
++    [ImplementedAs=maximumHandlerBehaviorChanges] readonly attribute unsigned long MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES;
++    void handlerBehaviorChanged([Optional, CallbackHandler] function callback);
++
+     readonly attribute WebExtensionAPIWebRequestEvent onBeforeRequest;
+     readonly attribute WebExtensionAPIWebRequestEvent onBeforeSendHeaders;
+     readonly attribute WebExtensionAPIWebRequestEvent onSendHeaders;
+diff --git a/Source/WebKit/WebProcess/WebProcess.cpp b/Source/WebKit/WebProcess/WebProcess.cpp
+index c37a8d77a15cd1ff618f582cae8b204b089915e7..ac5af7569acf416cb7d80fac160105dcf898a739 100644
+--- a/Source/WebKit/WebProcess/WebProcess.cpp
++++ b/Source/WebKit/WebProcess/WebProcess.cpp
+@@ -1709,6 +1709,14 @@ void WebProcess::deleteWebsiteData(OptionSet<WebsiteDataType> websiteDataTypes,
+     completionHandler();
+ }
+
++#if ENABLE(WK_WEB_EXTENSIONS) && PLATFORM(COCOA)
++void WebProcess::clearExtensionResourceMemoryCache(CompletionHandler<void()>&& completionHandler)
++{
++    MemoryCache::singleton().evictResources(sessionID());
++    completionHandler();
++}
++#endif
++
+ void WebProcess::deleteAllCookies(CompletionHandler<void()>&& completionHandler)
+ {
+     m_cookieJar->clearCache();
+diff --git a/Source/WebKit/WebProcess/WebProcess.h b/Source/WebKit/WebProcess/WebProcess.h
+index c7cb973e0b30a18774b5ddcab20ca22bc00329e3..9ce8bacda918e4c7219dc9c9518be16cc7810400 100644
+--- a/Source/WebKit/WebProcess/WebProcess.h
++++ b/Source/WebKit/WebProcess/WebProcess.h
+@@ -651,6 +651,9 @@ private:
+
+     void fetchWebsiteData(OptionSet<WebsiteDataType>, CompletionHandler<void(WebsiteData&&)>&&);
+     void deleteWebsiteData(OptionSet<WebsiteDataType>, WallTime modifiedSince, CompletionHandler<void()>&&);
++#if ENABLE(WK_WEB_EXTENSIONS) && PLATFORM(COCOA)
++    void clearExtensionResourceMemoryCache(CompletionHandler<void()>&&);
++#endif
+     void deleteWebsiteDataForOrigins(OptionSet<WebsiteDataType>, const Vector<WebCore::SecurityOriginData>& origins, CompletionHandler<void()>&&);
+     void deleteAllCookies(CompletionHandler<void()>&&);
+
+diff --git a/Source/WebKit/WebProcess/WebProcess.messages.in b/Source/WebKit/WebProcess/WebProcess.messages.in
+index adf7c412574d8073d846d2d9f25d22e013a07537..ca7cf9318ce0344714328d726e0260a3359130f4 100644
+--- a/Source/WebKit/WebProcess/WebProcess.messages.in
++++ b/Source/WebKit/WebProcess/WebProcess.messages.in
+@@ -90,6 +90,9 @@ messages -> WebProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
+
+     FetchWebsiteData(OptionSet<WebKit::WebsiteDataType> websiteDataTypes) -> (struct WebKit::WebsiteData websiteData)
+     DeleteWebsiteData(OptionSet<WebKit::WebsiteDataType> websiteDataTypes, WallTime modifiedSince) -> ()
++#if ENABLE(WK_WEB_EXTENSIONS) && PLATFORM(COCOA)
++    ClearExtensionResourceMemoryCache() -> ()
++#endif
+     DeleteWebsiteDataForOrigins(OptionSet<WebKit::WebsiteDataType> websiteDataTypes, Vector<WebCore::SecurityOriginData> origins) -> ()
+     DeleteWebsiteDataForOrigin(OptionSet<WebKit::WebsiteDataType> websiteDataTypes, struct WebCore::ClientOrigin origin) -> ()
+     ReloadExecutionContextsForOrigin(struct WebCore::ClientOrigin origin, std::optional<WebCore::FrameIdentifier> triggeringFrame) -> ()

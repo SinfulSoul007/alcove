@@ -1,8 +1,8 @@
-name: Build and test WebKit navigation target events
+name: Build and test WebKit extension cache invalidation
 
 on:
   push:
-    branches: [research/webkit-navigation-target]
+    branches: [research/webkit-webrequest-cache]
 
 permissions:
   contents: read
@@ -60,7 +60,7 @@ jobs:
         timeout-minutes: 351
         run: |
           set -euo pipefail
-          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target; do
+          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache; do
             patch="$GITHUB_WORKSPACE/diagnostics/$name.patch"
             git apply --check "$patch"
             git apply "$patch"
@@ -108,7 +108,7 @@ jobs:
             rm -rf "$scratch"
           }
           trap cleanup EXIT
-          xcrun swiftc -parse-as-library diagnostics/webkit-extension-probe.swift -o "$scratch/probe"
+          xcrun swiftc -parse-as-library diagnostics/webkit-extension-probe.swift diagnostics/webkit-request-cache-probe.swift -o "$scratch/probe"
           python3 diagnostics/webkit-probe-server.py "$scratch/port" > "$scratch/requests.log" 2>&1 &
           server=$!
           for attempt in {1..100}; do
@@ -118,11 +118,15 @@ jobs:
           done
           test -s "$scratch/port"
           navigation_status=0
+          cache_status=0
           status=0
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --request-cache-only || cache_status=$?
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
             "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --navigation-target-only || navigation_status=$?
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
             "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --require-runtime-url --require-blocking || status=$?
           cat "$scratch/requests.log"
+          if (( cache_status != 0 )); then exit "$cache_status"; fi
           if (( navigation_status != 0 )); then exit "$navigation_status"; fi
           exit "$status"

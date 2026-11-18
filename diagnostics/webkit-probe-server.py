@@ -21,7 +21,14 @@ class Fixture(BaseHTTPRequestHandler):
             self.counts[request.path] = self.counts.get(request.path, 0) + 1
 
         mime = "text/html; charset=utf-8"
-        if request.path.endswith("/control.js"):
+        if request.path.startswith("/rule-cache/"):
+            if request.path.endswith("/candidate.js"):
+                self.respond("window.cacheFixtureScriptRan = true;", "application/javascript", "public, max-age=600")
+                return
+            directory = escape(request.path.rsplit("/", 1)[0], quote=True)
+            body = ("<!doctype html><title>Owned cache fixture</title>"
+                    f"<script src='{directory}/candidate.js'></script>")
+        elif request.path.endswith("/control.js"):
             body, mime = "window.controlRequestLoaded = true;", "application/javascript"
         elif request.path.endswith("/should-cancel.js"):
             body, mime = "window.candidateRequestLoaded = true;", "application/javascript"
@@ -34,11 +41,11 @@ class Fixture(BaseHTTPRequestHandler):
             body = "<!doctype html><title>Owned loopback page</title>"
         self.respond(body, mime)
 
-    def respond(self, body, mime):
+    def respond(self, body, mime, cache_control="no-store"):
         data = body.encode()
         self.send_response(200)
         self.send_header("Content-Type", mime)
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)

@@ -80,6 +80,15 @@ struct SystemWebKitExtensionProbe {
             }
             return
         }
+        if CommandLine.arguments.contains("--request-cache-only") {
+            let passed = try await runRequestCache(root: root.appendingPathComponent("request-cache"), server: server)
+            if !passed {
+                print("FAIL: extension changes must reach memory-cached requests in the approved WebKit profile")
+                try? FileManager.default.removeItem(at: root)
+                exit(1)
+            }
+            return
+        }
         try await runOffscreen(root: root.appendingPathComponent("mv3"))
         try await runBlocking(root: root.appendingPathComponent("mv2"), server: server,
                               requireBlocking: CommandLine.arguments.contains("--require-blocking"))
