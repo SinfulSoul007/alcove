@@ -1,0 +1,162 @@
+diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKWebView.mm b/Source/WebKit/UIProcess/API/Cocoa/WKWebView.mm
+index de2ddfc0a736b6789b5035b12df52ecdef021196..4c9a8ee6118d2e98042afc17ea43576d0b2834c6 100644
+--- a/Source/WebKit/UIProcess/API/Cocoa/WKWebView.mm
++++ b/Source/WebKit/UIProcess/API/Cocoa/WKWebView.mm
+@@ -5422,6 +5422,38 @@ - (void)_setCORSDisablingPatterns:(NSArray<NSString *> *)patterns
+     _page->setCORSDisablingPatterns(makeVector<String>(patterns));
+ }
+
++- (BOOL)_setExtensionPrivacyPreferences:(NSDictionary<NSString *, id> *)overrides
++{
++    if (![overrides isKindOfClass:NSDictionary.class])
++        return NO;
++
++    // Validate the complete update before changing any existing override.
++    for (id key in overrides) {
++        if (![key isKindOfClass:NSString.class])
++            return NO;
++
++        id value = overrides[key];
++        if ([key isEqualToString:@"networkPredictionEnabled"] || [key isEqualToString:@"hyperlinkAuditingEnabled"]) {
++            if (![value isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID())
++                return NO;
++        } else if ([key isEqualToString:@"webRTCIPHandlingPolicy"]) {
++            if (![value isKindOfClass:NSString.class] || (![(NSString *)value isEqualToString:@"default"]
++                && ![(NSString *)value isEqualToString:@"default_public_and_private_interfaces"]
++                && ![(NSString *)value isEqualToString:@"default_public_interface_only"]
++                && ![(NSString *)value isEqualToString:@"disable_non_proxied_udp"]))
++                return NO;
++        } else
++            return NO;
++    }
++
++    NSNumber *prediction = overrides[@"networkPredictionEnabled"];
++    NSNumber *auditing = overrides[@"hyperlinkAuditingEnabled"];
++    NSString *policy = overrides[@"webRTCIPHandlingPolicy"];
++    _page->setExtensionPrivacyPreferences(prediction ? std::optional<bool>(prediction.boolValue) : std::nullopt,
++        auditing ? std::optional<bool>(auditing.boolValue) : std::nullopt, policy ? String(policy) : nullString());
++    return YES;
++}
++
+ - (BOOL)_networkRequestsInProgress
+ {
+     return _page->pageLoadState().networkRequestsInProgress();
+diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKWebViewPrivate.h b/Source/WebKit/UIProcess/API/Cocoa/WKWebViewPrivate.h
+index ff77202d8a990216e7e800a9f4ce9389352cf882..1f62a62699f9a0805c3a8fcdfafad28292b45bd5 100644
+--- a/Source/WebKit/UIProcess/API/Cocoa/WKWebViewPrivate.h
++++ b/Source/WebKit/UIProcess/API/Cocoa/WKWebViewPrivate.h
+@@ -268,6 +268,17 @@ for this property.
+
+ @property (nonatomic, copy, setter=_setCORSDisablingPatterns:) NSArray<NSString *> *_corsDisablingPatterns WK_API_AVAILABLE(macos(15.4), ios(18.4), visionos(2.4));
+
++/*!
++ @abstract Replaces the extension privacy preference overrides for this page.
++ @discussion Accepted keys are networkPredictionEnabled and hyperlinkAuditingEnabled (booleans),
++ and webRTCIPHandlingPolicy (one of the four supported policy strings). Omitted keys use the
++ current embedder preferences. An empty dictionary removes all overrides. Invalid input returns
++ NO without changing any override. WebRTC routing changes apply to new peer connections.
++ The embedder must resolve extension permissions, profile scope and precedence before applying
++ these effective values. Shared WKPreferences objects are not modified.
++ */
++- (BOOL)_setExtensionPrivacyPreferences:(NSDictionary<NSString *, id> *)overrides;
++
+ @property (nonatomic, readonly) BOOL _networkRequestsInProgress;
+
+ @property (nonatomic, readonly, getter=_isShowingNavigationGestureSnapshot) BOOL _showingNavigationGestureSnapshot;
+diff --git a/Source/WebKit/UIProcess/WebPageProxy.cpp b/Source/WebKit/UIProcess/WebPageProxy.cpp
+index 02bc00e856c16835fcdc148932da2a4db58bfb07..76cd1e42fd17c7e8589138519d36e8987e3fde32 100644
+--- a/Source/WebKit/UIProcess/WebPageProxy.cpp
++++ b/Source/WebKit/UIProcess/WebPageProxy.cpp
+@@ -4553,9 +4553,43 @@ bool WebPageProxy::handleKeyboardEvent(const NativeWebKeyboardEvent& event)
+
+ const WebPreferencesStore& WebPageProxy::preferencesStore() const
+ {
++    if (m_extensionPrivacyPreferencesStore)
++        return *m_extensionPrivacyPreferencesStore;
+     return m_preferences->store();
+ }
+
++void WebPageProxy::setExtensionPrivacyPreferences(std::optional<bool> networkPrediction, std::optional<bool> hyperlinkAuditing, String webRTCIPHandlingPolicy)
++{
++    if (m_extensionNetworkPrediction == networkPrediction && m_extensionHyperlinkAuditing == hyperlinkAuditing && m_extensionWebRTCIPHandlingPolicy == webRTCIPHandlingPolicy)
++        return;
++
++    m_extensionNetworkPrediction = networkPrediction;
++    m_extensionHyperlinkAuditing = hyperlinkAuditing;
++    m_extensionWebRTCIPHandlingPolicy = WTF::move(webRTCIPHandlingPolicy);
++    preferencesDidChange();
++}
++
++void WebPageProxy::updateExtensionPrivacyPreferencesStore()
++{
++    if (!m_extensionNetworkPrediction && !m_extensionHyperlinkAuditing && m_extensionWebRTCIPHandlingPolicy.isNull()) {
++        m_extensionPrivacyPreferencesStore = nullptr;
++        return;
++    }
++
++    // Overlay the latest embedder values without changing a shared WebPreferences object.
++    if (!m_extensionPrivacyPreferencesStore)
++        m_extensionPrivacyPreferencesStore = makeUnique<WebPreferencesStore>(m_preferences->store());
++    else
++        *m_extensionPrivacyPreferencesStore = m_preferences->store();
++
++    if (m_extensionNetworkPrediction)
++        m_extensionPrivacyPreferencesStore->setBoolValueForKey(WebPreferencesKey::networkPredictionEnabledKey(), *m_extensionNetworkPrediction);
++    if (m_extensionHyperlinkAuditing)
++        m_extensionPrivacyPreferencesStore->setBoolValueForKey(WebPreferencesKey::hyperlinkAuditingEnabledKey(), *m_extensionHyperlinkAuditing);
++    if (!m_extensionWebRTCIPHandlingPolicy.isNull())
++        m_extensionPrivacyPreferencesStore->setStringValueForKey(WebPreferencesKey::webRTCIPHandlingPolicyKey(), m_extensionWebRTCIPHandlingPolicy);
++}
++
+ #if ENABLE(TOUCH_EVENTS)
+
+ static TrackingType mergeTrackingTypes(TrackingType a, TrackingType b)
+@@ -6882,6 +6916,8 @@ void WebPageProxy::updateRenderingWithForcedRepaint(CompletionHandler<void()>&&
+
+ void WebPageProxy::preferencesDidChange()
+ {
++    updateExtensionPrivacyPreferencesStore();
++
+     if (!hasRunningProcess())
+         return;
+
+@@ -7160,7 +7196,7 @@ void WebPageProxy::updateOpener(IPC::Connection& connection, WebCore::FrameIdent
+ void WebPageProxy::preconnectTo(ResourceRequest&& request)
+ {
+     Ref websiteDataStore = m_websiteDataStore;
+-    if (!protectedPreferences()->networkPredictionEnabled() || !websiteDataStore->configuration().allowsServerPreconnect())
++    if (!preferencesStore().getBoolValueForKey(WebPreferencesKey::networkPredictionEnabledKey()) || !websiteDataStore->configuration().allowsServerPreconnect())
+         return;
+
+     auto storedCredentialsPolicy = m_canUseCredentialStorage ? WebCore::StoredCredentialsPolicy::Use : WebCore::StoredCredentialsPolicy::DoNotUse;
+diff --git a/Source/WebKit/UIProcess/WebPageProxy.h b/Source/WebKit/UIProcess/WebPageProxy.h
+index 5688fa05edfcb049a04fe46ffec0c2ef6a902c80..379d5b8213ca035f7ae86594bf6539e46ba61369 100644
+--- a/Source/WebKit/UIProcess/WebPageProxy.h
++++ b/Source/WebKit/UIProcess/WebPageProxy.h
+@@ -1836,6 +1836,7 @@ public:
+ #endif
+
+     void preferencesDidChange();
++    void setExtensionPrivacyPreferences(std::optional<bool> networkPrediction, std::optional<bool> hyperlinkAuditing, String webRTCIPHandlingPolicy);
+
+ #if ENABLE(CONTEXT_MENUS)
+     // Called by the WebContextMenuProxy.
+@@ -2248,6 +2249,7 @@ public:
+     void getTextFragmentMatch(CompletionHandler<void(const String&)>&&);
+
+     const WebPreferencesStore& preferencesStore() const;
++    void updateExtensionPrivacyPreferencesStore();
+
+     bool isPageOpenedByDOMShowingInitialEmptyDocument() const;
+
+@@ -3640,6 +3642,10 @@ private:
+     Ref<WebProcessProxy> m_legacyMainFrameProcess;
+     const Ref<WebPageGroup> m_pageGroup;
+     Ref<WebPreferences> m_preferences;
++    std::optional<bool> m_extensionNetworkPrediction;
++    std::optional<bool> m_extensionHyperlinkAuditing;
++    String m_extensionWebRTCIPHandlingPolicy;
++    std::unique_ptr<WebPreferencesStore> m_extensionPrivacyPreferencesStore;
+
+     const Ref<WebUserContentControllerProxy> m_userContentController;
+

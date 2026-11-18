@@ -143,6 +143,16 @@ extension SystemWebKitExtensionProbe {
         set(preferences, setSelector, ObjCBool(true))
         let restoredValue = read(preferences, readSelector).boolValue
         let restored = try await exercise("restored", web: changed, expectsPrefetch: true)
+        if CommandLine.arguments.contains("--require-privacy-overlay") {
+            guard applyPrivacyOverlay(["networkPredictionEnabled": false], to: changed) == true else { return false }
+            let blocked = try await exercise("overlay-disabled", web: changed, expectsPrefetch: false)
+            let untouched = try await exercise("overlay-separate-page", web: control, expectsPrefetch: true)
+            let baseUnchanged = read(preferences, readSelector).boolValue
+            guard applyPrivacyOverlay([:], to: changed) == true else { return false }
+            let cleared = try await exercise("overlay-cleared", web: changed, expectsPrefetch: true)
+            guard blocked == (0, 0, 1), untouched == (1, 1, 1), cleared == (1, 1, 1), baseUnchanged else { return false }
+            print("PRIVACY_OVERLAY_PREDICTION_PROVEN true")
+        }
         return defaultValue && !disabledValue && restoredValue &&
             disabled == (0, 0, 1) && separate == baseline && restored == baseline
     }

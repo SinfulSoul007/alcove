@@ -85,6 +85,18 @@ extension SystemWebKitExtensionProbe {
         let restored = try await gather("restored", web: changed)
         set(preferences, setter, "invalid-policy")
         let rejectedInvalid = get(preferences, getter)?.takeUnretainedValue() as String? == "default"
+        if CommandLine.arguments.contains("--require-privacy-overlay") {
+            guard applyPrivacyOverlay(["webRTCIPHandlingPolicy": "disable_non_proxied_udp"], to: changed) == true else { return false }
+            let blocked = try await gather("overlay-udp-disabled", web: changed)
+            let untouched = try await gather("overlay-separate-page", web: control)
+            let baseUnchanged = get(preferences, getter)?.takeUnretainedValue() as String? == "default"
+            guard applyPrivacyOverlay([:], to: changed) == true else { return false }
+            let cleared = try await gather("overlay-cleared", web: changed)
+            guard blocked.requests == 0, blocked.udp == 0,
+                  untouched.requests > 0, untouched.reflexive > 0,
+                  cleared.requests > 0, cleared.reflexive > 0, baseUnchanged else { return false }
+            print("PRIVACY_OVERLAY_RTC_PROVEN true")
+        }
         return initialValue && rejectedInvalid && browsing &&
             disabled.requests == 0 && disabled.udp == 0 &&
             isolated.requests > 0 && isolated.reflexive > 0 &&

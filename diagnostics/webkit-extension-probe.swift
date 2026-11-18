@@ -99,6 +99,15 @@ struct SystemWebKitExtensionProbe {
             }
             return
         }
+        if CommandLine.arguments.contains("--privacy-overlay-only") {
+            let passed = try await runPrivacyOverlay(server: server)
+            if !passed {
+                print("FAIL: extension privacy overrides must be isolated from shared browser preferences")
+                try? FileManager.default.removeItem(at: root)
+                exit(1)
+            }
+            return
+        }
         if predictionTest {
             let passed = try await runNetworkPrediction(server: server)
             if !passed {
