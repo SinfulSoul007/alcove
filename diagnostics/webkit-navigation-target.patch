@@ -107,7 +107,7 @@ index 8ad2af3ffda39e7ad73efa053f58bef8a0b578a3..eda89257201477e0c48231e2acdf96d8
 
  void WebExtensionContext::didCommitLoadForFrame(WebPageProxyIdentifier pageID, const WebExtensionFrameParameters& frameParameters, WallTime timestamp)
 diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
-index fa822665ad72f41367daada85aa936d887fef3af..17b7990de73f8b9b99106133b87dd21c15d23afd 100644
+index fa822665ad72f41367daada85aa936d887fef3af..9396601bc896ae09760447c1f6e1f599076ee2a9 100644
 --- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
 +++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
 @@ -392,6 +392,7 @@ - (void)_didDeleteLocalStorage:(NSNotification *)notification
@@ -118,25 +118,21 @@ index fa822665ad72f41367daada85aa936d887fef3af..17b7990de73f8b9b99106133b87dd21c
 
      Ref pool = page.configuration().processPool();
      removeProcessPool(pool);
-@@ -630,10 +631,25 @@ - (void)_didDeleteLocalStorage:(NSNotification *)notification
+@@ -630,10 +631,21 @@ - (void)_didDeleteLocalStorage:(NSNotification *)notification
 
  // MARK: webNavigation
 
 +void WebExtensionController::didCreateNavigationTarget(WebPageProxyIdentifier targetPage, WebExtensionCreatedNavigationTarget&& source)
 +{
-+    m_createdNavigationTargets.set(targetPage, WTF::move(source));
++    m_createdNavigationTargets.set(targetPage, makeUnique<WebExtensionCreatedNavigationTarget>(WTF::move(source)));
 +}
 +
  void WebExtensionController::didStartProvisionalLoadForFrame(WebPageProxyIdentifier pageID, const WebExtensionFrameParameters& frameParameters, WallTime timestamp)
  {
 +    std::optional<WebExtensionCreatedNavigationTarget> target;
 +    if (isMainFrame(frameParameters.frameIdentifier)) {
-+        auto pending = m_createdNavigationTargets.find(pageID);
-+        if (pending != m_createdNavigationTargets.end()) {
-+            if (frameParameters.url == pending->value.targetURL)
-+                target = WTF::move(pending->value);
-+            m_createdNavigationTargets.remove(pending);
-+        }
++        if (auto pending = m_createdNavigationTargets.take(pageID); pending && frameParameters.url == pending->targetURL)
++            target = WTF::move(*pending);
 +    }
 +
      for (Ref context : m_extensionContexts)
@@ -159,7 +155,7 @@ index 6580fb1154dd62a807817e53e758ff405a860ec2..935e2843b0a7bdaf6171678d90d97991
      void didFinishLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime);
      void didFailLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime);
 diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionController.h b/Source/WebKit/UIProcess/Extensions/WebExtensionController.h
-index 714a9d7ac1278b2330f2bb583eaaf2ba5b327b1e..a4293c0c801d0ec6fbc7a5bcd09cae1bb70bdfb9 100644
+index 714a9d7ac1278b2330f2bb583eaaf2ba5b327b1e..4dc11c4451c34c998cd3585f835889a4a730846d 100644
 --- a/Source/WebKit/UIProcess/Extensions/WebExtensionController.h
 +++ b/Source/WebKit/UIProcess/Extensions/WebExtensionController.h
 @@ -38,6 +38,7 @@
@@ -190,7 +186,7 @@ index 714a9d7ac1278b2330f2bb583eaaf2ba5b327b1e..a4293c0c801d0ec6fbc7a5bcd09cae1b
      WebExtensionContextSet m_extensionContexts;
      WebExtensionContextBaseURLMap m_extensionContextBaseURLMap;
      WebPageProxySet m_pages;
-+    HashMap<WebPageProxyIdentifier, WebExtensionCreatedNavigationTarget> m_createdNavigationTargets;
++    HashMap<WebPageProxyIdentifier, std::unique_ptr<WebExtensionCreatedNavigationTarget>> m_createdNavigationTargets;
      WebProcessPoolSet m_processPools;
      WebsiteDataStoreSet m_websiteDataStores;
      UserContentControllerProxySet m_allUserContentControllers;
