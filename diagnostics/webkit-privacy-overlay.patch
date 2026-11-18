@@ -2,7 +2,8 @@ diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKWebView.mm b/Source/WebKit/UIPr
 index de2ddfc0a736b6789b5035b12df52ecdef021196..4c9a8ee6118d2e98042afc17ea43576d0b2834c6 100644
 --- a/Source/WebKit/UIProcess/API/Cocoa/WKWebView.mm
 +++ b/Source/WebKit/UIProcess/API/Cocoa/WKWebView.mm
-@@ -5422,6 +5422,38 @@ - (void)_setCORSDisablingPatterns:(NSArray<NSString *> *)patterns
+@@ -5421,8 +5421,40 @@ - (void)_setCORSDisablingPatterns:(NSArray<NSString *> *)patterns
+ {
      _page->setCORSDisablingPatterns(makeVector<String>(patterns));
  }
 
@@ -41,11 +42,13 @@ index de2ddfc0a736b6789b5035b12df52ecdef021196..4c9a8ee6118d2e98042afc17ea43576d
  - (BOOL)_networkRequestsInProgress
  {
      return _page->pageLoadState().networkRequestsInProgress();
+ }
 diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKWebViewPrivate.h b/Source/WebKit/UIProcess/API/Cocoa/WKWebViewPrivate.h
 index ff77202d8a990216e7e800a9f4ce9389352cf882..1f62a62699f9a0805c3a8fcdfafad28292b45bd5 100644
 --- a/Source/WebKit/UIProcess/API/Cocoa/WKWebViewPrivate.h
 +++ b/Source/WebKit/UIProcess/API/Cocoa/WKWebViewPrivate.h
-@@ -268,6 +268,17 @@ for this property.
+@@ -267,8 +267,19 @@ for this property.
+ @property (nonatomic, setter=_setAddsVisitedLinks:) BOOL _addsVisitedLinks;
 
  @property (nonatomic, copy, setter=_setCORSDisablingPatterns:) NSArray<NSString *> *_corsDisablingPatterns WK_API_AVAILABLE(macos(15.4), ios(18.4), visionos(2.4));
 
@@ -63,11 +66,13 @@ index ff77202d8a990216e7e800a9f4ce9389352cf882..1f62a62699f9a0805c3a8fcdfafad282
  @property (nonatomic, readonly) BOOL _networkRequestsInProgress;
 
  @property (nonatomic, readonly, getter=_isShowingNavigationGestureSnapshot) BOOL _showingNavigationGestureSnapshot;
+
 diff --git a/Source/WebKit/UIProcess/WebPageProxy.cpp b/Source/WebKit/UIProcess/WebPageProxy.cpp
 index 02bc00e856c16835fcdc148932da2a4db58bfb07..76cd1e42fd17c7e8589138519d36e8987e3fde32 100644
 --- a/Source/WebKit/UIProcess/WebPageProxy.cpp
 +++ b/Source/WebKit/UIProcess/WebPageProxy.cpp
-@@ -4553,9 +4553,43 @@ bool WebPageProxy::handleKeyboardEvent(const NativeWebKeyboardEvent& event)
+@@ -4552,11 +4552,45 @@ bool WebPageProxy::handleKeyboardEvent(const NativeWebKeyboardEvent& event)
+ }
 
  const WebPreferencesStore& WebPageProxy::preferencesStore() const
  {
@@ -111,7 +116,9 @@ index 02bc00e856c16835fcdc148932da2a4db58bfb07..76cd1e42fd17c7e8589138519d36e898
  #if ENABLE(TOUCH_EVENTS)
 
  static TrackingType mergeTrackingTypes(TrackingType a, TrackingType b)
-@@ -6882,6 +6916,8 @@ void WebPageProxy::updateRenderingWithForcedRepaint(CompletionHandler<void()>&&
+ {
+@@ -6881,8 +6915,10 @@ void WebPageProxy::updateRenderingWithForcedRepaint(CompletionHandler<void()>&&
+ }
 
  void WebPageProxy::preferencesDidChange()
  {
@@ -120,7 +127,9 @@ index 02bc00e856c16835fcdc148932da2a4db58bfb07..76cd1e42fd17c7e8589138519d36e898
      if (!hasRunningProcess())
          return;
 
-@@ -7160,7 +7196,7 @@ void WebPageProxy::updateOpener(IPC::Connection& connection, WebCore::FrameIdent
+     updateThrottleState();
+@@ -7159,9 +7195,9 @@ void WebPageProxy::updateOpener(IPC::Connection& connection, WebCore::FrameIdent
+
  void WebPageProxy::preconnectTo(ResourceRequest&& request)
  {
      Ref websiteDataStore = m_websiteDataStore;
@@ -129,11 +138,13 @@ index 02bc00e856c16835fcdc148932da2a4db58bfb07..76cd1e42fd17c7e8589138519d36e898
          return;
 
      auto storedCredentialsPolicy = m_canUseCredentialStorage ? WebCore::StoredCredentialsPolicy::Use : WebCore::StoredCredentialsPolicy::DoNotUse;
+     request.setIsAppInitiated(m_lastNavigationWasAppInitiated);
 diff --git a/Source/WebKit/UIProcess/WebPageProxy.h b/Source/WebKit/UIProcess/WebPageProxy.h
 index 5688fa05edfcb049a04fe46ffec0c2ef6a902c80..379d5b8213ca035f7ae86594bf6539e46ba61369 100644
 --- a/Source/WebKit/UIProcess/WebPageProxy.h
 +++ b/Source/WebKit/UIProcess/WebPageProxy.h
-@@ -1836,6 +1836,7 @@ public:
+@@ -1835,8 +1835,9 @@ public:
+     void resetCurrentDragInformation();
  #endif
 
      void preferencesDidChange();
@@ -141,7 +152,9 @@ index 5688fa05edfcb049a04fe46ffec0c2ef6a902c80..379d5b8213ca035f7ae86594bf6539e4
 
  #if ENABLE(CONTEXT_MENUS)
      // Called by the WebContextMenuProxy.
-@@ -2248,6 +2249,7 @@ public:
+     void didShowContextMenu();
+@@ -2247,8 +2248,9 @@ public:
+
      void getTextFragmentMatch(CompletionHandler<void(const String&)>&&);
 
      const WebPreferencesStore& preferencesStore() const;
@@ -149,7 +162,9 @@ index 5688fa05edfcb049a04fe46ffec0c2ef6a902c80..379d5b8213ca035f7ae86594bf6539e4
 
      bool isPageOpenedByDOMShowingInitialEmptyDocument() const;
 
-@@ -3640,6 +3642,10 @@ private:
+     WebCore::IntRect syncRootViewToScreen(const WebCore::IntRect& viewRect);
+@@ -3639,8 +3641,12 @@ private:
+ #endif
      Ref<WebProcessProxy> m_legacyMainFrameProcess;
      const Ref<WebPageGroup> m_pageGroup;
      Ref<WebPreferences> m_preferences;
@@ -160,3 +175,4 @@ index 5688fa05edfcb049a04fe46ffec0c2ef6a902c80..379d5b8213ca035f7ae86594bf6539e4
 
      const Ref<WebUserContentControllerProxy> m_userContentController;
 
+ #if ENABLE(WK_WEB_EXTENSIONS)
