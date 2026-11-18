@@ -2,7 +2,30 @@ import SwiftUI
 
 struct MetadataStartupView: View {
     @ObservedObject var store: BrowserStore
+    @State private var showsStatus = false
+
     var body: some View {
+        let preparing = store.preparingFirstLaunch && store.unlocking
+        Group {
+            if preparing && !showsStatus {
+                Canvas { context, size in
+                    LaunchIntroduction.drawGreeting(in: context, size: size, elapsed: 0)
+                }
+                .accessibilityRepresentation { Text("Opening Alcove") }
+            } else {
+                statusPanel
+            }
+        }
+        .task(id: preparing) {
+            guard preparing else { return }
+            do { try await Task.sleep(for: .seconds(2)) }
+            catch { return }
+            showsStatus = true
+        }
+        .accessibilityIdentifier("metadata-startup")
+    }
+
+    private var statusPanel: some View {
         VStack(spacing: 20) {
             Image(systemName: "lock.shield").font(.system(size: 38, weight: .light)).foregroundStyle(.secondary)
             Text(store.profileInUse ? "Your data is open in another Alcove" : (store.unlocking ? "Opening your Alcove" : "Your saved data is locked")).font(.title.bold())
@@ -20,6 +43,6 @@ struct MetadataStartupView: View {
             Text("Private browsing uses temporary website storage and does not need your saved-data key.")
                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 430)
         }.padding(40).frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor)).accessibilityIdentifier("metadata-startup")
+            .background(Color(nsColor: .windowBackgroundColor))
     }
 }

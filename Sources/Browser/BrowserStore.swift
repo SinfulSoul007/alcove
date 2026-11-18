@@ -165,6 +165,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var savingEnabled = true { didSet { windowGroup?.writerStateDidChange(from: self) } }
     @Published var unlocking = false { didSet { windowGroup?.writerStateDidChange(from: self) } }
     @Published var awaitingInitialMetadata = false { didSet { windowGroup?.writerStateDidChange(from: self) } }
+    var preparingFirstLaunch = false
     @Published var metadataLoadError: String? { didSet { windowGroup?.writerStateDidChange(from: self) } }
     @Published var profileInUse = false { didSet { windowGroup?.writerStateDidChange(from: self) } }
     var metadataOwnership: MetadataOwnershipLease?

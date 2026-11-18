@@ -15,7 +15,7 @@ struct LaunchIntroduction: View {
                 TimelineView(.animation(paused: startedAt == nil || continued)) { _ in
                     let elapsed = startedAt.map { $0.duration(to: .now) / .seconds(1) } ?? 0
                     Canvas { context, size in
-                        drawGreeting(in: context, size: size, elapsed: elapsed)
+                        Self.drawGreeting(in: context, size: size, elapsed: elapsed)
                     }
                 }
                 .accessibilityRepresentation {
@@ -61,7 +61,7 @@ struct LaunchIntroduction: View {
         onContinue()
     }
 
-    private func drawGreeting(in context: GraphicsContext, size: CGSize, elapsed: Double) {
+    static func drawGreeting(in context: GraphicsContext, size: CGSize, elapsed: Double) {
         let width = size.width
         let height = size.height
         let center = CGPoint(x: width * 0.5, y: height * 0.53)
@@ -116,7 +116,7 @@ struct LaunchIntroduction: View {
         ), style: StrokeStyle(lineWidth: 5.2 * scale, lineCap: .round, lineJoin: .round))
     }
 
-    private func smoothProgress(_ progress: Double) -> Double {
+    private static func smoothProgress(_ progress: Double) -> Double {
         let fraction = min(1, max(0, progress))
         return fraction * fraction * (3 - 2 * fraction)
     }

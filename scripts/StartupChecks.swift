@@ -31,37 +31,43 @@ final class KeyGate: @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: root) }
         let key = SymmetricKey(size: .bits256)
         let welcomeStore = BrowserStore(dataRoot: root.appendingPathComponent("welcome"), keyProvider: { _ in key })
-        func firstWelcomeFrame(width: CGFloat = 800, height: CGFloat = 540) throws -> (text: String, image: CGImage) {
-            let view = OnboardingView(store: welcomeStore).frame(width: width, height: height)
-            let renderer = ImageRenderer(content: view)
+        func recognizedText(in image: CGImage) throws -> String {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
-            guard let image = renderer.cgImage else { throw CocoaError(.coderInvalidValue) }
             try VNImageRequestHandler(cgImage: image).perform([request])
-            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-            return (text, image)
+            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        }
+        func firstFrame<V: View>(of view: V, width: CGFloat = 800, height: CGFloat = 540) throws -> CGImage {
+            let renderer = ImageRenderer(content: view.frame(width: width, height: height))
+            guard let image = renderer.cgImage else { throw CocoaError(.coderInvalidValue) }
+            return image
+        }
+        func firstWelcomeFrame(width: CGFloat = 800, height: CGFloat = 540) throws -> (text: String, image: CGImage) {
+            let image = try firstFrame(of: OnboardingView(store: welcomeStore), width: width, height: height)
+            return try (recognizedText(in: image), image)
         }
         let animatedWelcome = try firstWelcomeFrame()
         check(animatedWelcome.text.contains("Skip intro"),
               "Animation-enabled first launch opens the greeting before setup")
         check(try firstWelcomeFrame(width: 620, height: 385).text.contains("Skip intro"),
               "A compact welcome view keeps the Skip control inside the viewport")
-        let image = animatedWelcome.image
-        // Sample the upper center outside the wordmark's bounds for the emblem.
-        let emblemBounds = CGRect(x: image.width / 2 - 28, y: image.height / 4, width: 56, height: image.height / 8)
-        let emblem = image.cropping(to: emblemBounds)!
-        let pixelCount = emblem.width * emblem.height
-        var pixels = [UInt8](repeating: 0, count: pixelCount * 4)
-        pixels.withUnsafeMutableBytes { bytes in
-            let raster = CGContext(data: bytes.baseAddress, width: emblem.width, height: emblem.height,
-                                   bitsPerComponent: 8, bytesPerRow: emblem.width * 4,
-                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-            raster.draw(emblem, in: CGRect(x: 0, y: 0, width: emblem.width, height: emblem.height))
+        func openingEmblemPixels(in image: CGImage) -> Int {
+            // Sample the upper center outside the wordmark's bounds for the emblem.
+            let bounds = CGRect(x: image.width / 2 - 28, y: image.height / 4, width: 56, height: image.height / 8)
+            let emblem = image.cropping(to: bounds)!
+            var pixels = [UInt8](repeating: 0, count: emblem.width * emblem.height * 4)
+            pixels.withUnsafeMutableBytes { bytes in
+                let raster = CGContext(data: bytes.baseAddress, width: emblem.width, height: emblem.height,
+                                       bitsPerComponent: 8, bytesPerRow: emblem.width * 4,
+                                       space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                raster.draw(emblem, in: CGRect(x: 0, y: 0, width: emblem.width, height: emblem.height))
+            }
+            return stride(from: 0, to: pixels.count, by: 4).filter { offset in
+                pixels[offset] > 195 && pixels[offset + 1] > 175 && pixels[offset + 2] > 150
+            }.count
         }
-        let litPixels = stride(from: 0, to: pixels.count, by: 4).filter { offset in
-            pixels[offset] > 195 && pixels[offset + 1] > 175 && pixels[offset + 2] > 150
-        }.count
+        let litPixels = openingEmblemPixels(in: animatedWelcome.image)
         check(litPixels > 60, "Alcove's opening emblem is visible in the first frame")
         var welcomeAppearance = welcomeStore.appearance
         welcomeAppearance.animationsEnabled = false
@@ -89,6 +95,8 @@ final class KeyGate: @unchecked Sendable {
         }
         var initial: BrowserStore? = BrowserStore(dataRoot: root, metadataKeyAccess: access)
         check(initial!.awaitingInitialMetadata && initial!.unlocking && !initial!.savingEnabled && !initial!.onboardingVisible, "Initial window can render before a blocked key returns")
+        let savedStatus = try recognizedText(in: firstFrame(of: MetadataStartupView(store: initial!)))
+        check(savedStatus.contains("Open Private Window"), "An existing profile immediately shows its startup recovery controls")
         initial!.showCommand(new: true)
         check(initial!.profileUnavailable(BrowserProfile.defaultID) && !initial!.commandVisible && initial!.namedDataStores.isEmpty, "Unknown saved identity blocks normal browsing and profile storage")
         let abandoned = WeakStore(initial!); initial!.shutdown(); initial = nil
@@ -228,18 +236,49 @@ final class KeyGate: @unchecked Sendable {
             waiting.shutdown();application.fixtureActive=nil
         }
 
+        let freshGate = KeyGate()
         let fresh = BrowserStore(dataRoot: root.appendingPathComponent("fresh"), metadataKeyAccess: MetadataKeyAccess { create, interactive in
-            guard create && !interactive && !Thread.isMainThread else { throw CocoaError(.coderInvalidValue) }; return key
+            guard create && !interactive && !Thread.isMainThread else { throw CocoaError(.coderInvalidValue) }
+            return freshGate.key(key)
         })
+        let freshFrame = try firstFrame(of: MetadataStartupView(store: fresh))
+        let freshStatus = try recognizedText(in: freshFrame)
+        check(fresh.unlocking && openingEmblemPixels(in: freshFrame) == litPixels && !freshStatus.contains("Keychain"),
+              "An automatic fresh lookup starts with the greeting artwork")
+        let waitingFrame = NSRect(x: 0, y: 0, width: 800, height: 540)
+        let waitingHost = NSHostingView(rootView: MetadataStartupView(store: fresh))
+        let waitingWindow = StartupWindow(contentRect: waitingFrame, styleMask: [.titled], backing: .buffered, defer: false)
+        waitingWindow.isReleasedWhenClosed = false
+        waitingWindow.contentView = waitingHost
+        waitingHost.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(2300))
+        waitingHost.layoutSubtreeIfNeeded()
+        let waitingBitmap = waitingHost.bitmapImageRepForCachingDisplay(in: waitingHost.bounds)!
+        waitingHost.cacheDisplay(in: waitingHost.bounds, to: waitingBitmap)
+        let waitingStatus = try recognizedText(in: waitingBitmap.cgImage!)
+        check(fresh.unlocking && waitingStatus.contains("Open Private Window"),
+              "A slow fresh lookup reveals the Keychain status and private browsing")
+        waitingWindow.close()
+        freshGate.release.signal()
         for _ in 0..<100 where fresh.unlocking { try await Task.sleep(for: .milliseconds(10)) }
         check(fresh.savingEnabled && !fresh.awaitingInitialMetadata && fresh.onboardingVisible && FileManager.default.fileExists(atPath:fresh.sessionURL.path), "Fresh background startup durably creates its document before onboarding")
         fresh.shutdown()
+        let failed = BrowserStore(dataRoot: root.appendingPathComponent("fresh-denied"), metadataKeyAccess: MetadataKeyAccess { _, _ in
+            throw CocoaError(.fileReadNoPermission)
+        })
+        for _ in 0..<100 where failed.unlocking { try await Task.sleep(for: .milliseconds(10)) }
+        let deniedStatus = try recognizedText(in: firstFrame(of: MetadataStartupView(store: failed)))
+        check(deniedStatus.contains("Unlock Local Data") && deniedStatus.contains("Open Private Window"),
+              "A failed fresh lookup immediately shows unlock and private browsing")
+        failed.shutdown()
         let legacyRoot = root.appendingPathComponent("legacy")
         try FileManager.default.createDirectory(at:legacyRoot,withIntermediateDirectories:true)
         var legacy = Session(); legacy.spaces[0].tabs[0].url = "https://example.com/legacy"
         let legacyURL = legacyRoot.appendingPathComponent("session.json")
         try JSONEncoder().encode(legacy).write(to:legacyURL)
         let migrated = BrowserStore(dataRoot:legacyRoot,metadataKeyAccess:MetadataKeyAccess { _,_ in key })
+        let migrationStatus = try recognizedText(in: firstFrame(of: MetadataStartupView(store: migrated)))
+        check(migrationStatus.contains("Open Private Window"), "Legacy metadata retains the ordinary startup panel")
         for _ in 0..<100 where migrated.unlocking { try await Task.sleep(for: .milliseconds(10)) }
         check(migrated.savingEnabled && migrated.selectedTab?.url == "https://example.com/legacy" && !migrated.onboardingVisible && !FileManager.default.fileExists(atPath:legacyURL.path), "Background restore encrypts legacy tabs before removing the source")
         migrated.shutdown()

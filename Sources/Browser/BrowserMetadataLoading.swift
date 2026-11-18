@@ -21,13 +21,16 @@ extension BrowserStore {
         guard awaitingInitialMetadata, !unlocking, !isShuttingDown else { return false }
         do { try acquireMetadataOwnership() }
         catch { metadataOwnershipFailed(error); return false }
-        unlocking = true; metadataLoadError = nil
         let access = access ?? metadataKeyAccess, create = canCreateMetadataKey
+        let legacyURL = sessionURL.deletingLastPathComponent().appendingPathComponent("session.json")
+        preparingFirstLaunch = create && !allowInteraction && !FileManager.default.fileExists(atPath: legacyURL.path)
+        unlocking = true; metadataLoadError = nil
         Task { [weak self] in
             let result: Result<SymmetricKey, Error>
             do { result = .success(try await access.load(createIfMissing: create, allowInteraction: allowInteraction)) }
             catch { result = .failure(error) }
             guard let self, !self.isShuttingDown else { return }
+            self.preparingFirstLaunch = false
             self.unlocking = false
             do {
                 try self.restoreInitialMetadata(using: result.get())
