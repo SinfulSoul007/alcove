@@ -1,0 +1,93 @@
+diff --git a/Source/WebKit/Shared/Extensions/WebExtensionFrameParameters.h b/Source/WebKit/Shared/Extensions/WebExtensionFrameParameters.h
+index e7dcf7543dd38a815fa2ab11e10a6526450d99fd..869f2bc974c90d11b45cdb2d49d9aa638f2eede2 100644
+--- a/Source/WebKit/Shared/Extensions/WebExtensionFrameParameters.h
++++ b/Source/WebKit/Shared/Extensions/WebExtensionFrameParameters.h
+@@ -28,8 +28,9 @@
+ #if ENABLE(WK_WEB_EXTENSIONS)
+
+ #include "WebExtensionFrameIdentifier.h"
+ #include "WebPageProxyIdentifier.h"
++#include <wtf/TZoneMalloc.h>
+ #include <wtf/URL.h>
+ #include <wtf/UUID.h>
+
+ namespace WebKit {
+@@ -42,8 +43,10 @@ struct WebExtensionFrameParameters {
+     Markable<WTF::UUID> documentIdentifier;
+ };
+
+ struct WebExtensionCreatedNavigationTarget {
++    WTF_MAKE_STRUCT_TZONE_ALLOCATED(WebExtensionCreatedNavigationTarget);
++
+     WebPageProxyIdentifier sourcePageIdentifier;
+     WebExtensionFrameIdentifier sourceFrameIdentifier;
+     URL sourceURL;
+     URL targetURL;
+diff --git a/Source/WebKit/Shared/WebPreferencesStore.cpp b/Source/WebKit/Shared/WebPreferencesStore.cpp
+index 6c9b1886e06e964ef8abf56e32b028ca15053f04..fc1d239008b05b74650bcb26c87cdfe17808b7b5 100644
+--- a/Source/WebKit/Shared/WebPreferencesStore.cpp
++++ b/Source/WebKit/Shared/WebPreferencesStore.cpp
+@@ -27,11 +27,14 @@
+ #include "WebPreferencesStore.h"
+
+ #include "WebPreferencesKeys.h"
+ #include <wtf/NeverDestroyed.h>
++#include <wtf/TZoneMallocInlines.h>
+
+ namespace WebKit {
+
++WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(WebPreferencesStore);
++
+ typedef HashMap<String, bool> BoolOverridesMap;
+
+ static BoolOverridesMap& boolTestRunnerOverridesMap()
+ {
+diff --git a/Source/WebKit/Shared/WebPreferencesStore.h b/Source/WebKit/Shared/WebPreferencesStore.h
+index a5be1495cf3a33228049aa1920973959a79e8846..61b30afe93aa10c60c75f9840a37e072f940c5f1 100644
+--- a/Source/WebKit/Shared/WebPreferencesStore.h
++++ b/Source/WebKit/Shared/WebPreferencesStore.h
+@@ -30,16 +30,19 @@
+ #include <wtf/CheckedRef.h>
+ #include <wtf/CrossThreadCopier.h>
+ #include <wtf/HashTraits.h>
+ #include <wtf/RobinHoodHashMap.h>
++#include <wtf/TZoneMalloc.h>
+ #include <wtf/text/StringHash.h>
+ #include <wtf/text/WTFString.h>
+
+ namespace WebKit {
+
+ // FIXME: WebPreferencesStore should be RefCounted. See usage in WebProcessPool.cpp.
+
+ struct WebPreferencesStore {
++    WTF_MAKE_STRUCT_TZONE_ALLOCATED(WebPreferencesStore);
++
+     using Value = Variant<String, bool, uint32_t, double>;
+     using ValueMap = MemoryCompactRobinHoodHashMap<String, Value>;
+
+     // NOTE: The getters in this class have non-standard names to aid in the use of the preference macros.
+diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
+index 401228d76324d1e0c9ecd744e9fc556391392dfc..5e29ddcda29299817016a54cbbbde99dfb8ea383 100644
+--- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
++++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
+@@ -63,8 +63,9 @@
+ #import <wtf/HashMap.h>
+ #import <wtf/HashSet.h>
+ #import <wtf/NeverDestroyed.h>
+ #import <wtf/text/WTFString.h>
++#import <wtf/TZoneMallocInlines.h>
+
+ #if PLATFORM(IOS_FAMILY)
+ #import "FoundationSPI.h"
+ #endif
+@@ -251,8 +252,10 @@ static String privacyBaselineSignature(WKPreferences *preferences)
+     ASSERT(!m_webExtensionControllerHelper);
+     m_webExtensionControllerHelper = [[_WKWebExtensionControllerHelper alloc] initWithWebExtensionController:*this];
+ }
+
++WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(WebExtensionCreatedNavigationTarget);
++
+ String WebExtensionController::storageDirectory(WebExtensionContext& extensionContext) const
+ {
+     if (m_configuration->storageIsPersistent() && extensionContext.hasCustomUniqueIdentifier())
+         return FileSystem::pathByAppendingComponent(m_configuration->storageDirectory(), extensionContext.uniqueIdentifier());

@@ -1,8 +1,8 @@
-name: Build and test WebKit isolated extension privacy
+name: Build and test WebKit extension privacy settings
 
 on:
   push:
-    branches: [research/webkit-privacy-overlay]
+    branches: [research/webkit-privacy-api]
 
 permissions:
   contents: read
@@ -61,7 +61,7 @@ jobs:
         timeout-minutes: 351
         run: |
           set -euo pipefail
-          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy webkit-runtime-update-event webkit-privacy-overlay; do
+          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy webkit-runtime-update-event webkit-privacy-overlay webkit-privacy-api webkit-native-allocators; do
             patch="$GITHUB_WORKSPACE/diagnostics/$name.patch"
             git apply --check "$patch"
             git apply "$patch"
@@ -117,6 +117,7 @@ jobs:
             diagnostics/webkit-hyperlink-auditing-probe.swift diagnostics/webkit-network-prediction-probe.swift \
             diagnostics/webkit-rtc-policy-probe.swift diagnostics/webkit-privacy-overlay-probe.swift -o "$scratch/probe"
           xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-update-event-probe.swift -o "$scratch/update-probe"
+          xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-privacy-api-probe.swift -o "$scratch/privacy-probe"
           python3 diagnostics/webkit-probe-server.py "$scratch/port" > "$scratch/requests.log" 2>&1 &
           server=$!
           for attempt in {1..100}; do
@@ -149,9 +150,13 @@ jobs:
           rtc_status=0
           update_status=0
           overlay_status=0
+          privacy_status=0
           status=0
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
             "$scratch/update-probe" || update_status=$?
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            perl -e 'alarm 180; exec @ARGV or die "privacy probe failed to launch: $!"' \
+            "$scratch/privacy-probe" "http://127.0.0.1:$(cat "$scratch/port")/" "http://127.0.0.1:$(cat "$scratch/rtc-port")/" || privacy_status=$?
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
             "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/rtc-port")/" --rtc-policy-only --require-privacy-overlay || rtc_status=$?
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
@@ -172,6 +177,7 @@ jobs:
           cat "$scratch/rtc.log"
           if (( update_status != 0 )); then exit "$update_status"; fi
           if (( overlay_status != 0 )); then exit "$overlay_status"; fi
+          if (( privacy_status != 0 )); then exit "$privacy_status"; fi
           if (( rtc_status != 0 )); then exit "$rtc_status"; fi
           if (( prediction_status != 0 )); then exit "$prediction_status"; fi
           if (( auditing_status != 0 )); then exit "$auditing_status"; fi

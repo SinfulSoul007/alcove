@@ -1,0 +1,1000 @@
+diff --git a/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.h b/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.h
+index b32aa020f552cecd6142fd9ed1541c62a9b5de9f..93ed4769bcba9ea2e1419fad3eb4c80639ade2f8 100644
+--- a/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.h
++++ b/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.h
+@@ -100,8 +100,11 @@ enum class WebExtensionEventListenerType : uint8_t {
+     WindowsOnRemoved,
+     // Background listener state stores these ordinals across browser updates.
+     WebNavigationOnCreatedNavigationTarget,
+     RuntimeOnUpdateAvailable,
++    PrivacyPredictionOnChange,
++    PrivacyAuditingOnChange,
++    PrivacyRTCOnChange,
+ };
+
+ inline String toAPIString(WebExtensionEventListenerType eventType)
+ {
+@@ -173,8 +176,12 @@ inline String toAPIString(WebExtensionEventListenerType eventType)
+     case WebExtensionEventListenerType::RuntimeOnStartup:
+         return "onStartup"_s;
+     case WebExtensionEventListenerType::RuntimeOnUpdateAvailable:
+         return "onUpdateAvailable"_s;
++    case WebExtensionEventListenerType::PrivacyPredictionOnChange:
++    case WebExtensionEventListenerType::PrivacyAuditingOnChange:
++    case WebExtensionEventListenerType::PrivacyRTCOnChange:
++        return "onChange"_s;
+     case WebExtensionEventListenerType::StorageOnChanged:
+         return "onChanged"_s;
+     case WebExtensionEventListenerType::TabsOnActivated:
+         return "onActivated"_s;
+diff --git a/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.serialization.in b/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.serialization.in
+index b21b7efc0813d338cfa3036602cda8bc037ee5a0..218e7f0504fed94ea15ea405b8b8b7647b29a60f 100644
+--- a/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.serialization.in
++++ b/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.serialization.in
+@@ -90,7 +90,10 @@ enum class WebKit::WebExtensionEventListenerType : uint8_t {
+     WindowsOnFocusChanged,
+     WindowsOnRemoved,
+     WebNavigationOnCreatedNavigationTarget,
+     RuntimeOnUpdateAvailable,
++    PrivacyPredictionOnChange,
++    PrivacyAuditingOnChange,
++    PrivacyRTCOnChange,
+ };
+
+ #endif
+diff --git a/Source/WebKit/Shared/Extensions/WebExtensionPermission.cpp b/Source/WebKit/Shared/Extensions/WebExtensionPermission.cpp
+index 2be3c53fe76505239664fca643c02219794ee3bf..fa05b4d35efcaddd4ee9169803142148752b0b8e 100644
+--- a/Source/WebKit/Shared/Extensions/WebExtensionPermission.cpp
++++ b/Source/WebKit/Shared/Extensions/WebExtensionPermission.cpp
+@@ -91,8 +91,13 @@ String WebExtensionPermission::notifications()
+ {
+     return "notifications"_s;
+ }
+
++String WebExtensionPermission::privacy()
++{
++    return "privacy"_s;
++}
++
+ String WebExtensionPermission::scripting()
+ {
+     return "scripting"_s;
+ }
+diff --git a/Source/WebKit/Shared/Extensions/WebExtensionPermission.h b/Source/WebKit/Shared/Extensions/WebExtensionPermission.h
+index 1ae8d16c9e7dafc4ef291edd20b55730c9f3239e..fc886e1b2c37da2eed4ee75cdca9c465271cda01 100644
+--- a/Source/WebKit/Shared/Extensions/WebExtensionPermission.h
++++ b/Source/WebKit/Shared/Extensions/WebExtensionPermission.h
+@@ -47,8 +47,9 @@ public:
+     static String declarativeNetRequestWithHostAccess();
+     static String menus();
+     static String nativeMessaging();
+     static String notifications();
++    static String privacy();
+     static String scripting();
+ #if ENABLE(WK_WEB_EXTENSION_SIDEBAR)
+     static String sidePanel();
+ #endif // ENABLE(WK_WEB_EXTENSION_SIDEBAR)
+diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContext.mm b/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContext.mm
+index 916e4d2f929e54eaa42414121089dc839934b2d4..931a227a7ada44a7c91b5182c371000c7accbba9 100644
+--- a/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContext.mm
++++ b/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContext.mm
+@@ -853,8 +853,19 @@ - (void)_didFindExtensionUpdateWithVersion:(NSString *)version
+
+     self._protectedWebExtensionContext->didFindExtensionUpdate(version);
+ }
+
++- (NSDate *)_privacyInstallationDate
++{
++    return [NSDate dateWithTimeIntervalSince1970:self._protectedWebExtensionContext->privacyInstallationTime()];
++}
++
++- (void)_setPrivacyInstallationDate:(NSDate *)date
++{
++    NSParameterAssert([date isKindOfClass:NSDate.class]);
++    self._protectedWebExtensionContext->setPrivacyInstallationTime(date.timeIntervalSince1970);
++}
++
+ - (NSURL *)_backgroundContentURL
+ {
+     return self._protectedWebExtensionContext->backgroundContentURL().createNSURL().autorelease();
+ }
+@@ -1294,8 +1305,17 @@ - (WKWebView *)_backgroundWebView
+ - (void)_didFindExtensionUpdateWithVersion:(NSString *)version
+ {
+ }
+
++- (NSDate *)_privacyInstallationDate
++{
++    return nil;
++}
++
++- (void)_setPrivacyInstallationDate:(NSDate *)date
++{
++}
++
+ - (NSURL *)_backgroundContentURL
+ {
+     return nil;
+ }
+diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContextPrivate.h b/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContextPrivate.h
+index 1122d54ccbde48068edcca2b59a46c2794762434..6b26d953c86b1ab4239bd69b229d4633dd83e299 100644
+--- a/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContextPrivate.h
++++ b/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContextPrivate.h
+@@ -36,8 +36,14 @@ WK_HEADER_AUDIT_BEGIN(nullability, sendability)
+
+ /*! @abstract The extension background content URL for the extension, or `nil` if the extension does not have background content. */
+ @property (nonatomic, nullable, readonly) NSURL *_backgroundContentURL;
+
++/*! @abstract The original installation date used to resolve competing privacy settings.
++ @discussion Set before loading the context. Keep this date unchanged on extension update or re-enable.
++ When absent, the context keeps a persistent first-load fallback for legacy clients.
++ */
++@property (nonatomic, copy, setter=_setPrivacyInstallationDate:) NSDate *_privacyInstallationDate;
++
+ /*!
+  @abstract Announces an approved pending extension update to `runtime.onUpdateAvailable` listeners.
+  @discussion The embedder must verify the package identity, version, and approved permissions before calling this method.
+  This notification does not install the package. The embedder owns installation when the extension reloads or is restarted.
+diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
+index f5f2d931bcddf342ccce87cfe8028e1670f63997..806c3211b618be62c79f1f3f6b39d017731be091 100644
+--- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
++++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
+@@ -27,8 +27,9 @@
+ #error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
+ #endif
+
+ #import "config.h"
++#include <cmath>
+ #import "MessageSenderInlines.h"
+ #import "WebExtensionContext.h"
+
+ #if ENABLE(WK_WEB_EXTENSIONS)
+@@ -124,9 +125,9 @@
+
+ static NSString * const sessionStorageAllowedInContentScriptsKey = @"SessionStorageAllowedInContentScripts";
+
+ // Update this value when any changes are made to the WebExtensionEventListenerType enum.
+-static constexpr NSInteger currentBackgroundContentListenerStateVersion = 5;
++static constexpr NSInteger currentBackgroundContentListenerStateVersion = 6;
+
+ // Update this value when any changes are made to the rule translation logic in _WKWebExtensionDeclarativeNetRequestRule.
+ static constexpr NSInteger currentDeclarativeNetRequestRuleTranslatorVersion = 6;
+
+@@ -207,8 +208,185 @@ - (void)webView:(WKWebView *)webView runOpenPanelWithParameters:(WKOpenPanelPara
+ @end
+
+ namespace WebKit {
+
++static bool isKnownPrivacyKey(NSString *key)
++{
++    return [key isEqualToString:@"networkPredictionEnabled"] || [key isEqualToString:@"hyperlinkAuditingEnabled"] || [key isEqualToString:@"webRTCIPHandlingPolicy"];
++}
++
++static bool isValidStoredPrivacyValue(NSString *key, NSString *value)
++{
++    if (!value)
++        return false;
++    if ([key isEqualToString:@"webRTCIPHandlingPolicy"])
++        return [value isEqualToString:@"default"] || [value isEqualToString:@"default_public_and_private_interfaces"]
++            || [value isEqualToString:@"default_public_interface_only"] || [value isEqualToString:@"disable_non_proxied_udp"];
++    return [value isEqualToString:@"true"] || [value isEqualToString:@"false"];
++}
++
++String WebExtensionContext::privacyValue(NSString *key, bool incognito) const
++{
++    if (incognito && !hasAccessToPrivateData())
++        return nullString();
++    NSDictionary *all = objectForKey<NSDictionary>(m_state, @"AlcovePrivacySettings");
++    auto valueForScope = [&](NSString *scope) -> NSString * {
++        NSDictionary *values = [scope isEqualToString:@"incognito_session_only"] ? m_privateSessionPrivacySettings.get() : objectForKey<NSDictionary>(all, scope);
++        NSString *value = objectForKey<NSString>(values, key);
++        return isValidStoredPrivacyValue(key, value) ? value : nil;
++    };
++    if (incognito) {
++        if (auto *value = valueForScope(@"incognito_session_only"))
++            return String(value);
++        if (auto *value = valueForScope(@"incognito_persistent"))
++            return String(value);
++    } else if (auto *value = valueForScope(@"regular_only"))
++        return String(value);
++    if (auto *value = valueForScope(@"regular"))
++        return String(value);
++    return nullString();
++}
++
++bool WebExtensionContext::privacyValueIsIncognitoSpecific(NSString *key) const
++{
++    NSDictionary *all = objectForKey<NSDictionary>(m_state, @"AlcovePrivacySettings");
++    return isValidStoredPrivacyValue(key, objectForKey<NSString>(m_privateSessionPrivacySettings, key))
++        || isValidStoredPrivacyValue(key, objectForKey<NSString>(objectForKey<NSDictionary>(all, @"incognito_persistent"), key));
++}
++
++double WebExtensionContext::privacyInstallationTime() const
++{
++    double value = m_privacyInstallationTime.value_or(objectForKey<NSNumber>(m_state, @"AlcovePrivacyInstallationTime").doubleValue);
++    return std::isfinite(value) ? value : 0;
++}
++
++void WebExtensionContext::setPrivacyInstallationTime(double value)
++{
++    if (!isLoaded() && std::isfinite(value))
++        m_privacyInstallationTime = value;
++}
++
++void WebExtensionContext::clearPrivateSessionPrivacySettings()
++{
++    m_privateSessionPrivacySettings = nullptr;
++}
++
++void WebExtensionContext::privacySettingOperation(const String& rawKey, const String& operation, const String& detailsJSON, CompletionHandler<void(Expected<String, WebExtensionError>&&)>&& completionHandler)
++{
++    auto fail = [&](NSString *message) {
++        completionHandler(toWebExtensionError("privacy"_s, nullString(), String(message)));
++    };
++    if (!isLoaded() || !hasPermission(WebExtensionPermission::privacy())) {
++        fail(@"the privacy permission is not granted");
++        return;
++    }
++    NSString *key = rawKey.createNSString().get();
++    NSDictionary *details = dynamic_objc_cast<NSDictionary>(parseJSON(detailsJSON.createNSString().get()));
++    if (!isKnownPrivacyKey(key) || !details || (operation != "get"_s && operation != "set"_s && operation != "clear"_s)) {
++        fail(@"invalid setting or operation");
++        return;
++    }
++    for (id field in details) {
++        if (![field isKindOfClass:NSString.class] || (operation == "get"_s ? ![field isEqualToString:@"incognito"]
++            : (![field isEqualToString:@"scope"] && !(operation == "set"_s && [field isEqualToString:@"value"])))) {
++            fail(@"unknown setting details");
++            return;
++        }
++    }
++    RefPtr controller = extensionController();
++    if (!controller) {
++        fail(@"the extension is not loaded");
++        return;
++    }
++    if (operation == "get"_s) {
++        id flag = details[@"incognito"];
++        if (flag && (![flag isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)flag) != CFBooleanGetTypeID())) {
++            fail(@"incognito must be a boolean");
++            return;
++        }
++        bool incognito = [flag boolValue];
++        if (incognito && !hasAccessToPrivateData()) {
++            fail(@"private browsing access is not granted");
++            return;
++        }
++        completionHandler(String(encodeJSONString(controller->privacySettingDetails(*this, key, incognito))));
++        return;
++    }
++    NSString *scope = details[@"scope"] ? objectForKey<NSString>(details, @"scope") : @"regular";
++    if (!scope || (![@"regular" isEqualToString:scope] && ![@"regular_only" isEqualToString:scope]
++        && ![@"incognito_persistent" isEqualToString:scope] && ![@"incognito_session_only" isEqualToString:scope])) {
++        fail(@"invalid scope");
++        return;
++    }
++    bool privateScope = [scope hasPrefix:@"incognito_"];
++    bool sessionScope = [scope isEqualToString:@"incognito_session_only"];
++    if (privateScope && operation == "set"_s && !hasAccessToPrivateData()) {
++        fail(@"private browsing access is not granted");
++        return;
++    }
++    if (sessionScope && operation == "set"_s && !controller->hasPrivatePrivacyWindows()) {
++        fail(@"an open private window is required for session-only settings");
++        return;
++    }
++    NSString *value = nil;
++    if (operation == "set"_s) {
++        id input = details[@"value"];
++        if ([key isEqualToString:@"webRTCIPHandlingPolicy"])
++            value = dynamic_objc_cast<NSString>(input);
++        else if ([input isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)input) == CFBooleanGetTypeID())
++            value = [input boolValue] ? @"true" : @"false";
++        if (!isValidStoredPrivacyValue(key, value)) {
++            fail(@"invalid value for this setting");
++            return;
++        }
++    }
++    if (sessionScope) {
++        if (!m_privateSessionPrivacySettings)
++            m_privateSessionPrivacySettings = [NSMutableDictionary dictionary];
++        if (value)
++            m_privateSessionPrivacySettings.get()[key] = value;
++        else
++            [m_privateSessionPrivacySettings removeObjectForKey:key];
++    } else {
++        NSMutableDictionary *all = [objectForKey<NSDictionary>(m_state, @"AlcovePrivacySettings") mutableCopy] ?: [NSMutableDictionary dictionary];
++        NSMutableDictionary *values = [objectForKey<NSDictionary>(all, scope) mutableCopy] ?: [NSMutableDictionary dictionary];
++        if (value)
++            values[key] = value;
++        else
++            [values removeObjectForKey:key];
++        all[scope] = values;
++        m_state.get()[@"AlcovePrivacySettings"] = all;
++        writeStateToStorage();
++    }
++    controller->updatePrivacySettings();
++    completionHandler("null"_s);
++}
++
++void WebExtensionContext::firePrivacySettingChangedIfNeeded(NSString *key, bool incognito)
++{
++    RefPtr controller = extensionController();
++    if (!controller || !hasPermission(WebExtensionPermission::privacy()) || (incognito && !hasAccessToPrivateData()))
++        return;
++    NSDictionary *details = controller->privacySettingDetails(*this, key, incognito);
++    NSString *cacheKey = [key stringByAppendingString:incognito ? @":private" : @":regular"];
++    NSString *signature = [NSString stringWithFormat:@"%@|%@|%@", details[@"value"], details[@"levelOfControl"], details[@"incognitoSpecific"] ?: @"omitted"];
++    if (!m_privacyEventSignatures)
++        m_privacyEventSignatures = [NSMutableDictionary dictionary];
++    NSString *previous = objectForKey<NSString>(m_privacyEventSignatures, cacheKey);
++    m_privacyEventSignatures.get()[cacheKey] = signature;
++    if (!previous || [previous isEqualToString:signature])
++        return;
++    auto type = [key isEqualToString:@"networkPredictionEnabled"] ? WebExtensionEventListenerType::PrivacyPredictionOnChange
++        : [key isEqualToString:@"hyperlinkAuditingEnabled"] ? WebExtensionEventListenerType::PrivacyAuditingOnChange : WebExtensionEventListenerType::PrivacyRTCOnChange;
++    String payload(encodeJSONString(details));
++    wakeUpBackgroundContentIfNecessaryToFireEvents({ type }, [=, this, protectedThis = Ref { *this }] {
++        if (!isLoaded() || !hasPermission(WebExtensionPermission::privacy()) || (incognito && !hasAccessToPrivateData()))
++            return;
++        sendToProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchPrivacySettingChangedEvent(String(key), payload));
++    });
++}
++
++
+ using namespace WebExtensionDynamicScripts;
+
+ WebExtensionContext::WebExtensionContext(Ref<WebExtension>&& extension)
+     : WebExtensionContext()
+@@ -274,8 +452,16 @@ - (void)webView:(WKWebView *)webView runOpenPanelWithParameters:(WKOpenPanelPara
+     m_contentScriptWorld = API::ContentWorld::sharedWorldWithName(makeString("WebExtension-"_s, m_uniqueIdentifier));
+
+     readStateFromStorage();
+
++    if (!hasPermission(WebExtensionPermission::privacy()))
++        [m_state removeObjectForKey:@"AlcovePrivacySettings"];
++
++    if (m_privacyInstallationTime)
++        m_state.get()[@"AlcovePrivacyInstallationTime"] = @(*m_privacyInstallationTime);
++    else if (!objectForKey<NSNumber>(m_state, @"AlcovePrivacyInstallationTime"))
++        m_state.get()[@"AlcovePrivacyInstallationTime"] = @(WallTime::now().secondsSinceEpoch().value());
++
+     auto lastSeenBaseURL = URL { objectForKey<NSString>(m_state, lastSeenBaseURLStateKey) };
+     [m_state setObject:m_baseURL.string().createNSString().get() forKey:lastSeenBaseURLStateKey];
+
+     if (RetainPtr displayName = protectedExtension()->displayName().createNSString())
+@@ -337,8 +523,10 @@ - (void)webView:(WKWebView *)webView runOpenPanelWithParameters:(WKOpenPanelPara
+
+     m_privilegedIdentifier = std::nullopt;
+
+     m_actionsToPerformAfterBackgroundContentLoads.clear();
++    m_privateSessionPrivacySettings = nullptr;
++    m_privacyEventSignatures = nullptr;
+     m_backgroundContentEventListeners.clear();
+     m_eventListenerFrames.clear();
+     m_installReason = InstallReason::None;
+     m_previousVersion = nullString();
+@@ -622,20 +810,37 @@ static String permissionNotification(WebExtensionContext::PermissionNotification
+         return nullString();
+     }
+ }
+
++void WebExtensionContext::privacyPermissionDatesDidChange()
++{
++    if (RefPtr controller = extensionController()) {
++        controller->sendToAllProcesses(Messages::WebExtensionContextProxy::UpdateGrantedPermissions(m_grantedPermissions), identifier());
++        controller->updatePrivacySettings();
++    }
++}
++
+ void WebExtensionContext::permissionsDidChange(PermissionNotification notification, const PermissionsSet& permissions)
+ {
+     if (permissions.isEmpty())
+         return;
+
++    if (permissions.contains(WebExtensionPermission::privacy()) && !hasPermission(WebExtensionPermission::privacy())) {
++        [m_state removeObjectForKey:@"AlcovePrivacySettings"];
++        m_privateSessionPrivacySettings = nullptr;
++        m_privacyEventSignatures = nullptr;
++        writeStateToStorage();
++    }
++
+     if (isLoaded()) {
+         RefPtr extensionController = this->extensionController();
+         if (!extensionController)
+             return;
+
+         extensionController->sendToAllProcesses(Messages::WebExtensionContextProxy::UpdateGrantedPermissions(m_grantedPermissions), identifier());
+
++        extensionController->updatePrivacySettings();
++
+         if (permissions.contains(WebExtensionPermission::clipboardWrite())) {
+             bool granted = hasPermission(WebExtensionPermission::clipboardWrite());
+
+             enumerateExtensionPages([&](auto& page, bool&) {
+@@ -1264,8 +1469,11 @@ static String permissionNotification(WebExtensionContext::PermissionNotification
+
+     for (Ref tab : window.tabs())
+         didOpenTab(tab);
+
++    if (RefPtr controller = extensionController())
++        controller->updatePrivacySettings();
++
+     if (!isLoaded() || !window.extensionHasAccess() || suppressEvents == SuppressEvents::Yes)
+         return;
+
+     fireWindowsEventIfNeeded(WebExtensionEventListenerType::WindowsOnCreated, window.parameters());
+@@ -1288,8 +1496,11 @@ static String permissionNotification(WebExtensionContext::PermissionNotification
+
+     for (Ref tab : window.tabs())
+         didCloseTab(tab, WindowIsClosing::Yes);
+
++    if (RefPtr controller = extensionController())
++        controller->updatePrivacySettings();
++
+     if (!isLoaded() || !window.extensionHasAccess())
+         return;
+
+     fireWindowsEventIfNeeded(WebExtensionEventListenerType::WindowsOnRemoved, window.minimalParameters());
+diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
+index 9396601bc896ae09760447c1f6e1f599076ee2a9..401228d76324d1e0c9ecd744e9fc556391392dfc 100644
+--- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
++++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
+@@ -27,8 +27,10 @@
+ #error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
+ #endif
+
+ #import "config.h"
++#include <algorithm>
++#include <cmath>
+ #import "WebExtensionController.h"
+
+ #if ENABLE(WK_WEB_EXTENSIONS)
+
+@@ -117,8 +119,134 @@ - (void)_didDeleteLocalStorage:(NSNotification *)notification
+ @end
+
+ namespace WebKit {
+
++static bool hasPrivacyPrecedence(WebExtensionContext& left, WebExtensionContext& right)
++{
++    if (left.privacyInstallationTime() != right.privacyInstallationTime())
++        return left.privacyInstallationTime() > right.privacyInstallationTime();
++    return [left.uniqueIdentifier().createNSString().get() compare:right.uniqueIdentifier().createNSString().get() options:NSLiteralSearch] == NSOrderedDescending;
++}
++
++bool WebExtensionController::hasPrivatePrivacyWindows() const
++{
++    for (Ref context : m_extensionContexts) {
++        for (Ref window : context->openWindows(WebExtensionContext::IgnoreExtensionAccess::Yes)) {
++            if (window->isPrivate())
++                return true;
++        }
++    }
++    return false;
++}
++
++WebExtensionContext* WebExtensionController::privacySettingController(NSString *key, bool incognito)
++{
++    WebExtensionContext *winner = nullptr;
++    for (Ref context : m_extensionContexts) {
++        if (!context->isLoaded() || !context->hasPermission(WebExtensionPermission::privacy()) || (incognito && !context->hasAccessToPrivateData()) || context->privacyValue(key, incognito).isNull())
++            continue;
++        if (!winner || hasPrivacyPrecedence(context.get(), *winner))
++            winner = context.ptr();
++    }
++    return winner;
++}
++
++NSDictionary *WebExtensionController::privacySettingDetails(WebExtensionContext& requester, NSString *key, bool incognito)
++{
++    auto *winner = privacySettingController(key, incognito);
++    id value;
++    if (winner) {
++        String stored = winner->privacyValue(key, incognito);
++        if ([key isEqualToString:@"webRTCIPHandlingPolicy"])
++            value = stored.createNSString().get();
++        else
++            value = @(stored == "true"_s);
++    } else {
++        WKPreferences *preferences = protectedConfiguration()->webViewConfiguration().preferences;
++        if ([key isEqualToString:@"webRTCIPHandlingPolicy"])
++            value = preferences._webRTCIPHandlingPolicy;
++        else if ([key isEqualToString:@"networkPredictionEnabled"])
++            value = @(preferences._networkPredictionEnabled);
++        else
++            value = @(preferences._hyperlinkAuditingEnabled);
++    }
++    NSString *level = winner == &requester ? @"controlled_by_this_extension"
++        : (!winner || hasPrivacyPrecedence(requester, *winner)) ? @"controllable_by_this_extension" : @"controlled_by_other_extensions";
++    NSMutableDictionary *result = [@{ @"value": value, @"levelOfControl": level } mutableCopy];
++    if (requester.hasAccessToPrivateData())
++        result[@"incognitoSpecific"] = @(incognito && winner && winner->privacyValueIsIncognitoSpecific(key));
++    return result;
++}
++
++static String privacyBaselineSignature(WKPreferences *preferences)
++{
++    return String([NSString stringWithFormat:@"%d|%d|%@", preferences._networkPredictionEnabled, preferences._hyperlinkAuditingEnabled, preferences._webRTCIPHandlingPolicy]);
++}
++
++void WebExtensionController::browserPrivacyPreferencesDidChange()
++{
++    auto signature = privacyBaselineSignature(protectedConfiguration()->webViewConfiguration().preferences);
++    if (signature == m_browserPrivacySignature)
++        return;
++    m_browserPrivacySignature = WTF::move(signature);
++    updatePrivacySettings();
++}
++
++void WebExtensionController::updatePrivacySettings()
++{
++    if (m_updatingPrivacySettings) {
++        m_privacySettingsNeedUpdate = true;
++        return;
++    }
++    do {
++        m_privacySettingsNeedUpdate = false;
++        m_updatingPrivacySettings = true;
++        m_browserPrivacySignature = privacyBaselineSignature(protectedConfiguration()->webViewConfiguration().preferences);
++        if (!hasPrivatePrivacyWindows()) {
++            for (Ref context : m_extensionContexts)
++                context->clearPrivateSessionPrivacySettings();
++        }
++        for (Ref page : m_pages) {
++            bool incognito = !page->websiteDataStore().isPersistent();
++            std::optional<bool> prediction;
++            std::optional<bool> auditing;
++            String rtcPolicy;
++            if (auto *winner = privacySettingController(@"networkPredictionEnabled", incognito))
++                prediction = winner->privacyValue(@"networkPredictionEnabled", incognito) == "true"_s;
++            if (auto *winner = privacySettingController(@"hyperlinkAuditingEnabled", incognito))
++                auditing = winner->privacyValue(@"hyperlinkAuditingEnabled", incognito) == "true"_s;
++            if (auto *winner = privacySettingController(@"webRTCIPHandlingPolicy", incognito))
++                rtcPolicy = winner->privacyValue(@"webRTCIPHandlingPolicy", incognito);
++            page->setExtensionPrivacyPreferences(prediction, auditing, WTF::move(rtcPolicy));
++        }
++        for (Ref context : m_extensionContexts) {
++            for (NSString *key in @[ @"networkPredictionEnabled", @"hyperlinkAuditingEnabled", @"webRTCIPHandlingPolicy" ]) {
++                context->firePrivacySettingChangedIfNeeded(key, false);
++                context->firePrivacySettingChangedIfNeeded(key, true);
++            }
++        }
++
++        WallTime nextExpiration = WallTime::infinity();
++        auto now = WallTime::now();
++        for (Ref context : m_extensionContexts) {
++            if (!context->hasPermission(WebExtensionPermission::privacy()))
++                continue;
++            auto expiration = context->grantedPermissions().get(WebExtensionPermission::privacy());
++            if (expiration > now && expiration < nextExpiration)
++                nextExpiration = expiration;
++        }
++        if (std::isfinite(nextExpiration.secondsSinceEpoch().value())) {
++            if (!m_privacyExpirationTimer)
++                m_privacyExpirationTimer = makeUnique<RunLoop::Timer>(RunLoop::currentSingleton(), "WebExtensionController::PrivacyExpiration"_s, this, &WebExtensionController::updatePrivacySettings);
++            auto delay = std::max(Seconds(0.01), std::min(nextExpiration - WallTime::now(), Seconds(3600)));
++            m_privacyExpirationTimer->startOneShot(delay);
++        } else if (m_privacyExpirationTimer)
++            m_privacyExpirationTimer->stop();
++        m_updatingPrivacySettings = false;
++    } while (m_privacySettingsNeedUpdate);
++}
++
++
+ void WebExtensionController::initializePlatform()
+ {
+     ASSERT(!m_webExtensionControllerHelper);
+     m_webExtensionControllerHelper = [[_WKWebExtensionControllerHelper alloc] initWithWebExtensionController:*this];
+@@ -327,8 +455,9 @@ - (void)_didDeleteLocalStorage:(NSNotification *)notification
+
+         return makeUnexpected(loadResult.error());
+     }
+
++    updatePrivacySettings();
+     return true;
+ }
+
+ Expected<bool, RefPtr<API::Error>> WebExtensionController::unload(WebExtensionContext& extensionContext)
+@@ -354,8 +483,9 @@ - (void)_didDeleteLocalStorage:(NSNotification *)notification
+     auto unloadResult = extensionContext.unload();
+     if (!unloadResult)
+         return makeUnexpected(unloadResult.error());
+
++    updatePrivacySettings();
+     return true;
+ }
+
+ void WebExtensionController::unloadAll()
+@@ -385,8 +515,9 @@ - (void)_didDeleteLocalStorage:(NSNotification *)notification
+     addWebsiteDataStore(dataStore);
+
+     Ref controller = page.userContentController();
+     addUserContentController(controller, dataStore->isPersistent() ? ForPrivateBrowsing::No : ForPrivateBrowsing::Yes);
++    updatePrivacySettings();
+ }
+
+ void WebExtensionController::removePage(WebPageProxy& page)
+ {
+@@ -404,8 +535,9 @@ - (void)_didDeleteLocalStorage:(NSNotification *)notification
+     removeUserContentController(controller);
+
+     for (Ref context : m_extensionContexts)
+         context->removePage(page);
++    updatePrivacySettings();
+ }
+
+ void WebExtensionController::addProcessPool(WebProcessPool& processPool)
+ {
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtension.cpp b/Source/WebKit/UIProcess/Extensions/WebExtension.cpp
+index b1f071b68a81d3fad67b3a73b905ff224e7123d1..62837d86e925a2970df21e33cc50709b3c39fe83 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtension.cpp
++++ b/Source/WebKit/UIProcess/Extensions/WebExtension.cpp
+@@ -1621,9 +1621,9 @@ void WebExtension::populateSidePanelProperties(const JSON::Object& sidePanelObje
+ const WebExtension::PermissionsSet& WebExtension::supportedPermissions()
+ {
+     static MainRunLoopNeverDestroyed<PermissionsSet> permissions = std::initializer_list<String> { WebExtensionPermission::activeTab(), WebExtensionPermission::alarms(), WebExtensionPermission::clipboardWrite(),
+         WebExtensionPermission::contextMenus(), WebExtensionPermission::cookies(), WebExtensionPermission::declarativeNetRequest(), WebExtensionPermission::declarativeNetRequestFeedback(),
+-        WebExtensionPermission::declarativeNetRequestWithHostAccess(), WebExtensionPermission::menus(), WebExtensionPermission::nativeMessaging(), WebExtensionPermission::notifications(), WebExtensionPermission::scripting(),
++        WebExtensionPermission::declarativeNetRequestWithHostAccess(), WebExtensionPermission::menus(), WebExtensionPermission::nativeMessaging(), WebExtensionPermission::notifications(), WebExtensionPermission::privacy(), WebExtensionPermission::scripting(),
+         WebExtensionPermission::storage(), WebExtensionPermission::tabs(), WebExtensionPermission::unlimitedStorage(), WebExtensionPermission::webNavigation(), WebExtensionPermission::webRequest(), WebExtensionPermission::webRequestBlocking(),
+ #if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
+         WebExtensionPermission::sidePanel(),
+ #endif
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.cpp b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.cpp
+index 79188876025eb8656512fa70fff375eb742946a8..7d9cae7128ccf1464f862c8b075b2f95231dde70 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.cpp
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.cpp
+@@ -224,8 +224,15 @@ void WebExtensionContext::setHasAccessToPrivateData(bool hasAccess)
+         return;
+
+     m_hasAccessToPrivateData = hasAccess;
+
++#if PLATFORM(COCOA)
++    if (!hasAccess)
++        clearPrivateSessionPrivacySettings();
++    if (RefPtr controller = extensionController())
++        controller->updatePrivacySettings();
++#endif
++
+     if (!safeToInjectContent())
+         return;
+
+     if (m_hasAccessToPrivateData) {
+@@ -255,8 +262,12 @@ const WebExtensionContext::PermissionsMap& WebExtensionContext::grantedPermissio
+ }
+
+ void WebExtensionContext::setGrantedPermissions(PermissionsMap&& grantedPermissions)
+ {
++#if PLATFORM(COCOA)
++    bool previouslyHadPrivacy = m_grantedPermissions.contains(WebExtensionPermission::privacy());
++    auto previousPrivacyExpiration = m_grantedPermissions.get(WebExtensionPermission::privacy());
++#endif
+     PermissionsSet removedPermissions;
+     for (auto& entry : m_grantedPermissions)
+         removedPermissions.add(entry.key);
+
+@@ -272,10 +283,16 @@ void WebExtensionContext::setGrantedPermissions(PermissionsMap&& grantedPermissi
+
+         addedPermissions.add(entry.key);
+     }
+
+-    if (addedPermissions.isEmpty() && removedPermissions.isEmpty())
++    if (addedPermissions.isEmpty() && removedPermissions.isEmpty()) {
++#if PLATFORM(COCOA)
++        if (previouslyHadPrivacy && m_grantedPermissions.contains(WebExtensionPermission::privacy())
++            && previousPrivacyExpiration != m_grantedPermissions.get(WebExtensionPermission::privacy()))
++            privacyPermissionDatesDidChange();
++#endif
+         return;
++    }
+
+     removeDeniedPermissions(addedPermissions);
+
+     permissionsDidChange(PermissionNotification::GrantedPermissionsWereRemoved, removedPermissions);
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
+index f153d43ab7b95ed3cbf29d16b7a1287d1725f389..ab678e5dc9e7a1077b39b1a1570af04ae294df05 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
+@@ -348,8 +348,16 @@ public:
+     Expected<bool, RefPtr<API::Error>> unload();
+     Expected<bool, RefPtr<API::Error>> reload();
+
+     void didFindExtensionUpdate(const String& version);
++    void privacySettingOperation(const String& key, const String& operation, const String& detailsJSON, CompletionHandler<void(Expected<String, WebExtensionError>&&)>&&);
++    String privacyValue(NSString *key, bool incognito) const;
++    bool privacyValueIsIncognitoSpecific(NSString *key) const;
++    double privacyInstallationTime() const;
++    void setPrivacyInstallationTime(double);
++    void clearPrivateSessionPrivacySettings();
++    void firePrivacySettingChangedIfNeeded(NSString *key, bool incognito);
++    void privacyPermissionDatesDidChange();
+
+     bool isLoaded() const { return !!m_extensionController; }
+
+     WebExtension& extension() const { return *m_extension; }
+@@ -1029,8 +1037,11 @@ private:
+     String m_storageDirectory;
+
+ #if PLATFORM(COCOA)
+     RetainPtr<NSMutableDictionary> m_state;
++    RetainPtr<NSMutableDictionary> m_privateSessionPrivacySettings;
++    RetainPtr<NSMutableDictionary> m_privacyEventSignatures;
++    std::optional<double> m_privacyInstallationTime;
+ #endif
+     Vector<Ref<API::Error>> m_errors;
+
+     RefPtr<WebExtension> m_extension;
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.messages.in b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.messages.in
+index 8cf0fdb0ea1122b7c383bca8197102a88acd7826..790d54bfd4ef67fb4ecd0e77aff63e8232a73636 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.messages.in
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.messages.in
+@@ -119,8 +119,9 @@ messages -> WebExtensionContext {
+     // Runtime APIs
+     [Validator=isLoaded] RuntimeGetBackgroundPage() -> (Expected<std::optional<WebCore::PageIdentifier>, WebKit::WebExtensionError> result)
+     [Validator=isLoaded] RuntimeOpenOptionsPage() -> (Expected<void, WebKit::WebExtensionError> result)
+     [Validator=isLoaded] RuntimeReload()
++    [Validator=isLoadedAndPrivilegedMessage] PrivacySettingOperation(String key, String operation, String detailsJSON) -> (Expected<String, WebKit::WebExtensionError> result)
+     [Validator=isLoaded] RuntimeSendMessage(String extensionID, String messageJSON, struct WebKit::WebExtensionMessageSenderParameters senderParameters) -> (Expected<String, WebKit::WebExtensionError> result)
+     [Validator=isLoaded] RuntimeConnect(String extensionID, WebKit::WebExtensionPortChannelIdentifier channelIdentifier, String name, struct WebKit::WebExtensionMessageSenderParameters senderParameters) -> (Expected<void, WebKit::WebExtensionError> result)
+     [Validator=isLoaded] RuntimeSendNativeMessage(String applicationID, String messageJSON) -> (Expected<String, WebKit::WebExtensionError> result)
+     [Validator=isLoaded] RuntimeConnectNative(String applicationID, WebKit::WebExtensionPortChannelIdentifier channelIdentifier, WebKit::WebPageProxyIdentifier pageProxyIdentifier) -> (Expected<void, WebKit::WebExtensionError> result)
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionController.h b/Source/WebKit/UIProcess/Extensions/WebExtensionController.h
+index 4dc11c4451c34c998cd3585f835889a4a730846d..400388a950ccb101431bebbab6bc7fd7b2a3fb35 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionController.h
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionController.h
+@@ -52,8 +52,10 @@
+ #include <wtf/WeakHashSet.h>
+
+ OBJC_CLASS NSMenu;
+ OBJC_CLASS _WKWebExtensionControllerHelper;
++OBJC_CLASS NSDictionary;
++OBJC_CLASS NSString;
+ OBJC_PROTOCOL(WKWebExtensionControllerDelegatePrivate);
+
+ #ifdef __OBJC__
+ #import "WKWebExtensionController.h"
+@@ -140,8 +142,13 @@ public:
+
+     void addPage(WebPageProxy&);
+     void removePage(WebPageProxy&);
+     void didCreateNavigationTarget(WebPageProxyIdentifier, WebExtensionCreatedNavigationTarget&&);
++    bool hasPrivatePrivacyWindows() const;
++    WebExtensionContext* privacySettingController(NSString *key, bool incognito);
++    NSDictionary *privacySettingDetails(WebExtensionContext&, NSString *key, bool incognito);
++    void updatePrivacySettings();
++    void browserPrivacyPreferencesDidChange();
+
+     const WebPageProxySet& allPages() const { return m_pages; }
+
+     const WebsiteDataStoreSet& allWebsiteDataStores() const { return m_websiteDataStores; }
+@@ -298,8 +305,12 @@ private:
+ #else
+     bool m_testingMode : 1 { true };
+ #endif
+     bool m_showingActionPopup { false };
++    bool m_updatingPrivacySettings { false };
++    bool m_privacySettingsNeedUpdate { false };
++    String m_browserPrivacySignature;
++    std::unique_ptr<RunLoop::Timer> m_privacyExpirationTimer;
+
+     std::unique_ptr<RunLoop::Timer> m_purgeOldMatchedRulesTimer;
+     RefPtr<HTTPCookieStoreObserver> m_cookieStoreObserver;
+ };
+diff --git a/Source/WebKit/UIProcess/WebPageProxy.cpp b/Source/WebKit/UIProcess/WebPageProxy.cpp
+index 76cd1e42fd17c7e8589138519d36e8987e3fde32..4b2dd01cf6072ffbec9923f1a21fe09076da6848 100644
+--- a/Source/WebKit/UIProcess/WebPageProxy.cpp
++++ b/Source/WebKit/UIProcess/WebPageProxy.cpp
+@@ -6916,8 +6916,12 @@ void WebPageProxy::updateRenderingWithForcedRepaint(CompletionHandler<void()>&&
+
+ void WebPageProxy::preferencesDidChange()
+ {
+     updateExtensionPrivacyPreferencesStore();
++#if ENABLE(WK_WEB_EXTENSIONS) && PLATFORM(COCOA)
++    if (RefPtr controller = webExtensionController())
++        controller->browserPrivacyPreferencesDidChange();
++#endif
+
+     if (!hasRunningProcess())
+         return;
+
+diff --git a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPINamespaceCocoa.mm b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPINamespaceCocoa.mm
+index 7d2cfa8adeda3c772a69cfc293051fd09b98496e..3228bb528ff8aed4d7efa2debdc8def19d5cc263 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPINamespaceCocoa.mm
++++ b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPINamespaceCocoa.mm
+@@ -32,10 +32,14 @@
+
+ #if ENABLE(WK_WEB_EXTENSIONS)
+
+ #import "CocoaHelpers.h"
++#import "MessageSenderInlines.h"
+ #import "WKWebExtensionPermission.h"
+ #import "WebExtensionControllerProxy.h"
++#import "WebExtensionContextMessages.h"
++#import "WebProcess.h"
++#import <JavaScriptCore/JSObjectRefPrivate.h>
+
+ #if ENABLE(INSPECTOR_EXTENSIONS) || ENABLE(WK_WEB_EXTENSIONS_SIDEBAR) ||  ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
+ #import "WebPage.h"
+ #import <WebCore/Page.h>
+@@ -43,8 +47,112 @@
+ #endif
+
+ namespace WebKit {
+
++static void performPrivacySettingOperation(WebExtensionContextProxy&, const String& key, const String& operation, const String& detailsJSON, Ref<WebExtensionCallbackHandler>&&);
++
++JSValueRef JSWebExtensionAPINamespace::privacy(JSContextRef context, JSObjectRef object, JSStringRef propertyName, JSValueRef*)
++{
++    RefPtr impl = toWebExtensionAPINamespace(context, object);
++    if (!impl)
++        return JSValueMakeUndefined(context);
++    if (auto cached = JSObjectGetPrivateProperty(context, object, propertyName))
++        return cached;
++
++    JSContext *scriptContext = toJSContext(context);
++    JSValue *privacy = [JSValue valueWithNewObjectInContext:scriptContext];
++    JSValue *network = [JSValue valueWithNewObjectInContext:scriptContext];
++    JSValue *websites = [JSValue valueWithNewObjectInContext:scriptContext];
++    privacy[@"network"] = network;
++    privacy[@"websites"] = websites;
++    for (NSString *key in @[ @"networkPredictionEnabled", @"webRTCIPHandlingPolicy", @"hyperlinkAuditingEnabled" ]) {
++        JSValue *setting = [JSValue valueWithNewObjectInContext:scriptContext];
++        for (NSString *operation in @[ @"get", @"set", @"clear" ]) {
++            RefPtr<WebExtensionContextProxy> owner = impl->protectedExtensionContext();
++            RefPtr<WebExtensionAPIRuntime> runtime = impl->protectedRuntime();
++            String ownedKey(key);
++            String ownedOperation(operation);
++            setting[operation] = [JSValue valueWithObject:^JSValue * {
++                JSContext *callContext = JSContext.currentContext;
++                JSGlobalContextRef globalContext = callContext.JSGlobalContextRef;
++                NSArray<JSValue *> *arguments = JSContext.currentArguments;
++                JSValue *details = arguments.firstObject;
++                JSValue *function = arguments.count > 1 ? arguments[1] : nil;
++                if (arguments.count > 2 || !details || !isDictionary(globalContext, details.JSValueRef)
++                    || (function && !function.isUndefined && !isFunction(globalContext, function.JSValueRef))) {
++                    callContext.exception = toJSValue(globalContext, toJSError(globalContext, "privacy"_s, nullString(), "an options object and optional callback are expected"_s));
++                    return [JSValue valueWithUndefinedInContext:callContext];
++                }
++                JSValueRef exception = nullptr;
++                String json = serializeJSObject(globalContext, details.JSValueRef, &exception);
++                if (exception) {
++                    callContext.exception = toJSValue(globalContext, exception);
++                    return [JSValue valueWithUndefinedInContext:callContext];
++                }
++                RefPtr callback = toJSCallbackHandler(globalContext, function ? function.JSValueRef : JSValueMakeUndefined(globalContext), *runtime);
++                JSObjectRef promise = nullptr;
++                if (!callback) {
++                    JSObjectRef resolve = nullptr;
++                    JSObjectRef reject = nullptr;
++                    promise = JSObjectMakeDeferredPromise(globalContext, &resolve, &reject, &exception);
++                    if (exception || !promise) {
++                        if (exception)
++                            callContext.exception = toJSValue(globalContext, exception);
++                        return [JSValue valueWithUndefinedInContext:callContext];
++                    }
++                    callback = toJSPromiseCallbackHandler(globalContext, resolve, reject);
++                }
++                performPrivacySettingOperation(*owner, ownedKey, ownedOperation, json, callback.releaseNonNull());
++                return promise ? toJSValue(globalContext, promise) : [JSValue valueWithUndefinedInContext:callContext];
++            } inContext:scriptContext];
++        }
++        setting[@"onChange"] = toJSValue(context, toJS(context, &impl->privacyOnChange(String(key))));
++        if ([key isEqualToString:@"hyperlinkAuditingEnabled"])
++            websites[key] = setting;
++        else
++            network[key] = setting;
++    }
++    JSObjectSetPrivateProperty(context, object, propertyName, privacy.JSValueRef);
++    return privacy.JSValueRef;
++}
++
++static void performPrivacySettingOperation(WebExtensionContextProxy& context, const String& key, const String& operation, const String& detailsJSON, Ref<WebExtensionCallbackHandler>&& callback)
++{
++    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::PrivacySettingOperation(key, operation, detailsJSON),
++        [callback = WTF::move(callback), returnsValue = operation == "get"_s](Expected<String, WebExtensionError>&& result) {
++            if (!result) {
++                callback->reportError(result.error().createNSString().get());
++                return;
++            }
++            if (returnsValue)
++                callback->call(deserializeJSONString(callback->globalContext(), result.value()));
++            else
++                callback->call();
++        }, context.identifier());
++}
++
++WebExtensionAPIEvent& WebExtensionAPINamespace::privacyOnChange(const String& key)
++{
++    auto& event = key == "networkPredictionEnabled"_s ? m_privacyPredictionChange : key == "hyperlinkAuditingEnabled"_s ? m_privacyAuditingChange : m_privacyRTCChange;
++    auto type = key == "networkPredictionEnabled"_s ? WebExtensionEventListenerType::PrivacyPredictionOnChange
++        : key == "hyperlinkAuditingEnabled"_s ? WebExtensionEventListenerType::PrivacyAuditingOnChange : WebExtensionEventListenerType::PrivacyRTCOnChange;
++    if (!event) {
++        event = WebExtensionAPIEvent::create(*this, type);
++        event->setPropertyPath(makeString("privacy."_s, key == "hyperlinkAuditingEnabled"_s ? "websites."_s : "network."_s, key, ".onChange"_s), this);
++    }
++    return *event;
++}
++
++void WebExtensionContextProxy::dispatchPrivacySettingChangedEvent(const String& key, const String& detailsJSON)
++{
++    NSDictionary *details = dynamic_objc_cast<NSDictionary>(parseJSON(detailsJSON.createNSString().get()));
++    if (!details)
++        return;
++    enumerateNamespaceObjects([&](auto& namespaceObject) {
++        namespaceObject.privacyOnChange(key).invokeListenersWithArgument(details);
++    });
++}
++
+ bool WebExtensionAPINamespace::isPropertyAllowed(const ASCIILiteral& name, WebPage* page)
+ {
+     Ref extensionContext = this->extensionContext();
+     if (extensionContext->isUnsupportedAPI(propertyPath(), name)) [[unlikely]]
+diff --git a/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPINamespace.h b/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPINamespace.h
+index e48ee72e5e05918497a4843761b2e86545da73c7..b6b37b3e7e275c4ae9390a4db5d6c6eeea9753c5 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPINamespace.h
++++ b/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPINamespace.h
+@@ -83,8 +83,9 @@ public:
+     WebExtensionAPIMenus& menus();
+     WebExtensionAPINotifications& notifications();
+     WebExtensionAPIAction& pageAction() { return action(); }
+     WebExtensionAPIPermissions& permissions();
++    WebExtensionAPIEvent& privacyOnChange(const String& key);
+     WebExtensionAPIRuntime& runtime() const final;
+     Ref<WebExtensionAPIRuntime> protectedRuntime() const { return runtime(); }
+     WebExtensionAPIScripting& scripting();
+ #if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
+@@ -116,8 +117,11 @@ private:
+     RefPtr<WebExtensionAPILocalization> m_i18n;
+     RefPtr<WebExtensionAPIMenus> m_menus;
+     RefPtr<WebExtensionAPINotifications> m_notifications;
+     RefPtr<WebExtensionAPIPermissions> m_permissions;
++    RefPtr<WebExtensionAPIEvent> m_privacyPredictionChange;
++    RefPtr<WebExtensionAPIEvent> m_privacyAuditingChange;
++    RefPtr<WebExtensionAPIEvent> m_privacyRTCChange;
+     mutable RefPtr<WebExtensionAPIRuntime> m_runtime;
+     RefPtr<WebExtensionAPIScripting> m_scripting;
+ #if ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
+     RefPtr<WebExtensionAPISidePanel> m_sidePanel;
+diff --git a/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPINamespace.idl b/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPINamespace.idl
+index 55fe7d244308642e07de6b3335902ac2498d961b..5236679eb7b7d5f7c6d84fa7306288e4484ab5d2 100644
+--- a/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPINamespace.idl
++++ b/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPINamespace.idl
+@@ -60,8 +60,9 @@
+
+     [MainWorldOnly, Dynamic] readonly attribute WebExtensionAPIAction pageAction;
+
+     [MainWorldOnly] readonly attribute WebExtensionAPIPermissions permissions;
++    [MainWorldOnly, Dynamic, Custom] readonly attribute any privacy;
+
+     [MainWorldOnly, Dynamic] readonly attribute WebExtensionAPIScripting scripting;
+
+     [MainWorldOnly, Dynamic, Conditional=WK_WEB_EXTENSIONS_SIDEBAR] readonly attribute WebExtensionAPISidebarAction sidebarAction;
+diff --git a/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.h b/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.h
+index 086b07c3ccc5728067c216664aecac260282b2a1..b8cc04acfa7a6e09061c2133115ae8b031d72816 100644
+--- a/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.h
++++ b/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.h
+@@ -198,8 +198,9 @@ private:
+     void dispatchRuntimeConnectEvent(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier, const String& name, const std::optional<WebExtensionMessageTargetParameters>&, const WebExtensionMessageSenderParameters&, CompletionHandler<void(HashCountedSet<WebPageProxyIdentifier>&&)>&&);
+     void dispatchRuntimeInstalledEvent(WebExtensionContext::InstallReason, String previousVersion);
+     void dispatchRuntimeStartupEvent();
+     void dispatchRuntimeUpdateAvailableEvent(const String& version);
++    void dispatchPrivacySettingChangedEvent(const String& key, const String& detailsJSON);
+
+     // Storage
+     void setStorageAccessLevel(bool);
+     void dispatchStorageChangedEvent(const Vector<String>& onChangedJSON, WebExtensionDataType, WebExtensionContentWorldType);
+diff --git a/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.messages.in b/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.messages.in
+index ca36e74133d9d9058f67dc23736b399751f121d2..63976aa435899480ff5d9d1f8147af94edee3988 100644
+--- a/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.messages.in
++++ b/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.messages.in
+@@ -79,8 +79,9 @@ messages -> WebExtensionContextProxy {
+     DispatchRuntimeConnectEvent(WebKit::WebExtensionContentWorldType contentWorldType, WebKit::WebExtensionPortChannelIdentifier channelIdentifier, String name, struct std::optional<WebKit::WebExtensionMessageTargetParameters> targetParameters, struct WebKit::WebExtensionMessageSenderParameters senderParameters) -> (HashCountedSet<WebKit::WebPageProxyIdentifier> addedPortCounts)
+     DispatchRuntimeInstalledEvent(enum:uint8_t WebKit::WebExtensionContextInstallReason installReason, String previousVersion)
+     DispatchRuntimeStartupEvent()
+     DispatchRuntimeUpdateAvailableEvent(String version)
++    DispatchPrivacySettingChangedEvent(String key, String detailsJSON)
+
+     // Storage
+     SetStorageAccessLevel(bool allowedInContentScripts)
+     DispatchStorageChangedEvent(Vector<String> onChangedJSON, WebKit::WebExtensionDataType dataType, WebKit::WebExtensionContentWorldType contentWorldType)
