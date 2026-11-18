@@ -1,4 +1,4 @@
-name: Build WebKit request-blocking probe with faster compiler settings
+name: Build and test the WebKit request-blocking probe
 
 on:
   push:
@@ -49,15 +49,20 @@ jobs:
       - name: Compile the macOS engine
         working-directory: ${{ runner.temp }}/WebKit
         shell: bash
+        timeout-minutes: 351
         run: |
           set -euo pipefail
           patch="$GITHUB_WORKSPACE/diagnostics/webkit-before-send-cancellation.patch"
           git apply --check "$patch"
           git apply "$patch"
           git diff --check
-          # Use the pinned configuration that previously built and loaded this patched framework.
+          # Keep the working O1 configuration. The probe needs neither IDE indices nor debug symbols.
           Tools/Scripts/set-webkit-configuration --release --force-optimization-level=O1 --lto-mode=none
-          Tools/Scripts/build-webkit --release --lto-mode=none --only='Everything up to WebKit' 2>&1 |
+          log="$RUNNER_TEMP/webkit-probe-build.log"
+          trap 'status=$?; if [[ "$status" != 0 && -f "$log" ]]; then tail -n 180 "$log"; fi' EXIT
+          Tools/Scripts/build-webkit --release --lto-mode=none --only='Everything up to WebKit' \
+            GCC_GENERATE_DEBUGGING_SYMBOLS=NO COMPILER_INDEX_STORE_ENABLE=NO 2>&1 |
+            tee "$log" |
             awk '/^The following build commands failed/ { failureSummary = 32 }
               NR <= 80 || NR % 4000 == 0 || failureSummary > 0 ||
               /(^|[[:space:]])(fatal error|error|warning|Error):|BUILD (SUCCEEDED|FAILED)|No space left/ {
@@ -70,6 +75,16 @@ jobs:
           file "$framework"
           xcrun lipo -archs "$framework"
           df -h "$RUNNER_TEMP"
+
+      - name: Preserve compiler diagnostics if the build fails
+        if: failure()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: webkit-probe-build-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/webkit-probe-build.log
+          if-no-files-found: ignore
+          retention-days: 5
 
       - name: Require before-send cancellation in the built framework
         shell: bash
