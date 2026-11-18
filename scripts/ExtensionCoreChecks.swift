@@ -185,6 +185,38 @@ import BrowserCore
         do { try future.repairProfiles() } catch { rejected = true }
         check(rejected,"Unknown future extension metadata is rejected")
         check(try Data(contentsOf:storage.url) == bytes,"Rejecting a future format leaves the existing ciphertext untouched")
+        func catalogDates(_ values:[[String:Any]]) throws -> [BrowserExtensionRecord] {
+            let input = try JSONDecoder().decode([BrowserExtensionRecord].self,from:JSONSerialization.data(withJSONObject:values))
+            return ExtensionCatalog.repaired(input,profileID:BrowserProfile.defaultID,controllerID:UUID(uuidString:controllerID)!)
+        }
+        func dateFields(_ values:[BrowserExtensionRecord]) throws -> [Double] {
+            let json = try JSONSerialization.jsonObject(with:JSONEncoder().encode(values)) as! [[String:Any]]
+            return json.compactMap{$0["installedAt"] as? Double}
+        }
+        var legacyFirst = approved, legacySecond = record, dated = record
+        legacyFirst["id"] = "FA953F81-6C94-4DD2-993D-A38064089632"
+        legacyFirst.removeValue(forKey:"grants");legacyFirst["enabled"] = false
+        legacySecond["id"] = "A51FF3D0-AC41-49B4-8150-2081C4157F8D"
+        dated["id"] = "233D52B0-0193-4F99-A698-54598206024A";dated["installedAt"] = 1000.0
+        let migrated = try catalogDates([legacyFirst,legacySecond,dated]), times = try dateFields(migrated)
+        check(times.count == 3 && times[0] < times[1] && times[1] < times[2],"Disabled legacy installations receive stable catalog order before dated installations")
+        check(try dateFields(ExtensionCatalog.repaired(migrated,profileID:BrowserProfile.defaultID,controllerID:UUID(uuidString:controllerID)!)) == times && times.count == 3,"Installation-date migration is idempotent")
+        let datedStorage = MetadataStore(url:root.appendingPathComponent("installation-dates.sealed"),key:key)
+        try datedStorage.save(migrated)
+        check(try dateFields(datedStorage.load([BrowserExtensionRecord].self)!) == times && times.count == 3,"Installation priority survives encrypted round-trip")
+        var earlier = approved,later = approved
+        earlier["installedAt"] = 1000.0;later["installedAt"] = 2000.0
+        let duplicates = try catalogDates([later,earlier])
+        check(try dateFields(duplicates) == [1000] && duplicates.first?.grants != nil && duplicates.first?.enabled == true,"Duplicate catalog mirrors preserve earliest installation priority without revoking identical approval")
+        let mixed = try catalogDates([approved,later])
+        check(try dateFields(mixed) == [2000] && mixed.first?.grants != nil,"A legacy duplicate cannot discard an existing installation date")
+        var invalidDate = approved;invalidDate["installedAt"] = 1e300
+        let recoveredDate = try catalogDates([invalidDate]), recoveredTimes = try dateFields(recoveredDate)
+        check(recoveredTimes.count == 1 && recoveredTimes[0].isFinite && abs(recoveredTimes[0]) < 1e12 && recoveredDate.first?.grants != nil,"Out-of-range installation metadata repairs to an older date without changing approval")
+        var precisionRecord = typed
+        let precisionDate = Date(timeIntervalSinceReferenceDate:800_000_000)
+        precisionRecord.installedAt = precisionDate
+        check(ExtensionCatalog.nextInstallationDate(in:[precisionRecord],now:precisionDate).timeIntervalSince1970 > precisionDate.timeIntervalSince1970,"Installation priority survives conversion to WebKit Unix timestamps")
         try runExtensionManifestChecks(check)
         try runExtensionZIPChecks(check)
         try await runExtensionPackageChecks(check)

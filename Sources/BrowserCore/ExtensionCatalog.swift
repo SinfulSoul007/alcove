@@ -8,6 +8,7 @@ public enum ExtensionCatalog {
         for original in current + incoming {
             if let index = result.firstIndex(where:{ sameRevision($0,original) }) {
                 var saved = result[index]
+                saved.installedAt = [saved.validInstallationDate,original.validInstallationDate].compactMap{$0}.min()
                 if immutableMetadata(saved) != immutableMetadata(original) { saved.revokeApproval() }
                 else {
                     saved.enabled = saved.enabled && original.enabled
@@ -35,7 +36,13 @@ public enum ExtensionCatalog {
         return result
     }
     public static func repaired(_ records:[BrowserExtensionRecord],profileID:UUID,controllerID:UUID,paused:Bool = false) -> [BrowserExtensionRecord] {
-        merged(records,[]).map { original in
+        var ordered = merged(records,[])
+        let legacy = ordered.indices.filter{ordered[$0].validInstallationDate == nil}
+        let earliest = min(ordered.compactMap(\.validInstallationDate).min() ?? Date(timeIntervalSince1970:0),Date(timeIntervalSince1970:0))
+        for (offset,index) in legacy.enumerated() {
+            ordered[index].installedAt = earliest.addingTimeInterval(Double(offset - legacy.count))
+        }
+        return ordered.map { original in
             var record = original
             record.requestedPermissions = unique(record.requestedPermissions)
             record.optionalPermissions = unique(record.optionalPermissions)
@@ -62,6 +69,11 @@ public enum ExtensionCatalog {
             return record
         }
     }
+    public static func nextInstallationDate(in records:[BrowserExtensionRecord],now:Date = Date()) -> Date {
+        guard let latest = records.compactMap(\.validInstallationDate).max() else {return now}
+        // A reference-date ULP can disappear when WebKit converts to Unix time.
+        return max(now,latest.addingTimeInterval(0.001))
+    }
     private static func unique(_ values:[String]) -> [String] { Array(Set(values)).sorted() }
     private static func sameRevision(_ left:BrowserExtensionRecord,_ right:BrowserExtensionRecord) -> Bool {
         (left.packageID ?? left.id) == (right.packageID ?? right.id) && left.packageDigest == right.packageDigest
@@ -69,7 +81,7 @@ public enum ExtensionCatalog {
     }
     private static func immutableMetadata(_ record:BrowserExtensionRecord) -> BrowserExtensionRecord {
         var value = record; value.id = value.packageID ?? value.id; value.packageID = nil
-        value.grants = nil; value.enabled = false; value.pendingRemoval = nil
+        value.grants = nil; value.enabled = false; value.pendingRemoval = nil; value.installedAt = nil
         return value
     }
     private static func intersect(_ left:ExtensionGrantSet?,_ right:ExtensionGrantSet?) -> ExtensionGrantSet? {

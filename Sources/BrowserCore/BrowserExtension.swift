@@ -53,6 +53,14 @@ public struct BrowserExtensionRecord:Codable,Identifiable,Equatable,Sendable {
     public var grants:ExtensionGrantSet?
     public var enabled:Bool
     public var pendingRemoval:Bool?
+    /// Original installation priority, preserved when code or approval changes.
+    /// Missing legacy dates are assigned by ExtensionCatalog in catalog order.
+    public var installedAt:Date?
+    public var validInstallationDate:Date? {
+        guard let installedAt,installedAt.timeIntervalSinceReferenceDate.isFinite,
+              installedAt > .distantPast,installedAt < .distantFuture else {return nil}
+        return installedAt
+    }
     public init(id:UUID = UUID(),name:String,version:String,manifestVersion:Int,packageDigest:String,source:ExtensionSourceKind,
                 requestedPermissions:[String] = [],optionalPermissions:[String] = [],hostPermissions:[String] = [],optionalHostPermissions:[String] = []) {
         self.id = id; self.name = name; self.version = version; self.manifestVersion = manifestVersion; self.packageDigest = packageDigest; self.source = source

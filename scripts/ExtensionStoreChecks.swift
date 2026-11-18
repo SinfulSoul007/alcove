@@ -26,9 +26,15 @@ import BrowserCore
         defer { store.shutdown() }
         let profile = try store.createProfile(name:"Owned Extension Account")
         let package = try prepare()
+        func installationTime(_ record:BrowserExtensionRecord) throws -> Double? {
+            (try JSONSerialization.jsonObject(with:JSONEncoder().encode(record)) as? [String:Any])?["installedAt"] as? Double
+        }
+        let installedAfter = Date().timeIntervalSinceReferenceDate
         let approval = try store.extensionInstallApproval(for:package,profileID:profile,permissions:["storage"],hostPatterns:["https://example.com/*"],enable:true)
         let id = try await store.installExtension(package,approval:approval)
         let current = store.extensionRecords(profileID:profile).first!
+        let originalInstallation = try installationTime(current)
+        check(originalInstallation.map{$0 >= installedAfter && $0 <= Date().timeIntervalSinceReferenceDate} == true,"A first install records its actual date before native loading")
         check(current.id == id && current.enabled && current.grants?.permissions == ["storage"] && current.grants?.allowPrivate == false,"Explicit installation persists the selected rights with private access off")
         check(current.grants?.recordID == id && current.grants?.controllerID == store.profiles.first(where:{$0.id == profile})?.extensionControllerID,"Installed approval is bound to its account, record and durable runtime controller")
         let disk = try MetadataStore(url:store.sessionURL,key:key).load(BrowserDocument.self)!
@@ -42,6 +48,7 @@ import BrowserCore
         try store.setExtensionEnabled(id,profileID:profile,enabled:false)
         check(!store.extensionRecords(profileID:profile)[0].enabled,"Disable saves without deleting its code or selected rights")
         try store.setExtensionEnabled(id,profileID:profile,enabled:true)
+        check(try installationTime(store.extensionRecords(profileID:profile)[0]) == originalInstallation && originalInstallation != nil,"Disable and re-enable preserve installation priority")
         try store.setExtensionGrants(id,profileID:profile,grants:nil)
         await rejects("Enable cannot recreate revoked rights") {try store.setExtensionEnabled(id,profileID:profile,enabled:true)}
         let grant = ExtensionGrantSet(profileID:profile,recordID:id,controllerID:current.grants!.controllerID!,packageDigest:current.packageDigest,permissions:["storage"],hostPatterns:["https://example.com/*"])
@@ -60,6 +67,7 @@ import BrowserCore
         let disabledUpdate = try prepare(), review = try store.extensionInstallApproval(for:disabledUpdate,profileID:profile,replacing:id)
         _ = try await store.installExtension(disabledUpdate,replacing:id,approval:review)
         let changed = store.extensionRecords(profileID:profile)[0]
+        check(try installationTime(changed) == originalInstallation && originalInstallation != nil,"Updating reviewed code preserves the original installation date")
         check(changed.id == id && changed.packageDigest != current.packageDigest && !changed.enabled && changed.grants == nil,"Changed code preserves its record identity and requires fresh rights")
         let unchanged = try prepare(), beforeFailure = store.extensionRecords(profileID:profile)[0]
         let failedApproval = try store.extensionInstallApproval(for:unchanged,profileID:profile,replacing:id,permissions:["storage"],enable:true)
@@ -208,11 +216,38 @@ import BrowserCore
             check(identityStore.extensionRecords(profileID:identityProfile) == beforeIdentity && afterIdentityBytes == identityBytes,"A rejected identity change preserves the original record and encrypted metadata")
             let signedApproval = try identityStore.extensionInstallApproval(for:signedPackage,profileID:identityProfile),signedID = try await identityStore.installExtension(signedPackage,approval:signedApproval)
             let originalSigned = identityStore.extensionRecords(profileID:identityProfile).first(where:{$0.id == signedID})!
+            let unsignedRecord = identityStore.extensionRecords(profileID:identityProfile).first(where:{$0.id == unsignedID})!
+            let unsignedTime = try installationTime(unsignedRecord),signedTime = try installationTime(originalSigned)
+            check(!originalSigned.enabled && unsignedTime != nil && signedTime.map{$0 > (unsignedTime ?? .infinity)} == true,"New disabled installations receive later priority without first being loaded")
             try signed.updatedBytes.write(to:signedFile)
             let revision = try ExtensionPackage.prepare(at:signedFile,stagingRoot:stage),revisionApproval = try identityStore.extensionInstallApproval(for:revision,profileID:identityProfile,replacing:signedID)
             try await identityStore.installExtension(revision,replacing:signedID,approval:revisionApproval)
             let updatedSigned = identityStore.extensionRecords(profileID:identityProfile).first(where:{$0.id == signedID})!
+            check(try installationTime(updatedSigned) == signedTime && signedTime != nil,"Updating a never-enabled extension preserves its installation priority")
             check(updatedSigned.version == "2" && updatedSigned.runtimeIdentifier == signed.id && updatedSigned.packageDigest != originalSigned.packageDigest,"A genuine signed update changes its reviewed code while keeping the same runtime identity")
+            let futureInstallation = Date(timeIntervalSinceNow:3600).timeIntervalSinceReferenceDate
+            var futureJSON = try JSONSerialization.jsonObject(with:JSONEncoder().encode(updatedSigned)) as! [String:Any]
+            futureJSON["installedAt"] = futureInstallation
+            let futureRecord = try JSONDecoder().decode(BrowserExtensionRecord.self,from:JSONSerialization.data(withJSONObject:futureJSON))
+            var futureDocument = identityStore.makeDocument(),futureLibrary = futureDocument.library(for:identityProfile)
+            let futureIndex = futureLibrary.extensions!.firstIndex(where:{$0.id == signedID})!
+            futureLibrary.extensions![futureIndex] = futureRecord;futureDocument.setLibrary(futureLibrary,for:identityProfile)
+            try identityStore.commitProfileDocument(futureDocument)
+            let laterPackage = try ExtensionPackage.prepare(at:identitySource,stagingRoot:stage)
+            let laterApproval = try identityStore.extensionInstallApproval(for:laterPackage,profileID:identityProfile)
+            let laterID = try await identityStore.installExtension(laterPackage,approval:laterApproval)
+            let laterRecord = identityStore.extensionRecords(profileID:identityProfile).first(where:{$0.id == laterID})!
+            check(try installationTime(laterRecord).map{$0 > futureInstallation} == true,"A later install keeps priority when the system clock has moved backward")
+            let earlyReviewPackage = try ExtensionPackage.prepare(at:identitySource,stagingRoot:stage)
+            let lateReviewPackage = try ExtensionPackage.prepare(at:identitySource,stagingRoot:stage)
+            let earlyReview = try identityStore.extensionInstallApproval(for:earlyReviewPackage,profileID:identityProfile)
+            let lateReview = try identityStore.extensionInstallApproval(for:lateReviewPackage,profileID:identityProfile)
+            let firstCommit = try await identityStore.installExtension(lateReviewPackage,approval:lateReview)
+            let secondCommit = try await identityStore.installExtension(earlyReviewPackage,approval:earlyReview)
+            let committed = identityStore.extensionRecords(profileID:identityProfile)
+            let firstTime = try installationTime(committed.first(where:{$0.id == firstCommit})!)
+            let secondTime = try installationTime(committed.first(where:{$0.id == secondCommit})!)
+            check(firstTime != nil && secondTime.map{$0 > (firstTime ?? .infinity)} == true,"Installation priority follows completed installs when reviews finish out of order")
         }
         try await identityExercise()
         exit(failures == 0 ? 0 : 1)

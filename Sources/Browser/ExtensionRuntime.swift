@@ -240,6 +240,11 @@ import BrowserCore
             guard blocking.isEmpty else {throw ExtensionHostError.native(blocking.map(\.localizedDescription).joined(separator:"\n"))}
             let context = WKWebExtensionContext(for:extensionObject)
             context.uniqueIdentifier = record.runtimeIdentifier
+            let installationSelector = NSSelectorFromString("_setPrivacyInstallationDate:")
+            if let installedAt = record.validInstallationDate,context.responds(to:installationSelector),let method = context.method(for:installationSelector) {
+                typealias SetInstallationDate = @convention(c) (AnyObject,Selector,NSDate) -> Void
+                unsafeBitCast(method,to:SetInstallationDate.self)(context,installationSelector,installedAt as NSDate)
+            }
             context.baseURL = URL(string:"webkit-extension://" + record.runtimeIdentifier + "/")!
             context.isInspectable = false
             context.unsupportedAPIs = ["browser.runtime.sendNativeMessage","browser.runtime.connectNative","browser.debugger","browser.devtools","browser.sidePanel"]
