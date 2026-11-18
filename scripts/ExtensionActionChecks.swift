@@ -220,10 +220,33 @@ enum OwnedExtensionActionError:Error {case missingFixture,timedOut,presentationF
             store.unregisterExtensionWindow(kind:.quick(quickID));try store.closeQuickPage(quickID);quickWindow.contentView = nil
             try store.performExtensionAction(id,from:web,anchor:anchor);try await waitFor{presentations == 7}
             let retiringContext = host.profiles[profile]!.contexts[id]!
+            let retiringController = host.profiles[profile]!.controller
+            let retainedOptions = WKWebView(frame:.zero,configuration:retiringContext.webViewConfiguration!)
+            retainedOptions.load(URLRequest(url:retiringContext.optionsPageURL!));try await ready(retainedOptions,retiringContext.optionsPageURL!)
+            _ = try await retainedOptions.callAsyncJavaScript("await browser.storage.local.set({beforeActionRetire:'preserved'});",arguments:[:],in:nil,contentWorld:.page)
             store.extensionHosting = nil;host.synchronizeBrowserState()
             check(host.actionJobs.isEmpty && store.views[tabID] === web,"Detaching a native host invalidates its old popup while keeping the website mounted")
             check(!host.authorized(retiringContext,profileID:profile,client:store) && tab.url(for:retiringContext) == nil,"A detached native host cannot retain authority over its former account's actual tab")
-            check(!retiringContext.isLoaded && retiringContext.currentPermissions.isEmpty,"Retiring the active host unloads its actual native context and revokes engine permissions")
+            check(!retiringContext.isLoaded && retiringContext.webExtensionController == nil && retiringController.extensionContexts.isEmpty,"Retiring the active host removes its actual native context and privileged controller identity")
+            check(retiringContext.grantedPermissions[WKWebExtension.Permission(rawValue:"storage")] != nil,"Host retirement preserves approved permission metadata needed for saved extension settings")
+            let retiredWrite = try? await retainedOptions.callAsyncJavaScript("""
+                try {
+                    return await Promise.race([
+                        browser.storage.local.set({afterActionRetire:true}).then(()=>'written',()=>'denied'),
+                        new Promise(resolve=>setTimeout(()=>resolve('timed-out'),750))
+                    ]);
+                } catch { return 'denied'; }
+                """,arguments:[:],in:nil,contentWorld:.page) as? String
+            check(retiredWrite != "written","A retained extension page cannot complete a privileged storage write after host retirement")
+            let reloaded = WKWebExtensionContext(for:retiringContext.webExtension)
+            reloaded.uniqueIdentifier = retiringContext.uniqueIdentifier;reloaded.baseURL = retiringContext.baseURL
+            reloaded.grantedPermissions = [WKWebExtension.Permission(rawValue:"storage"):.distantFuture]
+            try retiringController.load(reloaded)
+            defer {try? retiringController.unload(reloaded)}
+            let restoredOptions = WKWebView(frame:.zero,configuration:reloaded.webViewConfiguration!)
+            restoredOptions.load(URLRequest(url:reloaded.optionsPageURL!));try await ready(restoredOptions,reloaded.optionsPageURL!)
+            let retiredStorage = try await restoredOptions.callAsyncJavaScript("return await browser.storage.local.get(['beforeActionRetire','afterActionRetire']);",arguments:[:],in:nil,contentWorld:.page) as? [String:Any]
+            check(retiredStorage?["beforeActionRetire"] as? String == "preserved" && retiredStorage?["afterActionRetire"] == nil,"Saved extension storage survives retirement and contains no stale-page write")
         }
         func privateOnlyExercise() async throws {
             let normal = BrowserStore(dataRoot:root.appendingPathComponent("private-only-normal"),keyProvider:{_ in key})
