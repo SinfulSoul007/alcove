@@ -1,8 +1,8 @@
-name: Build and test WebKit runtime ownership and request blocking
+name: Build and test WebKit navigation target events
 
 on:
   push:
-    branches: [research/webkit-runtime-url]
+    branches: [research/webkit-navigation-target]
 
 permissions:
   contents: read
@@ -60,7 +60,7 @@ jobs:
         timeout-minutes: 351
         run: |
           set -euo pipefail
-          for name in webkit-before-send-cancellation webkit-runtime-owner; do
+          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target; do
             patch="$GITHUB_WORKSPACE/diagnostics/$name.patch"
             git apply --check "$patch"
             git apply "$patch"
@@ -96,7 +96,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
-      - name: Verify runtime ownership and before-send cancellation in the built framework
+      - name: Verify the extension APIs in the built framework
         shell: bash
         run: |
           set -euo pipefail
@@ -117,8 +117,12 @@ jobs:
             sleep 0.1
           done
           test -s "$scratch/port"
+          navigation_status=0
           status=0
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --navigation-target-only || navigation_status=$?
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
             "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --require-runtime-url --require-blocking || status=$?
           cat "$scratch/requests.log"
+          if (( navigation_status != 0 )); then exit "$navigation_status"; fi
           exit "$status"

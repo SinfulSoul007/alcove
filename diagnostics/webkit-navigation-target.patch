@@ -1,0 +1,340 @@
+diff --git a/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.h b/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.h
+index 21f4eda3de2771434c7cbf73c8cf962519c9a3d6..3f77222b46a127a9d30098c0a51f898d7b0a7b9b 100644
+--- a/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.h
++++ b/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.h
+@@ -98,6 +98,8 @@ enum class WebExtensionEventListenerType : uint8_t {
+     WindowsOnCreated,
+     WindowsOnFocusChanged,
+     WindowsOnRemoved,
++    // Background listener state stores these ordinals across browser updates.
++    WebNavigationOnCreatedNavigationTarget,
+ };
+
+ inline String toAPIString(WebExtensionEventListenerType eventType)
+@@ -201,6 +203,8 @@ inline String toAPIString(WebExtensionEventListenerType eventType)
+         return "onCommitted"_s;
+     case WebExtensionEventListenerType::WebNavigationOnCompleted:
+         return "onCompleted"_s;
++    case WebExtensionEventListenerType::WebNavigationOnCreatedNavigationTarget:
++        return "onCreatedNavigationTarget"_s;
+     case WebExtensionEventListenerType::WebNavigationOnDOMContentLoaded:
+         return "onDOMContentLoaded"_s;
+     case WebExtensionEventListenerType::WebNavigationOnErrorOccurred:
+diff --git a/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.serialization.in b/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.serialization.in
+index 299c634edacd3255f7f4ecf3e06cd4b0a88d4f03..e0e629517f436fdefb4632df4ef79a5999f91fdd 100644
+--- a/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.serialization.in
++++ b/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.serialization.in
+@@ -89,6 +89,7 @@ enum class WebKit::WebExtensionEventListenerType : uint8_t {
+     WindowsOnCreated,
+     WindowsOnFocusChanged,
+     WindowsOnRemoved,
++    WebNavigationOnCreatedNavigationTarget,
+ };
+
+ #endif
+diff --git a/Source/WebKit/Shared/Extensions/WebExtensionFrameParameters.h b/Source/WebKit/Shared/Extensions/WebExtensionFrameParameters.h
+index 8561a7220d226490f958978f7733bd999edd4cd5..e7dcf7543dd38a815fa2ab11e10a6526450d99fd 100644
+--- a/Source/WebKit/Shared/Extensions/WebExtensionFrameParameters.h
++++ b/Source/WebKit/Shared/Extensions/WebExtensionFrameParameters.h
+@@ -28,6 +28,7 @@
+ #if ENABLE(WK_WEB_EXTENSIONS)
+
+ #include "WebExtensionFrameIdentifier.h"
++#include "WebPageProxyIdentifier.h"
+ #include <wtf/URL.h>
+ #include <wtf/UUID.h>
+
+@@ -41,6 +42,13 @@ struct WebExtensionFrameParameters {
+     Markable<WTF::UUID> documentIdentifier;
+ };
+
++struct WebExtensionCreatedNavigationTarget {
++    WebPageProxyIdentifier sourcePageIdentifier;
++    WebExtensionFrameIdentifier sourceFrameIdentifier;
++    URL sourceURL;
++    URL targetURL;
++};
++
+ } // namespace WebKit
+
+ #endif // ENABLE(WK_WEB_EXTENSIONS)
+diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
+index 8ad2af3ffda39e7ad73efa053f58bef8a0b578a3..eda89257201477e0c48231e2acdf96d8eaadd9f5 100644
+--- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
++++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
+@@ -1539,20 +1539,36 @@ static String permissionNotification(WebExtensionContext::PermissionNotification
+     }).get());
+ }
+
+-void WebExtensionContext::didStartProvisionalLoadForFrame(WebPageProxyIdentifier pageID, const WebExtensionFrameParameters& frameParameters, WallTime timestamp)
++void WebExtensionContext::didStartProvisionalLoadForFrame(WebPageProxyIdentifier pageID, const WebExtensionFrameParameters& frameParameters, WallTime timestamp, const std::optional<WebExtensionCreatedNavigationTarget>& target)
+ {
+     ASSERT(frameParameters.url);
+
+     RefPtr tab = getTab(pageID);
+     auto& frameURL = *frameParameters.url;
+
+-    // Dispatch webNavigation events.
+-    if (tab && hasPermission(WebExtensionPermission::webNavigation(), tab.get()) && hasPermission(frameURL, tab.get())) {
+-        constexpr auto eventType = WebExtensionEventListenerType::WebNavigationOnBeforeNavigate;
+-        wakeUpBackgroundContentIfNecessaryToFireEvents({ eventType }, [=, this, protectedThis = Ref { *this }] {
+-            sendToProcessesForEvent(eventType, Messages::WebExtensionContextProxy::DispatchWebNavigationEvent(eventType, tab->identifier(), frameParameters, timestamp));
+-        });
++    if (!tab || !hasPermission(WebExtensionPermission::webNavigation(), tab.get()) || !hasPermission(frameURL, tab.get()))
++        return;
++
++    constexpr auto beforeEvent = WebExtensionEventListenerType::WebNavigationOnBeforeNavigate;
++    constexpr auto createdEvent = WebExtensionEventListenerType::WebNavigationOnCreatedNavigationTarget;
++    EventListenerTypeSet events { beforeEvent };
++    std::optional<WebExtensionCreatedNavigationTarget> accessibleTarget;
++    if (target) {
++        RefPtr source = getTab(target->sourcePageIdentifier);
++        if (source && source->identifier() != tab->identifier() && hasPermission(target->sourceURL, source.get())) {
++            accessibleTarget = target;
++            events.add(createdEvent);
++        }
+     }
++
++    wakeUpBackgroundContentIfNecessaryToFireEvents(WTF::move(events), [=, this, protectedThis = Ref { *this }, accessibleTarget = WTF::move(accessibleTarget)] {
++        if (accessibleTarget && getTab(pageID) && hasPermission(WebExtensionPermission::webNavigation(), tab.get()) && hasPermission(frameURL, tab.get())) {
++            RefPtr source = getTab(accessibleTarget->sourcePageIdentifier);
++            if (source && hasPermission(accessibleTarget->sourceURL, source.get()))
++                sendToProcessesForEvent(createdEvent, Messages::WebExtensionContextProxy::DispatchWebNavigationCreatedTarget(tab->identifier(), source->identifier(), accessibleTarget->sourceFrameIdentifier, frameURL, timestamp));
++        }
++        sendToProcessesForEvent(beforeEvent, Messages::WebExtensionContextProxy::DispatchWebNavigationEvent(beforeEvent, tab->identifier(), frameParameters, timestamp));
++    });
+ }
+
+ void WebExtensionContext::didCommitLoadForFrame(WebPageProxyIdentifier pageID, const WebExtensionFrameParameters& frameParameters, WallTime timestamp)
+diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
+index fa822665ad72f41367daada85aa936d887fef3af..17b7990de73f8b9b99106133b87dd21c15d23afd 100644
+--- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
++++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
+@@ -392,6 +392,7 @@ - (void)_didDeleteLocalStorage:(NSNotification *)notification
+ {
+     ASSERT(m_pages.contains(page));
+     m_pages.remove(page);
++    m_createdNavigationTargets.remove(page.identifier());
+
+     Ref pool = page.configuration().processPool();
+     removeProcessPool(pool);
+@@ -630,10 +631,25 @@ - (void)_didDeleteLocalStorage:(NSNotification *)notification
+
+ // MARK: webNavigation
+
++void WebExtensionController::didCreateNavigationTarget(WebPageProxyIdentifier targetPage, WebExtensionCreatedNavigationTarget&& source)
++{
++    m_createdNavigationTargets.set(targetPage, WTF::move(source));
++}
++
+ void WebExtensionController::didStartProvisionalLoadForFrame(WebPageProxyIdentifier pageID, const WebExtensionFrameParameters& frameParameters, WallTime timestamp)
+ {
++    std::optional<WebExtensionCreatedNavigationTarget> target;
++    if (isMainFrame(frameParameters.frameIdentifier)) {
++        auto pending = m_createdNavigationTargets.find(pageID);
++        if (pending != m_createdNavigationTargets.end()) {
++            if (frameParameters.url == pending->value.targetURL)
++                target = WTF::move(pending->value);
++            m_createdNavigationTargets.remove(pending);
++        }
++    }
++
+     for (Ref context : m_extensionContexts)
+-        context->didStartProvisionalLoadForFrame(pageID, frameParameters, timestamp);
++        context->didStartProvisionalLoadForFrame(pageID, frameParameters, timestamp, target);
+ }
+
+ void WebExtensionController::didCommitLoadForFrame(WebPageProxyIdentifier pageID, const WebExtensionFrameParameters& frameParameters, WallTime timestamp)
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
+index 6580fb1154dd62a807817e53e758ff405a860ec2..935e2843b0a7bdaf6171678d90d97991449be176 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
+@@ -484,7 +484,7 @@ public:
+     void didReplaceTab(WebExtensionTab& oldTab, WebExtensionTab& newTab, SuppressEvents = SuppressEvents::No);
+     void didChangeTabProperties(WebExtensionTab&, OptionSet<WebExtensionTab::ChangedProperties> = { });
+
+-    void didStartProvisionalLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime);
++    void didStartProvisionalLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime, const std::optional<WebExtensionCreatedNavigationTarget>&);
+     void didCommitLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime);
+     void didFinishLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime);
+     void didFailLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime);
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionController.h b/Source/WebKit/UIProcess/Extensions/WebExtensionController.h
+index 714a9d7ac1278b2330f2bb583eaaf2ba5b327b1e..47e45185c3cc9d670949d1698ba996230a385916 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionController.h
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionController.h
+@@ -38,6 +38,7 @@
+ #include "WebExtensionDataType.h"
+ #include "WebExtensionError.h"
+ #include "WebExtensionFrameIdentifier.h"
++#include "WebExtensionFrameParameters.h"
+ #include "WebExtensionStorageSQLiteStore.h"
+ #include "WebExtensionURLSchemeHandler.h"
+ #include "WebProcessProxy.h"
+@@ -72,7 +73,6 @@ class WebPageProxy;
+ class WebProcessPool;
+ class WebsiteDataStore;
+ struct WebExtensionControllerParameters;
+-struct WebExtensionFrameParameters;
+
+ #if ENABLE(DNR_ON_RULE_MATCHED_DEBUG)
+ struct ContentRuleListMatchedRule;
+@@ -228,6 +228,7 @@ private:
+     String stateFilePath(const String& uniqueIdentifier) const;
+     RefPtr<WebExtensionStorageSQLiteStore> sqliteStore(const String& storageDirectory, WebExtensionDataType, RefPtr<WebExtensionContext>);
+
++    void didCreateNavigationTarget(WebPageProxyIdentifier, WebExtensionCreatedNavigationTarget&&);
+     void didStartProvisionalLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime);
+     void didCommitLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime);
+     void didFinishLoadForFrame(WebPageProxyIdentifier, const WebExtensionFrameParameters&, WallTime);
+@@ -282,6 +283,7 @@ private:
+     WebExtensionContextSet m_extensionContexts;
+     WebExtensionContextBaseURLMap m_extensionContextBaseURLMap;
+     WebPageProxySet m_pages;
++    HashMap<WebPageProxyIdentifier, WebExtensionCreatedNavigationTarget> m_createdNavigationTargets;
+     WebProcessPoolSet m_processPools;
+     WebsiteDataStoreSet m_websiteDataStores;
+     UserContentControllerProxySet m_allUserContentControllers;
+diff --git a/Source/WebKit/UIProcess/WebPageProxy.cpp b/Source/WebKit/UIProcess/WebPageProxy.cpp
+index 2c77ebf57eb0b45f77e8f93750e9aacef69d95af..2102c95fa4a0ebf53eba76886a5ed3a54909fe4b 100644
+--- a/Source/WebKit/UIProcess/WebPageProxy.cpp
++++ b/Source/WebKit/UIProcess/WebPageProxy.cpp
+@@ -9351,6 +9351,16 @@ void WebPageProxy::createNewPage(IPC::Connection& connection, WindowFeatures&& w
+     if (RefPtr page = originatingFrameInfo->page())
+         openerAppInitiatedState = page->lastNavigationWasAppInitiated();
+
++#if ENABLE(WK_WEB_EXTENSIONS) && PLATFORM(COCOA)
++    std::optional<WebExtensionCreatedNavigationTarget> createdNavigationTarget;
++    if (webExtensionController() && !request.url().isEmpty() && !request.url().isAboutBlank()) {
++        if (RefPtr sourceFrame = WebFrameProxy::webFrame(originatingFrameInfo->frameInfoData().frameID); sourceFrame && sourceFrame->page() == this) {
++            auto frame = sourceFrame->isMainFrame() ? WebExtensionFrameConstants::MainFrameIdentifier : toWebExtensionFrameIdentifier(sourceFrame->frameID());
++            createdNavigationTarget = WebExtensionCreatedNavigationTarget { identifier(), frame, sourceFrame->url(), request.url() };
++        }
++    }
++#endif
++
+     auto completionHandler = [
+         this,
+         protectedThis = Ref { *this },
+@@ -9363,6 +9373,9 @@ void WebPageProxy::createNewPage(IPC::Connection& connection, WindowFeatures&& w
+         navigationDataForNewProcess = WTF::move(navigationDataForNewProcess),
+         shouldOpenExternalURLsPolicy = navigationActionData.shouldOpenExternalURLsPolicy,
+         openedBlobURL,
++#if ENABLE(WK_WEB_EXTENSIONS) && PLATFORM(COCOA)
++        createdNavigationTarget = WTF::move(createdNavigationTarget),
++#endif
+         wantsNoOpener = windowFeatures.wantsNoOpener()
+     ] (RefPtr<WebPageProxy> newPage) mutable {
+
+@@ -9383,6 +9396,13 @@ void WebPageProxy::createNewPage(IPC::Connection& connection, WindowFeatures&& w
+
+         newPage->setOpenedByDOM();
+
++#if ENABLE(WK_WEB_EXTENSIONS) && PLATFORM(COCOA)
++        if (createdNavigationTarget && &websiteDataStore() == &newPage->websiteDataStore()) {
++            if (RefPtr controller = webExtensionController(); controller && controller.get() == newPage->webExtensionController())
++                controller->didCreateNavigationTarget(newPage->identifier(), WTF::move(*createdNavigationTarget));
++        }
++#endif
++
+         if (openerAppInitiatedState)
+             newPage->m_lastNavigationWasAppInitiated = *openerAppInitiatedState;
+         RefPtr openedMainFrame = newPage->m_mainFrame ? newPage->m_mainFrame->opener() : nullptr;
+diff --git a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigation.idl b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigation.idl
+index c8414b661d888d42fafc0dec85a28ec3c40e5ec8..d3570e9fbf0bd375302f7acc72ef117b0186cc00 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigation.idl
++++ b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigation.idl
+@@ -31,6 +31,7 @@
+
+     readonly attribute WebExtensionAPIWebNavigationEvent onBeforeNavigate;
+     readonly attribute WebExtensionAPIWebNavigationEvent onCommitted;
++    readonly attribute WebExtensionAPIWebNavigationEvent onCreatedNavigationTarget;
+     readonly attribute WebExtensionAPIWebNavigationEvent onDOMContentLoaded;
+     readonly attribute WebExtensionAPIWebNavigationEvent onCompleted;
+     readonly attribute WebExtensionAPIWebNavigationEvent onErrorOccurred;
+diff --git a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigationCocoa.mm b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigationCocoa.mm
+index c8e08fe23c7ec14c6590916b73e40bee67ed2f4b..5e2b83b8b3e889d325222dcb271bb58354f51478 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigationCocoa.mm
++++ b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigationCocoa.mm
+@@ -47,6 +47,8 @@
+ static NSString *errorOccurredKey = @"errorOccurred";
+ static NSString *frameIdKey = @"frameId";
+ static NSString *parentFrameIdKey = @"parentFrameId";
++static NSString *sourceFrameIdKey = @"sourceFrameId";
++static NSString *sourceTabIdKey = @"sourceTabId";
+ static NSString *tabIdKey = @"tabId";
+ static NSString *timeStampKey = @"timeStamp";
+ static NSString *urlKey = @"url";
+@@ -189,6 +191,29 @@
+     return *m_onErrorOccurredEvent;
+ }
+
++WebExtensionAPIWebNavigationEvent& WebExtensionAPIWebNavigation::onCreatedNavigationTarget()
++{
++    if (!m_onCreatedNavigationTargetEvent)
++        m_onCreatedNavigationTargetEvent = WebExtensionAPIWebNavigationEvent::create(*this, WebExtensionEventListenerType::WebNavigationOnCreatedNavigationTarget);
++
++    return *m_onCreatedNavigationTargetEvent;
++}
++
++void WebExtensionContextProxy::dispatchWebNavigationCreatedTarget(WebExtensionTabIdentifier targetTabID, WebExtensionTabIdentifier sourceTabID, WebExtensionFrameIdentifier sourceFrameID, const URL& url, WallTime timestamp)
++{
++    auto *details = @{
++        urlKey: url.string().createNSString().get(),
++        tabIdKey: @(toWebAPI(targetTabID)),
++        sourceTabIdKey: @(toWebAPI(sourceTabID)),
++        sourceFrameIdKey: @(toWebAPI(sourceFrameID)),
++        timeStampKey: @(floor(timestamp.approximateWallTime().secondsSinceEpoch().milliseconds()))
++    };
++
++    enumerateNamespaceObjects([&](auto& namespaceObject) {
++        namespaceObject.webNavigation().onCreatedNavigationTarget().invokeListenersWithArgument(details, url.createNSURL().get());
++    });
++}
++
+ void WebExtensionContextProxy::dispatchWebNavigationEvent(WebExtensionEventListenerType type, WebExtensionTabIdentifier tabID, const WebExtensionFrameParameters& frameParameters, WallTime timestamp)
+ {
+     ASSERT(frameParameters.url);
+diff --git a/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIWebNavigation.h b/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIWebNavigation.h
+index a82d777c68e16fb31c7930f0235d89815317161c..f290082074dc6c015abaef5b44ab61509b34418a 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIWebNavigation.h
++++ b/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIWebNavigation.h
+@@ -42,6 +42,7 @@ public:
+ #if PLATFORM(COCOA)
+     WebExtensionAPIWebNavigationEvent& onBeforeNavigate();
+     WebExtensionAPIWebNavigationEvent& onCommitted();
++    WebExtensionAPIWebNavigationEvent& onCreatedNavigationTarget();
+     WebExtensionAPIWebNavigationEvent& onDOMContentLoaded();
+     WebExtensionAPIWebNavigationEvent& onCompleted();
+     WebExtensionAPIWebNavigationEvent& onErrorOccurred();
+@@ -52,6 +53,7 @@ public:
+ private:
+     RefPtr<WebExtensionAPIWebNavigationEvent> m_onBeforeNavigateEvent;
+     RefPtr<WebExtensionAPIWebNavigationEvent> m_onCommittedEvent;
++    RefPtr<WebExtensionAPIWebNavigationEvent> m_onCreatedNavigationTargetEvent;
+     RefPtr<WebExtensionAPIWebNavigationEvent> m_onDOMContentLoadedEvent;
+     RefPtr<WebExtensionAPIWebNavigationEvent> m_onCompletedEvent;
+     RefPtr<WebExtensionAPIWebNavigationEvent> m_onErrorOccurredEvent;
+diff --git a/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.h b/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.h
+index c3e74eef23e612c58e9f692c388d2b243a6a7b32..9aa46d40083500b3c871c163ac19bfad674d459e 100644
+--- a/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.h
++++ b/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.h
+@@ -221,6 +221,7 @@ private:
+
+     // Web Navigation
+     void dispatchWebNavigationEvent(WebExtensionEventListenerType, WebExtensionTabIdentifier, const WebExtensionFrameParameters&, WallTime);
++    void dispatchWebNavigationCreatedTarget(WebExtensionTabIdentifier, WebExtensionTabIdentifier, WebExtensionFrameIdentifier, const URL&, WallTime);
+
+     // Web Request
+     void resourceLoadShouldCancel(WebExtensionTabIdentifier, WebExtensionWindowIdentifier, const ResourceLoadInfo&, CompletionHandler<void(bool)>&&);
+diff --git a/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.messages.in b/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.messages.in
+index bb031f535291e30d3667f3e1299115b49677b196..541fa8baa3022aea086b33c62e3f676ec16c754e 100644
+--- a/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.messages.in
++++ b/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.messages.in
+@@ -102,6 +102,7 @@ messages -> WebExtensionContextProxy {
+
+     // Web Navigation
+     DispatchWebNavigationEvent(WebKit::WebExtensionEventListenerType type, WebKit::WebExtensionTabIdentifier tabID, struct WebKit::WebExtensionFrameParameters frameParamaters, WallTime timestamp)
++    DispatchWebNavigationCreatedTarget(WebKit::WebExtensionTabIdentifier targetTabID, WebKit::WebExtensionTabIdentifier sourceTabID, WebKit::WebExtensionFrameIdentifier sourceFrameID, URL url, WallTime timestamp)
+
+     // Web Request
+     ResourceLoadShouldCancel(WebKit::WebExtensionTabIdentifier tabIdentifier, WebKit::WebExtensionWindowIdentifier windowIdentifier, struct WebKit::ResourceLoadInfo resourceLoadInfo) -> (bool shouldCancel)

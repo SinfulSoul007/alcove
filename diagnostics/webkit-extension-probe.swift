@@ -68,10 +68,19 @@ struct SystemWebKitExtensionProbe {
             }
             if CommandLine.arguments.contains("--runtime-url-only") { return }
         }
-        try await runOffscreen(root: root.appendingPathComponent("mv3"))
         guard let argument = CommandLine.arguments.dropFirst().first,
               let server = URL(string: argument), server.scheme == "http", server.host == "127.0.0.1",
               server.port != nil else { throw CocoaError(.fileReadInvalidFileName) }
+        if CommandLine.arguments.contains("--navigation-target-only") {
+            let passed = try await runNavigationTarget(root: root.appendingPathComponent("navigation"), server: server)
+            if !passed {
+                print("FAIL: the native extension requires a permission-checked created navigation target before navigation")
+                try? FileManager.default.removeItem(at: root)
+                exit(1)
+            }
+            return
+        }
+        try await runOffscreen(root: root.appendingPathComponent("mv3"))
         try await runBlocking(root: root.appendingPathComponent("mv2"), server: server,
                               requireBlocking: CommandLine.arguments.contains("--require-blocking"))
     }
@@ -321,5 +330,185 @@ struct SystemWebKitExtensionProbe {
             print("FAIL: before-send blocking was not proven for both request types")
             exit(1)
         }
+    }
+}
+
+@available(macOS 15.4, *)
+@MainActor final class NavigationTargetDelegate: NSObject, WKUIDelegate, WKWebExtensionControllerDelegate {
+    let controller: WKWebExtensionController
+    var windows: [ProbeWindow] = []
+    var rejected = 0
+    var allowsPopup = true
+
+    init(controller: WKWebExtensionController) { self.controller = controller }
+
+    func webExtensionController(_ controller: WKWebExtensionController,
+                                openWindowsFor context: WKWebExtensionContext) -> [any WKWebExtensionWindow] {
+        windows
+    }
+
+    func openTab(_ configuration: WKWebViewConfiguration, url: URL) -> WKWebView {
+        let page = WKWebView(frame: .zero, configuration: configuration)
+        page.uiDelegate = self
+        let tab = ProbeTab(page: page, provisionalURL: url)
+        let window = ProbeWindow(tab: tab)
+        windows.append(window)
+        controller.didOpenWindow(window)
+        controller.didOpenTab(tab)
+        return page
+    }
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard allowsPopup, let address = action.request.url else { rejected += 1; return nil }
+        return openTab(configuration, url: address)
+    }
+
+    func closeTabs() {
+        for window in windows.reversed() {
+            controller.didCloseTab(window.tab, windowIsClosing: true)
+            controller.didCloseWindow(window)
+        }
+        windows.removeAll()
+    }
+}
+
+@available(macOS 15.4, *)
+extension SystemWebKitExtensionProbe {
+    @MainActor static func runNavigationTarget(root: URL, server: URL) async throws -> Bool {
+        let scope = "http://127.0.0.1/*"
+        let (controller, context, data, options) = try await create(root,
+            manifest: ["manifest_version": 2, "name": "Owned Navigation Target", "version": "1",
+                       "permissions": ["webNavigation", scope], "options_page": "options.html"],
+            resources: [:], permissions: ["webNavigation"], loopback: true)
+        let delegate = NavigationTargetDelegate(controller: controller)
+        controller.delegate = delegate
+        defer {
+            delegate.closeTabs()
+            try? controller.unload(context)
+        }
+        let available = try await options.callAsyncJavaScript("""
+            const navigation = browser.webNavigation;
+            const events = [];
+            window.navigationEvents = events;
+            const filter = {url:[{hostEquals:"127.0.0.1", pathPrefix:"/navigation-target-"}]};
+            navigation.onBeforeNavigate.addListener(details => events.push({kind:"before", ...details}), filter);
+            const target = navigation.onCreatedNavigationTarget;
+            if (!target) return false;
+            target.addListener(details => events.push({kind:"created", ...details}), filter);
+            return typeof target.hasListener === "function";
+            """, arguments: [:], in: nil, contentWorld: .page) as? Bool == true
+        print("NAVIGATION_TARGET_API \(available)")
+
+        func configuration() -> WKWebViewConfiguration {
+            let configuration = WKWebViewConfiguration()
+            configuration.websiteDataStore = data
+            configuration.webExtensionController = controller
+            configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+            return configuration
+        }
+        func address(_ label: String) -> URL {
+            server.appendingPathComponent("navigation-target-\(label)-\(UUID().uuidString)")
+        }
+        func waitForLoad(_ page: WKWebView, url: URL) async throws {
+            for _ in 0..<450 {
+                if page.url == url && !page.isLoading { return }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            throw URLError(.timedOut)
+        }
+        func events(for url: URL) async throws -> [[String: Any]] {
+            try await Task.sleep(for: .milliseconds(250))
+            let events = try await options.evaluateJavaScript("window.navigationEvents") as? [[String: Any]] ?? []
+            return events.filter { $0["url"] as? String == url.absoluteString }
+        }
+        func popup(from source: WKWebView, label: String, subframe: Bool = false) async throws -> URL {
+            let target = address(label)
+            let previous = delegate.windows.count
+            let launch = subframe
+                ? "document.querySelector('iframe').contentWindow.eval(source);"
+                : "eval(source);"
+            let script = "window.open('\(target.absoluteString)', '_blank', 'noopener');"
+            _ = try await source.callAsyncJavaScript(launch, arguments: ["source": script], in: nil, contentWorld: .page)
+            guard delegate.windows.count == previous + 1, let page = delegate.windows.last?.tab.page else {
+                throw CocoaError(.coderInvalidValue)
+            }
+            try await waitForLoad(page, url: target)
+            return target
+        }
+
+        let openerURL = address("opener")
+        let opener = delegate.openTab(configuration(), url: openerURL)
+        opener.load(URLRequest(url: openerURL))
+        try await waitForLoad(opener, url: openerURL)
+        let privateTarget = try await popup(from: opener, label: "private-denied")
+        let privateEvents = try await events(for: privateTarget)
+        context.hasAccessToPrivateData = true
+
+        let navigateOpener = address("opener-granted")
+        opener.load(URLRequest(url: navigateOpener))
+        try await waitForLoad(opener, url: navigateOpener)
+        let openerEvent = try await events(for: navigateOpener).first
+        guard openerEvent?["kind"] as? String == "before", let openerID = openerEvent?["tabId"] as? Int else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        let target = try await popup(from: opener, label: "accepted")
+        let mainEvents = try await events(for: target)
+        let frameURL = address("frame")
+        _ = try await opener.callAsyncJavaScript("""
+            await new Promise((resolve, reject) => {
+                const frame = document.createElement("iframe");
+                frame.onload = resolve;
+                frame.onerror = reject;
+                frame.src = url;
+                document.body.append(frame);
+            });
+            """, arguments: ["url": frameURL.absoluteString], in: nil, contentWorld: .page)
+        let frameEvent = try await events(for: frameURL).first
+        guard let sourceFrame = frameEvent?["frameId"] as? Int, sourceFrame > 0,
+              frameEvent?["tabId"] as? Int == openerID else { throw CocoaError(.coderInvalidValue) }
+        let nestedTarget = try await popup(from: opener, label: "subframe", subframe: true)
+        let nestedEvents = try await events(for: nestedTarget)
+
+        let ordinaryURL = address("ordinary")
+        let ordinary = delegate.openTab(configuration(), url: ordinaryURL)
+        ordinary.load(URLRequest(url: ordinaryURL))
+        try await waitForLoad(ordinary, url: ordinaryURL)
+        let ordinaryEvents = try await events(for: ordinaryURL)
+        delegate.allowsPopup = false
+        let canceled = address("canceled")
+        _ = try await opener.callAsyncJavaScript("window.open(url, '_blank', 'noopener');",
+            arguments: ["url": canceled.absoluteString], in: nil, contentWorld: .page)
+        let canceledEvents = try await events(for: canceled)
+        delegate.allowsPopup = true
+
+        var alternate = URLComponents(url: address("source-site-denied"), resolvingAgainstBaseURL: false)!
+        alternate.host = "localhost"
+        let otherSource = alternate.url!
+        guard !context.hasAccess(to: otherSource) else { throw CocoaError(.coderInvalidValue) }
+        let otherOpener = delegate.openTab(configuration(), url: otherSource)
+        otherOpener.load(URLRequest(url: otherSource))
+        try await waitForLoad(otherOpener, url: otherSource)
+        let sourceDenied = try await popup(from: otherOpener, label: "source-site-denied-target")
+        let sourceDeniedEvents = try await events(for: sourceDenied)
+
+        context.setPermissionStatus(.deniedExplicitly, for: try WKWebExtension.MatchPattern(string: scope))
+        let denied = try await popup(from: opener, label: "site-denied")
+        let deniedEvents = try await events(for: denied)
+
+        func valid(_ events: [[String: Any]], from frame: Int) -> Bool {
+            guard events.map({ $0["kind"] as? String }) == ["created", "before"],
+                  let destination = events[0]["tabId"] as? Int, destination != openerID else { return false }
+            return events[0]["sourceTabId"] as? Int == openerID && events[0]["sourceFrameId"] as? Int == frame &&
+                events[1]["tabId"] as? Int == destination && events[0]["timeStamp"] as? Double != nil &&
+                events[0]["frameId"] == nil && events[0]["documentId"] == nil
+        }
+        let mainPassed = valid(mainEvents, from: 0)
+        let nestedPassed = valid(nestedEvents, from: sourceFrame)
+        let isolationPassed = privateEvents.isEmpty && canceledEvents.isEmpty && deniedEvents.isEmpty &&
+            ordinaryEvents.map({ $0["kind"] as? String }) == ["before"] &&
+            sourceDeniedEvents.map({ $0["kind"] as? String }) == ["before"] && delegate.rejected == 1
+        print("NAVIGATION_TARGET main=\(mainEvents.map { $0["kind"] ?? "unknown" }) nested=\(nestedEvents.map { $0["kind"] ?? "unknown" }) isolation=\(isolationPassed)")
+        return available && mainPassed && nestedPassed && isolationPassed
     }
 }
