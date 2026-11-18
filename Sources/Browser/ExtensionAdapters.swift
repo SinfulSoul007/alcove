@@ -4,8 +4,9 @@ import BrowserCore
 
 @available(macOS 15.4,*) @MainActor extension NativeBrowserExtensionHost {
     func authorized(_ context:WKWebExtensionContext,profileID:UUID,client:BrowserStore) -> Bool {
-        guard let owner,owner.extensionHosting === self,!owner.isShuttingDown,!client.isShuttingDown,!owner.profileUnavailable(profileID),
+        guard context.isLoaded,let owner,owner.extensionHosting === self,!owner.isShuttingDown,!client.isShuttingDown,!owner.profileUnavailable(profileID),
               let lease = owner.metadataOwnership,(try? lease.validate()) != nil,let runtime = profiles[profileID],
+              context.webExtensionController === runtime.controller,
               runtime.controllerID == owner.profiles.first(where:{$0.id == profileID})?.extensionControllerID,
               runtime.epoch == owner.extensionReviewEpoch(for:profileID),let entry = runtime.contexts.first(where:{$0.value === context}),
               let record = owner.extensionRecords(profileID:profileID).first(where:{$0.id == entry.key}),record.enabled,record.pendingRemoval != true,record.grants != nil else {return false}

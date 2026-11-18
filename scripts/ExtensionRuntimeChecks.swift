@@ -45,7 +45,8 @@ final class OwnedExtensionKeyGate:@unchecked Sendable {
         try owned.register(profile); try controllers.register(store.profiles.first(where:{$0.id == profile})!.extensionControllerID!)
         let source = root.appendingPathComponent("mv3"), staging = root.appendingPathComponent("staging")
         try manager.createDirectory(at:source,withIntermediateDirectories:true)
-        try Data(#"{"manifest_version":3,"name":"Owned runtime MV3","version":"1","permissions":["storage"],"host_permissions":["http://127.0.0.1/*"],"optional_host_permissions":["https://example.invalid/*"],"content_scripts":[{"matches":["http://127.0.0.1/*"],"js":["owned.js"],"run_at":"document_start"}]}"#.utf8).write(to:source.appendingPathComponent("manifest.json"))
+        try Data(#"{"manifest_version":3,"name":"Owned runtime MV3","version":"1","permissions":["storage"],"host_permissions":["http://127.0.0.1/*"],"optional_host_permissions":["https://example.invalid/*"],"options_page":"options.html","content_scripts":[{"matches":["http://127.0.0.1/*"],"js":["owned.js"],"run_at":"document_start"}]}"#.utf8).write(to:source.appendingPathComponent("manifest.json"))
+        try Data("<!doctype html><meta charset='utf-8'><title>Owned unload options</title>".utf8).write(to:source.appendingPathComponent("options.html"))
         try Data("document.documentElement.dataset.alcoveExtensionFixture='mv3';".utf8).write(to:source.appendingPathComponent("owned.js"))
         let prepared = try ExtensionPackage.prepare(at:source,stagingRoot:staging)
         let approval = try store.extensionInstallApproval(for:prepared,profileID:profile,permissions:["storage"],enable:true)
@@ -65,9 +66,89 @@ final class OwnedExtensionKeyGate:@unchecked Sendable {
         for _ in 0..<200 { if await marker(web!) == "mv3" { break }; try await Task.sleep(for:.milliseconds(10)) }
         check(await marker(web!) == "mv3","An approved package runs its actual MV3 content script in the owning browser account")
         check(store.extensionDiagnostics[profile]?[id]?.isEmpty == false,"Native optional-manifest diagnostics remain visible instead of silently disappearing")
-        let native = web!.configuration.webExtensionController!, context = native.extensionContexts.first!
+        var native = web!.configuration.webExtensionController!
+        let context = native.extensionContexts.first!
         check(!context.hasAccess(to:URL(string:"https://example.invalid/private")!),"Optional sites remain inaccessible until separately approved")
         check(!context.hasAccess(to:URL(fileURLWithPath:"/tmp/alcove-extension-unapproved")),"Browser site approval never grants native local-file access")
+        func options(_ context:WKWebExtensionContext) async throws -> WKWebView {
+            guard let configuration = context.webViewConfiguration,let address = context.optionsPageURL else {throw CocoaError(.featureUnsupported)}
+            let page = WKWebView(frame:.zero,configuration:configuration);page.load(URLRequest(url:address))
+            for _ in 0..<450 {
+                if page.url == address,!page.isLoading,(try? await page.evaluateJavaScript("document.readyState === 'complete' && typeof browser.storage.local.get === 'function'")) as? Bool == true {return page}
+                try await Task.sleep(for:.milliseconds(20))
+            }
+            throw OwnedExtensionRuntimeError.timedOut
+        }
+        func tryStaleWrite(_ page:WKWebView,_ key:String) async throws -> String? {
+            try await page.callAsyncJavaScript("""
+                try {
+                    return await Promise.race([
+                        browser.storage.local.set({[key]: true}).then(() => 'written', () => 'denied'),
+                        new Promise(resolve => setTimeout(() => resolve('timed-out'), 750))
+                    ]);
+                } catch { return 'denied'; }
+                """,arguments:["key":key],in:nil,contentWorld:.page) as? String
+        }
+        let host = store.extensionHosting as! NativeBrowserExtensionHost
+        var runtime = host.profiles[profile]!
+        let retainedOptions = try await options(context)
+        _ = try await retainedOptions.callAsyncJavaScript("await browser.storage.local.set({beforeUnload:'preserved'});",arguments:[:],in:nil,contentWorld:.page)
+        try runtime.unload()
+        check(context.grantedPermissions[WKWebExtension.Permission(rawValue:"storage")] != nil,"Successful native unload preserves grant metadata instead of revoking saved settings")
+        check(!context.isLoaded && native.extensionContexts.isEmpty && runtime.contexts.isEmpty && !host.authorized(context,profileID:profile,client:store),"Successful unload removes the native privileged identity and host registration")
+        check(try await tryStaleWrite(retainedOptions,"staleWrite") != "written","A retained unloaded extension page cannot complete a privileged storage write")
+        try await store.prepareExtensions(profileID:profile)
+        let revivedContext = runtime.contexts[id]!,revivedOptions = try await options(revivedContext)
+        check(try await tryStaleWrite(retainedOptions,"staleAfterReload") != "written","Reloading a new context cannot reauthorize a retained old extension page")
+        let saved = try await revivedOptions.callAsyncJavaScript("return await browser.storage.local.get(['beforeUnload','staleWrite','staleAfterReload']);",arguments:[:],in:nil,contentWorld:.page) as? [String:Any]
+        check(saved?["beforeUnload"] as? String == "preserved" && saved?["staleWrite"] == nil && saved?["staleAfterReload"] == nil,"Actual native storage survives unload while stale pages leave no saved writes")
+        check(host.authorized(revivedContext,profileID:profile,client:store),"The newly loaded approved context regains host authorization")
+        revivedContext.hasAccessToPrivateData = true
+        try native.unload(revivedContext)
+        check(!host.authorized(revivedContext,profileID:profile,client:store),"An externally unloaded context is denied even while host registration is stale")
+        let foreignConfiguration = WKWebExtensionController.Configuration.nonPersistent()
+        foreignConfiguration.defaultWebsiteDataStore = store.websiteDataStore(forProfile:profile)
+        let foreign = WKWebExtensionController(configuration:foreignConfiguration)
+        try foreign.load(revivedContext)
+        check(!host.authorized(revivedContext,profileID:profile,client:store),"A context loaded by another controller cannot retain host authorization")
+        try foreign.unload(revivedContext)
+        var preparedAfterExternalUnload = false
+        do {try await store.prepareExtensions(profileID:profile);preparedAfterExternalUnload = runtime.contexts[id]?.isLoaded == true && runtime.contexts[id] !== revivedContext} catch {}
+        check(preparedAfterExternalUnload,"Production preparation recovers an already-unloaded context without registration edits")
+        let failureContext = runtime.contexts[id]!
+        if failureContext.isLoaded {try native.unload(failureContext)}
+        try foreign.load(failureContext)
+        failureContext.hasAccessToPrivateData = true
+        await rejects("A failed native unload reports its failure") {try runtime.unload()}
+        check(failureContext.isLoaded && runtime.contexts[id] === failureContext && failureContext.grantedPermissions.isEmpty && failureContext.grantedPermissionMatchPatterns.isEmpty && !failureContext.hasAccessToPrivateData,"Failed native unload clears grants and keeps the context registered for retry")
+        let profileIndex = store.profiles.firstIndex(where:{$0.id == profile})!,originalProfile = store.profiles.first(where:{$0.id == profile})!
+        store.profiles[profileIndex].pendingDataClear = true;host.refresh()
+        check(host.profiles[profile] === runtime,"An unavailable profile retains its runtime owner when native teardown fails")
+        store.profiles[profileIndex] = originalProfile
+        try foreign.unload(failureContext)
+        retainedOptions.stopLoading();revivedOptions.stopLoading()
+        try await store.prepareExtensions(profileID:profile)
+        runtime = host.profiles[profile]!;native = runtime.controller
+        var privateGrant = store.extensionRecords(profileID:profile).first(where:{$0.id == id})!.grants!
+        privateGrant.allowPrivate = true
+        try store.setExtensionGrants(id,profileID:profile,grants:privateGrant)
+        try await store.prepareExtensions(profileID:profile)
+        let withdrawnContext = runtime.contexts[id]!
+        privateGrant.hostPatterns = [];privateGrant.allowPrivate = false
+        try store.setExtensionGrants(id,profileID:profile,grants:privateGrant);host.refresh()
+        check(withdrawnContext.grantedPermissionMatchPatterns.isEmpty,"Removing saved host approval revokes the old native host grants before unload")
+        check(!withdrawnContext.hasAccessToPrivateData,"Withdrawing saved private approval revokes the old native private access before unload")
+        privateGrant.hostPatterns = ["http://127.0.0.1/*"]
+        try store.setExtensionGrants(id,profileID:profile,grants:privateGrant)
+        try await store.prepareExtensions(profileID:profile)
+        let revokedContext = runtime.contexts[id]!
+        var restrictedGrant = store.extensionRecords(profileID:profile).first(where:{$0.id == id})!.grants!
+        restrictedGrant.permissions = []
+        try store.setExtensionGrants(id,profileID:profile,grants:restrictedGrant);host.refresh()
+        check(!revokedContext.isLoaded && revokedContext.grantedPermissions[WKWebExtension.Permission(rawValue:"storage")] == nil,"Removing saved approval explicitly revokes the old native grant before unload")
+        restrictedGrant.permissions = ["storage"]
+        try store.setExtensionGrants(id,profileID:profile,grants:restrictedGrant)
+        try await store.prepareExtensions(profileID:profile)
         let other = try store.createProfile(name:"Owned runtime B")
         try owned.register(other); try controllers.register(store.profiles.first(where:{$0.id == other})!.extensionControllerID!)
         let otherPage = fixture.appending(queryItems:[URLQueryItem(name:"phase",value:"other-account")])
@@ -76,11 +157,13 @@ final class OwnedExtensionKeyGate:@unchecked Sendable {
         check(await marker(otherWeb!) == nil,"The same website in another account never inherits the first account's code")
         check(otherWeb!.configuration.webExtensionController !== native,"Each browser account receives its own native controller")
         store.selectSpace(firstSpace)
+        let disabledContext = runtime.contexts[id]!
         try store.setExtensionEnabled(id,profileID:profile,enabled:false)
         let disabled = fixture.appending(queryItems:[URLQueryItem(name:"phase",value:"disabled")])
         web!.load(URLRequest(url:disabled)); try await ready(web!,disabled)
         check(await marker(web!) == nil,"Disabling saves and unloads native code before the next document")
         check(native.extensionContexts.isEmpty,"Disable removes the actual loaded native context")
+        check(disabledContext.grantedPermissions[WKWebExtension.Permission(rawValue:"storage")] != nil,"Ordinary disable preserves the saved approval and setting metadata")
         try store.setExtensionEnabled(id,profileID:profile,enabled:true)
         try await store.prepareExtensions(profileID:profile)
         record = store.extensionRecords(profileID:profile).first!

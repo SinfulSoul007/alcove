@@ -217,6 +217,20 @@ import BrowserCore
         let precisionDate = Date(timeIntervalSinceReferenceDate:800_000_000)
         precisionRecord.installedAt = precisionDate
         check(ExtensionCatalog.nextInstallationDate(in:[precisionRecord],now:precisionDate).timeIntervalSince1970 > precisionDate.timeIntervalSince1970,"Installation priority survives conversion to WebKit Unix timestamps")
+        var wrongDateRecord = approved;wrongDateRecord["installedAt"] = "invalid optional date"
+        var wrongDateLibrary = library;wrongDateLibrary["extensions"] = [wrongDateRecord]
+        var wrongDateDocument = object;wrongDateDocument["formatVersion"] = BrowserDocument.currentFormatVersion
+        wrongDateDocument["library"] = wrongDateLibrary;wrongDateDocument["profileLibraries"] = [["profileID":profileID,"library":wrongDateLibrary]]
+        let wrongDateStore = MetadataStore(url:root.appendingPathComponent("wrong-date.sealed"),key:key)
+        try AES.GCM.seal(JSONSerialization.data(withJSONObject:wrongDateDocument),using:key).combined!.write(to:wrongDateStore.url)
+        var recoveredWrongDate = false
+        do {
+            var loaded = try wrongDateStore.load(BrowserDocument.self)!
+            try loaded.repairProfiles()
+            let restoredRecord = loaded.library(for:BrowserProfile.defaultID).extensions?.first
+            recoveredWrongDate = restoredRecord?.name == "Owned Fixture Extension" && restoredRecord?.grants != nil && restoredRecord?.validInstallationDate != nil
+        } catch {}
+        check(recoveredWrongDate,"A wrong-type optional installation date cannot prevent opening the encrypted document")
         try runExtensionManifestChecks(check)
         try runExtensionZIPChecks(check)
         try await runExtensionPackageChecks(check)

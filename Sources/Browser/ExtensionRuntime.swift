@@ -2,6 +2,12 @@ import AppKit
 import WebKit
 import BrowserCore
 
+@available(macOS 15.4,*) @MainActor private func nativeExtensionPatterns(_ raw:String) throws -> [WKWebExtension.MatchPattern] {
+    // Browser approvals cover web schemes, while native <all_urls> includes files.
+    let values = raw == "<all_urls>" ? ["http://*/*","https://*/*"] : [raw]
+    return try values.map{try WKWebExtension.MatchPattern(string:$0)}
+}
+
 /// Framework callbacks may outlive a window. Completion and timeout own only this result,
 /// never a BrowserStore, window or web view; late native results cannot load a context.
 @MainActor final class ExtensionBoundedResult<Value> {
@@ -57,13 +63,49 @@ import BrowserCore
         configuration.webExtensionController=controller
         requestRulesView=WKWebView(frame:.zero,configuration:configuration)
     }
-    func unload() throws {
+    func isReady(for records:[BrowserExtensionRecord],epoch:UUID) -> Bool {
+        guard loaded == records,self.epoch == epoch else {return false}
+        let active = Set(records.filter{$0.enabled && $0.pendingRemoval != true}.map(\.id))
+        return active == Set(contexts.keys) && contexts.values.allSatisfy{$0.isLoaded && $0.webExtensionController === controller}
+    }
+    func unload(approvedRecords:[BrowserExtensionRecord]? = nil) throws {
         defer {requestRulesView?.stopLoading();requestRulesView=nil}
         task?.cancel(); task = nil; taskID = nil; preparing = nil; loaded = nil; epoch = nil
+        let approvals = approvedRecords.map{ExtensionCatalog.repaired($0,profileID:self.id,controllerID:controllerID)}
         var failure:Error?
         for (id,context) in contexts {
-            context.grantedPermissions = [:]; context.grantedPermissionMatchPatterns = [:]; context.hasAccessToPrivateData = false
-            do {try controller.unload(context);contexts.removeValue(forKey:id)} catch {failure = error}
+            if let approvals {
+                let grant = approvals.first(where:{$0.id == id})?.grants
+                let allowed = Set(grant?.permissions ?? [])
+                // Actual approval removal must reach the native settings provider.
+                // Disabled records keep their saved grants; temporary-only rights end here.
+                context.grantedPermissions = context.grantedPermissions.filter{allowed.contains($0.key.rawValue)}
+                let sites = (grant?.hostPatterns ?? []).compactMap(ExtensionMatchPattern.init)
+                context.grantedPermissionMatchPatterns = context.grantedPermissionMatchPatterns.filter{entry in
+                    guard let pattern = ExtensionMatchPattern(entry.key.string),pattern.schemes.isSubset(of:["http","https"]) else {return false}
+                    return sites.contains{$0.covers(pattern)}
+                }
+                var deniedSites = context.deniedPermissionMatchPatterns
+                do {
+                    for raw in grant?.deniedHostPatterns ?? [] {
+                        for pattern in try nativeExtensionPatterns(raw) {deniedSites[pattern] = .distantFuture}
+                    }
+                } catch {context.grantedPermissionMatchPatterns = [:]}
+                context.deniedPermissionMatchPatterns = deniedSites
+                context.hasAccessToPrivateData = context.hasAccessToPrivateData && grant?.allowPrivate == true
+            }
+            do {
+                // Native unload invalidates privileged IPC and removes injected code.
+                // Revoking grants here would erase persisted extension privacy choices.
+                try controller.unload(context);contexts.removeValue(forKey:id)
+            } catch {
+                if !context.isLoaded && !controller.extensionContexts.contains(context) {
+                    contexts.removeValue(forKey:id)
+                    continue
+                }
+                context.grantedPermissions = [:]; context.grantedPermissionMatchPatterns = [:]; context.hasAccessToPrivateData = false
+                failure = error
+            }
         }
         if let failure {throw failure}
     }
@@ -100,7 +142,7 @@ import BrowserCore
     private func profile(_ id:UUID) throws -> NativeExtensionProfile {
         let (owner,profile) = try currentOwner(id)
         if let runtime = profiles[id], runtime.controllerID == profile.extensionControllerID {return runtime}
-        if let old = profiles[id] {try old.unload()}
+        if let old = profiles[id] {try old.unload(approvedRecords:[])}
         let runtime = NativeExtensionProfile(id:id,controllerID:profile.extensionControllerID!,dataStore:owner.websiteDataStore(forProfile:id))
         runtime.controller.delegate = self; profiles[id] = runtime
         return runtime
@@ -119,7 +161,7 @@ import BrowserCore
     func invalidate(profileID:UUID) {
         bypasses.removeValue(forKey:profileID)
         cancelActionJobs(profileID:profileID)
-        do {try profiles[profileID]?.unload();owner?.extensionStates.removeValue(forKey:profileID)}
+        do {try profiles[profileID]?.unload(approvedRecords:owner?.extensionRecords(profileID:profileID) ?? []);owner?.extensionStates.removeValue(forKey:profileID)}
         catch {owner?.extensionStates[profileID] = .failed(error.localizedDescription)}
         reconcileExtensionSourceRequests()
     }
@@ -133,11 +175,11 @@ import BrowserCore
         if let bypass = bypasses[profileID], bypass.0 == records, bypass.1 == epoch {return false}
         if !records.contains(where:{$0.enabled && $0.pendingRemoval != true}) {return false}
         guard let runtime = profiles[profileID] else {return true}
-        return runtime.loaded != records || runtime.epoch != epoch
+        return !runtime.isReady(for:records,epoch:epoch)
     }
     func continueWithout(profileID:UUID) throws {
         let (owner,_) = try currentOwner(profileID)
-        try profiles[profileID]?.unload()
+        try profiles[profileID]?.unload(approvedRecords:owner.extensionRecords(profileID:profileID))
         bypasses[profileID] = (owner.extensionRecords(profileID:profileID),owner.extensionReviewEpoch(for:profileID))
         owner.extensionStates[profileID] = .failed("Continuing without extensions in this profile. Retry to enable them again.")
     }
@@ -146,6 +188,7 @@ import BrowserCore
         for (id,runtime) in profiles {
             if owner.profileUnavailable(id) {
                 invalidate(profileID:id)
+                guard runtime.contexts.isEmpty else {continue}
                 runtime.controller.delegate = nil
                 profiles.removeValue(forKey:id)
                 continue
@@ -171,9 +214,9 @@ import BrowserCore
     func prepare(profileID:UUID) async throws {
         let (owner,_) = try currentOwner(profileID), runtime = try profile(profileID)
         let records = owner.extensionRecords(profileID:profileID), epoch = owner.extensionReviewEpoch(for:profileID)
-        if runtime.loaded == records && runtime.epoch == epoch {return}
+        if runtime.isReady(for:records,epoch:epoch) {return}
         if let task = runtime.task {try await task.value;return}
-        try runtime.unload()
+        try runtime.unload(approvedRecords:records)
         let operationID = UUID()
         runtime.preparing = records; runtime.epoch = epoch; runtime.taskID = operationID
         owner.extensionStates[profileID] = .preparing
@@ -186,7 +229,7 @@ import BrowserCore
                 self.owner?.extensionStates[profileID] = .ready
             } catch {
                 if runtime.taskID == operationID {
-                    try? runtime.unload()
+                    try? runtime.unload(approvedRecords:self.owner?.extensionRecords(profileID:runtime.id) ?? [])
                     self.owner?.extensionStates[profileID] = .failed(error.localizedDescription)
                     self.owner?.message = "Extensions did not start. Your existing page was kept. " + error.localizedDescription
                 }
@@ -254,17 +297,12 @@ import BrowserCore
             do {try runtime.controller.load(context)} catch {runtime.contexts.removeValue(forKey:record.id);throw error}
         }
     }
-    private func patterns(_ raw:String) throws -> [WKWebExtension.MatchPattern] {
-        // Native <all_urls> also includes local files. Alcove approvals cover web schemes only.
-        let values = raw == "<all_urls>" ? ["http://*/*","https://*/*"] : [raw]
-        return try values.map {try WKWebExtension.MatchPattern(string:$0)}
-    }
     private func apply(_ grant:ExtensionGrantSet,record:BrowserExtensionRecord,to context:WKWebExtensionContext) throws {
         context.grantedPermissions = Dictionary(uniqueKeysWithValues:grant.permissions.map{(WKWebExtension.Permission(rawValue:$0),Date.distantFuture)})
         context.deniedPermissions = Dictionary(uniqueKeysWithValues:(grant.deniedPermissions ?? []).map{(WKWebExtension.Permission(rawValue:$0),Date.distantFuture)})
         var allowed:[WKWebExtension.MatchPattern:Date] = [:], denied:[WKWebExtension.MatchPattern:Date] = [:]
-        for raw in grant.hostPatterns {for pattern in try patterns(raw) {allowed[pattern] = .distantFuture}}
-        for raw in grant.deniedHostPatterns ?? [] {for pattern in try patterns(raw) {denied[pattern] = .distantFuture}}
+        for raw in grant.hostPatterns {for pattern in try nativeExtensionPatterns(raw) {allowed[pattern] = .distantFuture}}
+        for raw in grant.deniedHostPatterns ?? [] {for pattern in try nativeExtensionPatterns(raw) {denied[pattern] = .distantFuture}}
         context.grantedPermissionMatchPatterns = allowed;context.deniedPermissionMatchPatterns = denied
         context.hasAccessToPrivateData = grant.allowPrivate && BrowserExtensionCompatibility.privateAccessIssue(for:record)==nil
     }
@@ -273,7 +311,7 @@ import BrowserCore
         cancelPermissionRequests()
         synchronization?.cancel();synchronization = nil
         reconciliation?.cancel();reconciliation = nil
-        for runtime in profiles.values {try? runtime.unload();runtime.controller.delegate = nil}
+        for runtime in profiles.values {try? runtime.unload(approvedRecords:owner?.extensionRecords(profileID:runtime.id) ?? []);runtime.controller.delegate = nil}
         profiles = [:];bypasses = [:];nativeTabs = [:];nativeWindows = [:];focusedWindows = [:];tabsByView = [:];privateClients = [:];owner = nil
     }
 }

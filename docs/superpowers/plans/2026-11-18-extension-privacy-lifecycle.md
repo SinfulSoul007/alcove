@@ -42,15 +42,16 @@
 
 **Files:** `Sources/Browser/ExtensionRuntime.swift`, `Sources/Browser/ExtensionAdapters.swift`, `scripts/ExtensionRuntimeChecks.swift`.
 
-**Interfaces:** Existing `NativeExtensionProfile.unload() throws`; `authorized(_:profileID:client:) -> Bool` additionally requires `isLoaded`.
+**Interfaces:** `NativeExtensionProfile.unload(approvedRecords:[BrowserExtensionRecord]? = nil) throws`; `authorized(_:profileID:client:) -> Bool` additionally requires `isLoaded`.
 
-- [ ] Add native retained options-page storage checks before/after successful unload and re-enable. Assert unload preserves grant metadata, removes controller/host registration, rejects stale host callbacks and cannot write a storage marker after unloading.
-- [ ] Run VM runtime test; expect the preserved-grants assertion to fail while stale access remains denied.
-- [ ] Unload first, remove context only on success; on failure clear grants/private approval and retain context. Add loaded-state authorization gate.
-- [ ] Run runtime, permission, adapter, private, core and store checks in VM; expect zero failures. Review actual source unload failure paths before committing.
+- [x] Add native retained options-page storage checks before/after successful unload and re-enable. Assert unload preserves grant metadata, removes controller/host registration, rejects stale host callbacks and cannot write a storage marker after unloading.
+- [x] Run VM runtime test; expect the preserved-grants assertion to fail while stale access remains denied.
+- [x] Unload first, remove context only on success; on failure clear grants/private approval and retain context. Add loaded-state authorization gate.
+- [x] Reproduce explicit approval removal separately; intersect native grants with validated current catalog approvals at each production unload path, preserving saved grants on disable and ending temporary-only rights at shutdown.
+- [x] Run runtime, permission, adapter, private, core and store checks in VM; expect zero failures. Review actual source unload failure paths before committing.
 
 ### Final verification
 
-- [ ] Request fresh source review of this branch, including all five Review Focus conditions.
-- [ ] Address material review findings with failing regression checks, then run affected checks.
+- [x] Request fresh source review of this branch, including all five Review Focus conditions.
+- [x] Address material review findings with failing regression checks, then run affected checks.
 - [ ] Push branch for full CI. Keep engine-positive qualification pending until the changed framework exists.

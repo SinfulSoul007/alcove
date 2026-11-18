@@ -55,7 +55,7 @@ public struct BrowserExtensionRecord:Codable,Identifiable,Equatable,Sendable {
     public var pendingRemoval:Bool?
     /// Original installation priority, preserved when code or approval changes.
     /// Missing legacy dates are assigned by ExtensionCatalog in catalog order.
-    public var installedAt:Date?
+    @RecoverableExtensionDate public var installedAt:Date? = nil
     public var validInstallationDate:Date? {
         guard let installedAt,installedAt.timeIntervalSinceReferenceDate.isFinite,
               installedAt > .distantPast,installedAt < .distantFuture else {return nil}
