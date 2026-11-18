@@ -216,7 +216,8 @@ import BrowserCore
         var precisionRecord = typed
         let precisionDate = Date(timeIntervalSinceReferenceDate:800_000_000)
         precisionRecord.installedAt = precisionDate
-        check(ExtensionCatalog.nextInstallationDate(in:[precisionRecord],now:precisionDate).timeIntervalSince1970 > precisionDate.timeIntervalSince1970,"Installation priority survives conversion to WebKit Unix timestamps")
+        var precisionRecords = [precisionRecord]
+        check(ExtensionCatalog.nextInstallationDate(in:&precisionRecords,now:precisionDate).timeIntervalSince1970 > precisionDate.timeIntervalSince1970,"Installation priority survives conversion to WebKit Unix timestamps")
         var wrongDateRecord = approved;wrongDateRecord["installedAt"] = "invalid optional date"
         var wrongDateLibrary = library;wrongDateLibrary["extensions"] = [wrongDateRecord]
         var wrongDateDocument = object;wrongDateDocument["formatVersion"] = BrowserDocument.currentFormatVersion
@@ -231,6 +232,34 @@ import BrowserCore
             recoveredWrongDate = restoredRecord?.name == "Owned Fixture Extension" && restoredRecord?.grants != nil && restoredRecord?.validInstallationDate != nil
         } catch {}
         check(recoveredWrongDate,"A wrong-type optional installation date cannot prevent opening the encrypted document")
+        var nearPast = approved,ordinary = dated
+        nearPast["installedAt"] = Date.distantPast.addingTimeInterval(0.5).timeIntervalSinceReferenceDate
+        ordinary["installedAt"] = precisionDate.timeIntervalSinceReferenceDate
+        let lowerRecovered = try catalogDates([legacyFirst,nearPast,ordinary])
+        let lowerDates = lowerRecovered.compactMap(\.validInstallationDate)
+        check(lowerDates.count == 3 && lowerDates[0] < lowerDates[1] && lowerDates[1] < lowerDates[2] && lowerRecovered[1].grants != nil,"Boundary recovery keeps legacy entries older and preserves the dated cohort order and approval")
+        let lowerAgain = ExtensionCatalog.repaired(lowerRecovered,profileID:BrowserProfile.defaultID,controllerID:UUID(uuidString:controllerID)!)
+        check(lowerAgain == lowerRecovered && lowerAgain.allSatisfy{$0.validInstallationDate != nil},"Lower-bound migration repairs once and remains valid on repeated recovery")
+        var nearFutureA = approved,nearFutureB = dated
+        let futureEdge = Date.distantFuture.addingTimeInterval(-0.0002)
+        nearFutureA["installedAt"] = futureEdge.timeIntervalSinceReferenceDate;nearFutureB["installedAt"] = futureEdge.timeIntervalSinceReferenceDate
+        let upperRecovered = try catalogDates([nearFutureA,nearFutureB])
+        check(upperRecovered.count == 2 && upperRecovered[0].validInstallationDate == upperRecovered[1].validInstallationDate && upperRecovered[0].grants != nil,"Date normalization preserves equal-date priority ties and saved approvals")
+        var allocationRecords = [precisionRecord];allocationRecords[0].installedAt = futureEdge
+        let allocated = ExtensionCatalog.nextInstallationDate(in:&allocationRecords,now:precisionDate)
+        var allocatedRecord = typed;allocatedRecord.installedAt = allocated
+        check(allocatedRecord.validInstallationDate != nil && allocated > allocationRecords[0].installedAt!,"Allocating after an upper-bound date keeps the new installation newer and valid")
+        let invalidClocks = [Date.distantFuture,Date.distantPast,Date(timeIntervalSince1970:.infinity),Date(timeIntervalSince1970:.nan)]
+        let clocksRecover = invalidClocks.allSatisfy { clock in
+            var records = [precisionRecord]
+            let next = ExtensionCatalog.nextInstallationDate(in:&records,now:clock)
+            var candidate = typed;candidate.installedAt = next
+            return candidate.validInstallationDate != nil && next > precisionDate
+        }
+        check(clocksRecover,"Invalid supplied clocks cannot create invalid or older installation metadata")
+        var normalFirst = approved,normalSecond = dated
+        normalFirst["installedAt"] = 1000.0;normalSecond["installedAt"] = 2000.0
+        check(try dateFields(catalogDates([normalFirst,normalSecond])) == [1000,2000],"Boundary normalization leaves ordinary installation dates unchanged")
         try runExtensionManifestChecks(check)
         try runExtensionZIPChecks(check)
         try await runExtensionPackageChecks(check)

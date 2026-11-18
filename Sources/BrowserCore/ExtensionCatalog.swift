@@ -37,11 +37,7 @@ public enum ExtensionCatalog {
     }
     public static func repaired(_ records:[BrowserExtensionRecord],profileID:UUID,controllerID:UUID,paused:Bool = false) -> [BrowserExtensionRecord] {
         var ordered = merged(records,[])
-        let legacy = ordered.indices.filter{ordered[$0].validInstallationDate == nil}
-        let earliest = min(ordered.compactMap(\.validInstallationDate).min() ?? Date(timeIntervalSince1970:0),Date(timeIntervalSince1970:0))
-        for (offset,index) in legacy.enumerated() {
-            ordered[index].installedAt = earliest.addingTimeInterval(Double(offset - legacy.count))
-        }
+        repairInstallationDates(&ordered)
         return ordered.map { original in
             var record = original
             record.requestedPermissions = unique(record.requestedPermissions)
@@ -69,10 +65,28 @@ public enum ExtensionCatalog {
             return record
         }
     }
-    public static func nextInstallationDate(in records:[BrowserExtensionRecord],now:Date = Date()) -> Date {
-        guard let latest = records.compactMap(\.validInstallationDate).max() else {return now}
+    public static func nextInstallationDate(in records:inout [BrowserExtensionRecord],now:Date = Date()) -> Date {
+        repairInstallationDates(&records)
+        let clock = now.timeIntervalSinceReferenceDate.isFinite && now > .distantPast && now < .distantFuture ? now : Date(timeIntervalSince1970:0)
+        guard let latest = records.compactMap(\.validInstallationDate).max() else {return clock}
         // A reference-date ULP can disappear when WebKit converts to Unix time.
-        return max(now,latest.addingTimeInterval(0.001))
+        return max(clock,latest.addingTimeInterval(0.001))
+    }
+    private static func repairInstallationDates(_ records:inout [BrowserExtensionRecord]) {
+        let legacy = records.indices.filter{records[$0].validInstallationDate == nil}
+        let dates = Set(records.compactMap(\.validInstallationDate)).sorted()
+        if let earliest = dates.first,let latest = dates.last,
+           earliest.addingTimeInterval(-Double(legacy.count)) <= .distantPast || latest.addingTimeInterval(0.001) >= .distantFuture {
+            // Preserve ordering and equal-date ties while reserving arithmetic headroom.
+            let replacements = Dictionary(uniqueKeysWithValues:dates.enumerated().map{($0.element,Date(timeIntervalSince1970:Double($0.offset)))})
+            for index in records.indices {
+                if let original = records[index].validInstallationDate {records[index].installedAt = replacements[original]}
+            }
+        }
+        let earliest = min(records.compactMap(\.validInstallationDate).min() ?? Date(timeIntervalSince1970:0),Date(timeIntervalSince1970:0))
+        for (offset,index) in legacy.enumerated() {
+            records[index].installedAt = earliest.addingTimeInterval(Double(offset - legacy.count))
+        }
     }
     private static func unique(_ values:[String]) -> [String] { Array(Set(values)).sorted() }
     private static func sameRevision(_ left:BrowserExtensionRecord,_ right:BrowserExtensionRecord) -> Bool {

@@ -77,7 +77,7 @@ extension BrowserStore {
         var record = BrowserExtensionRecord(id:id,name:package.manifest.name,version:package.manifest.version,manifestVersion:package.manifest.manifestVersion,packageDigest:package.digest,source:package.source,
             requestedPermissions:package.manifest.requestedPermissions,optionalPermissions:package.manifest.optionalPermissions,hostPermissions:package.manifest.hostPermissions,optionalHostPermissions:package.manifest.optionalHostPermissions)
         record.packageID = previous?.packageID ?? id; record.summary = package.manifest.summary; record.incognito = package.manifest.incognito
-        record.installedAt = previous?.validInstallationDate ?? ExtensionCatalog.nextInstallationDate(in:records)
+        record.installedAt = previous?.validInstallationDate ?? Date()
         record.signerID = package.signerID; record.storeID = package.storeID; record.publisherVerified = package.publisherVerified
         if let previous,previous.runtimeIdentifier != record.runtimeIdentifier {throw ExtensionActionError.identityChanged}
         if allowPrivate,BrowserExtensionCompatibility.privateAccessIssue(for:record) != nil {throw ExtensionHostError.unsupportedPrivateRequestBlocking}
@@ -124,7 +124,7 @@ extension BrowserStore {
             var candidate = makeDocument(), library = candidate.library(for:profileID)
             var records = library.extensions ?? []
             var installedRecord = record
-            if replacing == nil {installedRecord.installedAt = ExtensionCatalog.nextInstallationDate(in:records)}
+            if replacing == nil {installedRecord.installedAt = ExtensionCatalog.nextInstallationDate(in:&records)}
             if let replacing, let index = records.firstIndex(where:{$0.id == replacing}) { records[index] = installedRecord }
             else { records.append(installedRecord) }
             library.extensions = records; candidate.setLibrary(library,for:profileID)

@@ -248,6 +248,24 @@ import BrowserCore
             let firstTime = try installationTime(committed.first(where:{$0.id == firstCommit})!)
             let secondTime = try installationTime(committed.first(where:{$0.id == secondCommit})!)
             check(firstTime != nil && secondTime.map{$0 > (firstTime ?? .infinity)} == true,"Installation priority follows completed installs when reviews finish out of order")
+            var boundaryJSON = try JSONSerialization.jsonObject(with:JSONEncoder().encode(updatedSigned)) as! [String:Any]
+            boundaryJSON["installedAt"] = Date.distantFuture.addingTimeInterval(-0.0002).timeIntervalSinceReferenceDate
+            let boundaryRecord = try JSONDecoder().decode(BrowserExtensionRecord.self,from:JSONSerialization.data(withJSONObject:boundaryJSON))
+            var boundaryDocument = identityStore.makeDocument(),boundaryLibrary = boundaryDocument.library(for:identityProfile)
+            let boundaryIndex = boundaryLibrary.extensions!.firstIndex(where:{$0.id == signedID})!
+            boundaryLibrary.extensions![boundaryIndex] = boundaryRecord;boundaryDocument.setLibrary(boundaryLibrary,for:identityProfile)
+            try identityStore.commitProfileDocument(boundaryDocument)
+            let beforeBoundaryInstall = identityStore.extensionRecords(profileID:identityProfile)
+            let boundaryPackage = try ExtensionPackage.prepare(at:identitySource,stagingRoot:stage)
+            let boundaryApproval = try identityStore.extensionInstallApproval(for:boundaryPackage,profileID:identityProfile)
+            let boundaryID = try await identityStore.installExtension(boundaryPackage,approval:boundaryApproval)
+            let boundaryCatalog = identityStore.extensionRecords(profileID:identityProfile)
+            let newest = boundaryCatalog.first(where:{$0.id == boundaryID})!,prior = boundaryCatalog.filter{$0.id != boundaryID}
+            check(newest.validInstallationDate.map{date in prior.allSatisfy{$0.validInstallationDate.map{date > $0} == true}} == true,"An actual install after upper-bound recovery remains newest after encrypted commit")
+            func withoutDates(_ records:[BrowserExtensionRecord]) -> [BrowserExtensionRecord] {
+                records.map{var value = $0;value.installedAt = nil;return value}
+            }
+            check(withoutDates(boundaryCatalog.filter{$0.id != boundaryID}) == withoutDates(beforeBoundaryInstall),"Boundary recovery changes no existing identity, code revision or approval")
         }
         try await identityExercise()
         exit(failures == 0 ? 0 : 1)

@@ -24,6 +24,5 @@ Public engine compatibility gates remain until changed-engine tests and unchange
 full uBlock Origin network and cosmetic behavior are proven. No new release or
 claim of general Chrome compatibility is part of this integration branch.
 
-Known followup: dates immediately adjacent to distantPast/distantFuture still need
-priority-arithmetic normalization. Normal dates, clock rollback, malformed types,
-and large out-of-range numbers are covered here.
+Boundary arithmetic recovery is covered by
+`2026-11-18-extension-date-boundaries.md`, preserving priority order and ties.
