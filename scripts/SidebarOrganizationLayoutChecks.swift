@@ -82,6 +82,38 @@ import BrowserCore
               collapsed.height(rowHeight: store.appearance.rowHeight) < expandedHeight,
               "Collapsed descendants no longer reserve pinned-sidebar space")
         try store.setTabFolderExpanded("Projects", expanded: true, in: store.space.id)
+        let descendant = store.sidebarLists.saved.tabsByFolder["Projects"]!.first!
+        try store.moveTabToFolder(descendant.id, folder: nestedFolder, in: store.space.id)
+        func collapsedSelection() -> SidebarSavedSelection? {
+            store.sidebarLists.saved.collapsedSelection(for: store.selectedTab, shelfCollapsed: store.space.pinnedShelfCollapsed == true)
+        }
+        store.selectAny(descendant.id)
+        try store.setTabFolderExpanded(nestedFolder, expanded: false, in: store.space.id)
+        check(collapsedSelection() == .folder(nestedFolder), "A collapsed child folder represents its active tab")
+        try store.setTabFolderExpanded("Projects", expanded: false, in: store.space.id)
+        check(collapsedSelection() == .folder("Projects"), "The visible ancestor represents an active tab in an already-collapsed child")
+        try store.setPinnedShelfCollapsed(true, in: store.space.id)
+        check(collapsedSelection() == .shelf, "The closed Pinned shelf represents its active tab even inside nested folders")
+        if let favorite = store.favorites.first {
+            store.selectAny(favorite.id)
+            check(collapsedSelection() == nil, "A Favorite never marks a closed Pinned shelf")
+        }
+        store.selectAny(pageID)
+        check(collapsedSelection() == nil, "A Today tab never marks a closed Pinned shelf")
+        try store.setPinnedShelfCollapsed(false, in: store.space.id)
+        try store.setTabFolderExpanded("Projects", expanded: true, in: store.space.id)
+        try store.setTabFolderExpanded(nestedFolder, expanded: true, in: store.space.id)
+        store.selectAny(descendant.id)
+        check(collapsedSelection() == nil, "An expanded path needs only the active tab's own selection")
+        store.selectAny(pageID)
+        try store.setTabFolderExpanded(nestedFolder, expanded: false, in: store.space.id)
+        let enteredSplit = store.openInSplit(descendant.id)
+        check(enteredSplit && store.selectedID == pageID && collapsedSelection() == .folder(nestedFolder),
+              "The collapsed-folder marker follows the focused Split View pane")
+        store.focusPane(pageID)
+        check(collapsedSelection() == nil, "Focusing another Split View pane clears the marker")
+        store.clearSplit()
+        try store.setTabFolderExpanded(nestedFolder, expanded: true, in: store.space.id)
         let hosting = NSHostingView(rootView:BrowserUI(store:store,sidebarDefaults:defaults).environmentObject(UpdateController(installedTag:"test")))
         hosting.safeAreaRegions = [];hosting.sizingOptions = []
         let window = SidebarGestureFixtureWindow(contentRect:NSRect(x:0,y:0,width:1260,height:820),styleMask:[.titled,.closable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
@@ -134,6 +166,13 @@ import BrowserCore
             shelf.reflectScrolledClipView(shelf.contentView)
             await settle(); hosting.layoutSubtreeIfNeeded()
         }
+        func capture(_ name: String) throws {
+            guard let output = ProcessInfo.processInfo.environment["ALCOVE_SIDEBAR_SCREENSHOT_DIR"],
+                  let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { return }
+            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to:
+                URL(fileURLWithPath: output).appendingPathComponent(name + ".png"))
+        }
         if overflowShelves.count == 3 {
             let today = overflowShelves[0], pins = overflowShelves[1], favorites = overflowShelves[2]
             let pinOffset = pins.contentView.bounds.origin, favoriteOffset = favorites.contentView.bounds.origin
@@ -181,6 +220,31 @@ import BrowserCore
                 check(button != nil && favorites.contentView.bounds.origin.y > 0 && store.selectedID == favorite,
                       "The return control reveals the active Favorite in its own shelf")
             }
+            store.selectAny(descendant.id)
+            try store.setTabFolderExpanded(nestedFolder, expanded: false, in: store.space.id)
+            await scroll(pins, to: 0)
+            let childReturn = overflowButton("below")
+            childReturn?.performClick(nil)
+            await settle(); hosting.layoutSubtreeIfNeeded()
+            check(childReturn != nil && pins.contentView.bounds.origin.y > 0 && overflowButton("below") == nil &&
+                  store.space.collapsedFolders?.contains(nestedFolder) == true && store.focusedID == descendant.id,
+                  "The return control reveals the collapsed child without opening it or changing the active tab")
+            try capture("active-tab-in-collapsed-subfolder")
+            try store.setTabFolderExpanded("Projects", expanded: false, in: store.space.id)
+            await scroll(pins, to: 0)
+            let parentReturn = overflowButton("below")
+            parentReturn?.performClick(nil)
+            await settle(); hosting.layoutSubtreeIfNeeded()
+            check(parentReturn != nil && pins.contentView.bounds.origin.y > 0 && overflowButton("below") == nil &&
+                  store.space.collapsedFolders?.contains("Projects") == true && store.focusedID == descendant.id,
+                  "The return control reveals the nearest visible collapsed ancestor")
+            try capture("active-tab-in-collapsed-parent")
+            try store.setPinnedShelfCollapsed(true, in: store.space.id)
+            await settle(); hosting.layoutSubtreeIfNeeded()
+            try capture("active-tab-in-closed-pinned-shelf")
+            try store.setPinnedShelfCollapsed(false, in: store.space.id)
+            try store.setTabFolderExpanded("Projects", expanded: true, in: store.space.id)
+            try store.setTabFolderExpanded(nestedFolder, expanded: true, in: store.space.id)
             store.selectAny(pageID)
         } else {
             check(false, "The overflow fixture receives all three native shelves")

@@ -6,16 +6,16 @@ func sidebarTabPositions(_ tabs: [BrowserCore.Tab]) -> [UUID: Int] {
     Dictionary(tabs.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
 }
 
-private struct SidebarTabBounds: PreferenceKey {
-    static var defaultValue: [UUID: Anchor<CGRect>] { [:] }
-    static func reduce(value: inout [UUID: Anchor<CGRect>], nextValue: () -> [UUID: Anchor<CGRect>]) {
+private struct SidebarTabBounds<ID: Hashable>: PreferenceKey {
+    static var defaultValue: [ID: Anchor<CGRect>] { [:] }
+    static func reduce(value: inout [ID: Anchor<CGRect>], nextValue: () -> [ID: Anchor<CGRect>]) {
         value.merge(nextValue(), uniquingKeysWith: { first, _ in first })
     }
 }
 
 extension View {
-    func sidebarTabScrollTarget(_ id: UUID) -> some View {
-        anchorPreference(key: SidebarTabBounds.self, value: .bounds) { [id: $0] }
+    func sidebarTabScrollTarget<ID: Hashable>(_ id: ID) -> some View {
+        anchorPreference(key: SidebarTabBounds<ID>.self, value: .bounds) { [id: $0] }
     }
 }
 
@@ -27,9 +27,9 @@ private enum SidebarOverflowDirection {
     var alignment: Alignment { self == .above ? .topTrailing : .bottomTrailing }
 }
 
-struct SidebarTabScrollView<Content: View>: View {
-    let positions: [UUID: Int]
-    let focusedTab: UUID?
+struct SidebarTabScrollView<ID: Hashable, Content: View>: View {
+    let positions: [ID: Int]
+    let focusedTab: ID?
     let theme: AppearanceTheme
     let motion: Animation?
     var showsIndicators = true
@@ -38,7 +38,7 @@ struct SidebarTabScrollView<Content: View>: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: showsIndicators, content: content)
-                .overlayPreferenceValue(SidebarTabBounds.self) { anchors in
+                .overlayPreferenceValue(SidebarTabBounds<ID>.self) { anchors in
                     if let focusedTab, let position = positions[focusedTab] {
                         GeometryReader { geometry in
                             if let direction = direction(for: focusedTab, position: position, anchors: anchors, in: geometry) {
@@ -58,7 +58,7 @@ struct SidebarTabScrollView<Content: View>: View {
         }
     }
 
-    private func direction(for id: UUID, position: Int, anchors: [UUID: Anchor<CGRect>], in geometry: GeometryProxy) -> SidebarOverflowDirection? {
+    private func direction(for id: ID, position: Int, anchors: [ID: Anchor<CGRect>], in geometry: GeometryProxy) -> SidebarOverflowDirection? {
         guard geometry.size.height > 0 else { return nil }
         if let anchor = anchors[id] {
             let row = geometry[anchor]

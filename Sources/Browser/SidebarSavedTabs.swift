@@ -5,6 +5,24 @@ enum SidebarFolderLinkFormat {
     case plainText, markdown
 }
 
+enum SidebarSavedSelection: Equatable {
+    case shelf
+    case folder(String)
+}
+
+fileprivate enum SidebarSavedRowID: Hashable {
+    case tab(UUID)
+    case folder(String)
+}
+
+private extension BrowserCore.Tab {
+    var savedRowID: SidebarSavedRowID { .tab(id) }
+}
+
+private extension SidebarFolderTree.Row {
+    var savedRowID: SidebarSavedRowID { .folder(name) }
+}
+
 /// The tab lists depend on the active Space. The sidebar can reuse them at any size.
 final class SidebarSpaceLists {
     let space: Space
@@ -26,37 +44,53 @@ struct SidebarSavedLayout {
     let topLevelTabs: [BrowserCore.Tab]
     let tabsByFolder: [String: [BrowserCore.Tab]]
     let folders: [SidebarFolderTree.Row]
-    let visiblePositions: [UUID: Int]
+    fileprivate let visiblePositions: [SidebarSavedRowID: Int]
+    private let collapsedFolders: Set<String>
     private let visibleTabCount: Int
     private let emptyFolderCount: Int
 
     init(space: Space, collapsed: Set<String>? = nil) {
         let tree = SidebarFolderTree(space: space)
-        let folders = tree.visibleFolders(collapsed: collapsed ?? Set(space.collapsedFolders ?? []))
+        let collapsedFolders = collapsed ?? Set(space.collapsedFolders ?? [])
+        let folders = tree.visibleFolders(collapsed: collapsedFolders)
         let grouped = Dictionary(grouping: space.tabs.filter { $0.pinned && $0.favorite != true }, by: \.folder)
         let byFolder = Dictionary(uniqueKeysWithValues: grouped.compactMap { name, tabs in
             name.map { ($0, tabs) }
         })
         spaceID = space.id
         self.tree = tree
+        self.collapsedFolders = collapsedFolders
         self.folders = folders
         topLevelTabs = grouped[nil] ?? []
         tabsByFolder = byFolder
 
-        var visibleTabs = topLevelTabs
+        var visibleRows = topLevelTabs.map(\.savedRowID)
+        var tabCount = topLevelTabs.count
         var emptyFolders = 0
-        for folder in folders where folder.expanded {
+        for folder in folders {
+            visibleRows.append(folder.savedRowID)
+            guard folder.expanded else { continue }
             let folderTabs = byFolder[folder.name, default: []]
-            visibleTabs.append(contentsOf: folderTabs)
+            visibleRows.append(contentsOf: folderTabs.map(\.savedRowID))
+            tabCount += folderTabs.count
             if folderTabs.isEmpty && tree.children(of: folder.name).isEmpty { emptyFolders += 1 }
         }
-        visibleTabCount = visibleTabs.count
-        visiblePositions = sidebarTabPositions(visibleTabs)
+        visibleTabCount = tabCount
+        visiblePositions = Dictionary(visibleRows.enumerated().map { ($0.element, $0.offset) },
+                                      uniquingKeysWith: { first, _ in first })
         emptyFolderCount = emptyFolders
     }
 
     func height(rowHeight: Double) -> Double {
         Double(visibleTabCount) * (rowHeight + 3) + Double(folders.count) * 35 + Double(emptyFolderCount) * 24 + 8
+    }
+
+    func collapsedSelection(for tab: BrowserCore.Tab?, shelfCollapsed: Bool) -> SidebarSavedSelection? {
+        guard let tab, tab.pinned, tab.favorite != true else { return nil }
+        if shelfCollapsed { return .shelf }
+        guard let folder = tab.folder,
+              let visibleAncestor = tree.path(to: folder).first(where: collapsedFolders.contains) else { return nil }
+        return .folder(visibleAncestor)
     }
 
     func copiedLinks(in folder: String, format: SidebarFolderLinkFormat) -> String? {
@@ -100,6 +134,8 @@ struct SidebarSavedTabs: View {
 
     var body: some View {
         let spaceID = layout.spaceID
+        let selection = layout.collapsedSelection(for: store.selectedTab, shelfCollapsed: collapsed)
+        let showsSelection = selection == .shelf
         VStack(spacing: 0) {
             HStack {
                 Button { store.requestPinnedShelfCollapsed(!collapsed, in: spaceID) } label: {
@@ -107,11 +143,12 @@ struct SidebarSavedTabs: View {
                         Image(systemName: collapsed ? "chevron.right" : "chevron.down")
                             .font(.system(size: 8, weight: .semibold)).frame(width: 8)
                             .accessibilityHidden(true)
-                        Text("Pinned").font(.system(size: 11, weight: .semibold))
+                        Text("Pinned").font(.system(size: 11, weight: showsSelection ? .bold : .semibold))
                         Spacer(minLength: 0)
-                    }.opacity(0.65).frame(height: 26).contentShape(Rectangle())
+                        if showsSelection { activeTabDot }
+                    }.opacity(showsSelection ? 1 : 0.65).frame(height: 26).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityLabel("Pinned")
-                    .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
+                    .accessibilityValue(disclosureValue(expanded: !collapsed, showsSelection: showsSelection))
                     .help(collapsed ? "Expand Pinned" : "Collapse Pinned")
                     .disabled(!store.canManageSpace(spaceID))
                 Button { store.requestNewTabFolder(in: spaceID) } label: {
@@ -120,21 +157,27 @@ struct SidebarSavedTabs: View {
                     .disabled(!store.canManageSpace(spaceID))
             }.padding(.horizontal, 16).frame(height: 26).contentShape(Rectangle())
                 .onDrop(of: SidebarTabDrag.dropTypes, delegate: TabDrop(store: store, section: .pinned))
-            if !collapsed { pinnedList(in: spaceID) }
+            if !collapsed { pinnedList(in: spaceID, selection: selection) }
         }
     }
 
-    private func pinnedList(in spaceID: UUID) -> some View {
+    private func pinnedList(in spaceID: UUID, selection: SidebarSavedSelection?) -> some View {
         let empty = layout.topLevelTabs.isEmpty && layout.folders.isEmpty
-        return SidebarTabScrollView(positions: layout.visiblePositions, focusedTab: store.focusedID, theme: theme, motion: motion) {
+        let focusedRow: SidebarSavedRowID?
+        if case .folder(let name) = selection { focusedRow = .folder(name) }
+        else { focusedRow = store.focusedID.map(SidebarSavedRowID.tab) }
+        return SidebarTabScrollView(positions: layout.visiblePositions, focusedTab: focusedRow, theme: theme, motion: motion) {
             LazyVStack(alignment: .leading, spacing: 3) {
-                ForEach(layout.topLevelTabs) { tab in savedRow(tab).sidebarTabScrollTarget(tab.id) }
-                ForEach(layout.folders) { folder in
-                    folderHeader(folder, in: spaceID)
+                ForEach(layout.topLevelTabs, id: \.savedRowID) { tab in
+                    savedRow(tab).sidebarTabScrollTarget(tab.savedRowID)
+                }
+                ForEach(layout.folders, id: \.savedRowID) { folder in
+                    folderHeader(folder, in: spaceID, showsSelection: selection == .folder(folder.name))
+                        .sidebarTabScrollTarget(folder.savedRowID)
                     if folder.expanded {
                         let tabs = layout.tabsByFolder[folder.name, default: []]
-                        ForEach(tabs) { tab in
-                            savedRow(tab).padding(.leading, indentation(folder.depth + 1)).sidebarTabScrollTarget(tab.id)
+                        ForEach(tabs, id: \.savedRowID) { tab in
+                            savedRow(tab).padding(.leading, indentation(folder.depth + 1)).sidebarTabScrollTarget(tab.savedRowID)
                         }
                         if tabs.isEmpty && layout.tree.children(of: folder.name).isEmpty {
                             Text("Drop tabs here").font(.system(size: 11))
@@ -164,7 +207,17 @@ struct SidebarSavedTabs: View {
         SidebarTabRow(tab: tab, spaceID: layout.spaceID, store: store, theme: theme, appearance: appearance, motion: motion)
     }
 
-    private func folderHeader(_ folder: SidebarFolderTree.Row, in spaceID: UUID) -> some View {
+    private var activeTabDot: some View {
+        Circle().fill(theme.accent).frame(width: 6, height: 6)
+            .accessibilityHidden(true)
+    }
+
+    private func disclosureValue(expanded: Bool, showsSelection: Bool) -> String {
+        if expanded { return "Expanded" }
+        return showsSelection ? "Collapsed, contains active tab" : "Collapsed"
+    }
+
+    private func folderHeader(_ folder: SidebarFolderTree.Row, in spaceID: UUID, showsSelection: Bool) -> some View {
         let name = folder.name
         let path = layout.tree.path(to: name)
         return Button {
@@ -178,15 +231,19 @@ struct SidebarSavedTabs: View {
                     .font(.system(size: 8, weight: .semibold)).frame(width: 9)
                     .foregroundStyle(theme.ink.opacity(0.55)).accessibilityHidden(true)
                 Label(name, systemImage: "folder.fill")
-                    .font(.system(size: 12 * appearance.textScale, weight: .medium))
+                    .font(.system(size: 12 * appearance.textScale, weight: showsSelection ? .semibold : .medium))
                     .foregroundStyle(theme.accent).lineLimit(1)
+                if showsSelection {
+                    Spacer(minLength: 2)
+                    activeTabDot
+                }
             }.padding(.leading, indentation(folder.depth) + 9).padding(.trailing, 8)
                 .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text(path.joined(separator: ", ")))
-        .accessibilityValue(folder.expanded ? "Expanded" : "Collapsed")
+        .accessibilityValue(disclosureValue(expanded: folder.expanded, showsSelection: showsSelection))
         .help(path.joined(separator: " › "))
         .disabled(!store.canManageSpace(spaceID))
         .onDrag { NSItemProvider(object: SidebarFolderDrag(spaceID: spaceID, name: name).text as NSString) }
