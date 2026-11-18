@@ -95,8 +95,7 @@ final class KeyGate: @unchecked Sendable {
         }
         var initial: BrowserStore? = BrowserStore(dataRoot: root, metadataKeyAccess: access)
         check(initial!.awaitingInitialMetadata && initial!.unlocking && !initial!.savingEnabled && !initial!.onboardingVisible, "Initial window can render before a blocked key returns")
-        let savedStatus = try recognizedText(in: firstFrame(of: MetadataStartupView(store: initial!)))
-        check(savedStatus.contains("Open Private Window"), "An existing profile immediately shows its startup recovery controls")
+        check(!initial!.preparingFirstLaunch, "An existing profile does not enter the first-launch artwork route")
         initial!.showCommand(new: true)
         check(initial!.profileUnavailable(BrowserProfile.defaultID) && !initial!.commandVisible && initial!.namedDataStores.isEmpty, "Unknown saved identity blocks normal browsing and profile storage")
         let abandoned = WeakStore(initial!); initial!.shutdown(); initial = nil
@@ -267,9 +266,8 @@ final class KeyGate: @unchecked Sendable {
             throw CocoaError(.fileReadNoPermission)
         })
         for _ in 0..<100 where failed.unlocking { try await Task.sleep(for: .milliseconds(10)) }
-        let deniedStatus = try recognizedText(in: firstFrame(of: MetadataStartupView(store: failed)))
-        check(deniedStatus.contains("Unlock Local Data") && deniedStatus.contains("Open Private Window"),
-              "A failed fresh lookup immediately shows unlock and private browsing")
+        check(failed.awaitingInitialMetadata && !failed.unlocking && !failed.preparingFirstLaunch && failed.metadataLoadError != nil,
+              "A failed fresh lookup leaves first-launch artwork and enters startup recovery")
         failed.shutdown()
         let legacyRoot = root.appendingPathComponent("legacy")
         try FileManager.default.createDirectory(at:legacyRoot,withIntermediateDirectories:true)
@@ -277,8 +275,7 @@ final class KeyGate: @unchecked Sendable {
         let legacyURL = legacyRoot.appendingPathComponent("session.json")
         try JSONEncoder().encode(legacy).write(to:legacyURL)
         let migrated = BrowserStore(dataRoot:legacyRoot,metadataKeyAccess:MetadataKeyAccess { _,_ in key })
-        let migrationStatus = try recognizedText(in: firstFrame(of: MetadataStartupView(store: migrated)))
-        check(migrationStatus.contains("Open Private Window"), "Legacy metadata retains the ordinary startup panel")
+        check(migrated.unlocking && !migrated.preparingFirstLaunch, "Legacy metadata does not enter the first-launch artwork route")
         for _ in 0..<100 where migrated.unlocking { try await Task.sleep(for: .milliseconds(10)) }
         check(migrated.savingEnabled && migrated.selectedTab?.url == "https://example.com/legacy" && !migrated.onboardingVisible && !FileManager.default.fileExists(atPath:legacyURL.path), "Background restore encrypts legacy tabs before removing the source")
         migrated.shutdown()
