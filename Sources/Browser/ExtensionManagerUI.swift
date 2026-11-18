@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WebKit
 import Combine
 import BrowserCore
 
@@ -82,7 +83,21 @@ import BrowserCore
     }
     func reviewMarketplaceListing(_ listing: ExtensionStoreLocation) {
         guard !closed, !busy, showsMarketplace, session.canManage, marketplace?.listing == listing else { return }
-        reviewStore(location: listing)
+        reviewStoreListing(listing)
+    }
+    func reviewStoreListing(_ listing: ExtensionStoreLocation, from profileID: UUID? = nil) {
+        guard !closed, !busy, session.currentReview == nil, session.currentPermissions == nil else { return }
+        if let profileID {
+            do { try session.selectProfile(profileID) }
+            catch { self.error = error.localizedDescription; return }
+            showsMarketplace = false
+        }
+        guard session.canManage else { return }
+        switch ExtensionMarketplaceAction(listing: listing, records: records) {
+        case .install: reviewStore(location: listing)
+        case .update(let record): reviewStore(replacing: record, location: listing)
+        case .manage: showsMarketplace = false
+        }
     }
     func openNormalWindow() {
         window?.performClose(nil)
@@ -262,15 +277,37 @@ import BrowserCore
 }
 
 extension BrowserStore {
-    func requestExtensionManager(from window:NSWindow?=nil,profileID:UUID?=nil) {
+    func extensionMarketplaceListing(for web: WKWebView) -> ExtensionStoreLocation? {
+        guard #available(macOS 15.4, *), web === currentView, !web.isLoading,
+              let url = web.url, let listing = ExtensionMarketplace.listing(at: url),
+              let committed = web.backForwardList.currentItem?.url, ExtensionMarketplace.listing(at: committed) == listing,
+              !isPrivate, !isShuttingDown, extensionPopupProfileID == nil, savingEnabled, metadataWriter.vault != nil,
+              let profile = profileID(for: web), !profileUnavailable(profile),
+              profiles.contains(where: { $0.id == profile && $0.extensionControllerID != nil }) else { return nil }
+        return listing
+    }
+
+    func requestExtensionMarketplaceReview(_ listing: ExtensionStoreLocation, from web: WKWebView) {
+        guard extensionMarketplaceListing(for: web) == listing, let profile = profileID(for: web),
+              let window = web.window, extensionWindows[.primary]?.window === window else { return }
+        requestExtensionManager(from: window, profileID: profile, listing: listing)
+    }
+
+    func requestExtensionManager(from window: NSWindow? = nil, profileID: UUID? = nil, listing: ExtensionStoreLocation? = nil) {
         let source=window ?? NSApp.keyWindow?.sheetParent ?? NSApp.keyWindow
         guard let source,let reference=extensionWindows.values.first(where:{$0.window === source}) else {message=ExtensionHostError.closed.localizedDescription;return}
-        if let existing=extensionManagers.values.first(where:{$0.model.session.source === reference}) {existing.surface();return}
+        let profile = profileID ?? activeProfileID
+        if let existing = extensionManagers.values.first(where: { $0.model.session.source === reference }) {
+            existing.surface()
+            if let listing { existing.model.reviewStoreListing(listing, from: profile) }
+            return
+        }
         guard extensionManagers.count<16 else {message="Close an extension manager before opening another.";return}
         do {
-            let session=try ExtensionManagerSession(store:self,sourceWindow:source,profileID:profileID ?? activeProfileID)
+            let session=try ExtensionManagerSession(store:self,sourceWindow:source,profileID:profile)
             let controller=ExtensionManagerWindowController(session:session)
             extensionManagers[controller.id]=controller;controller.surface()
+            if let listing { controller.model.reviewStoreListing(listing, from: profile) }
         } catch {message=error.localizedDescription}
     }
     func closeExtensionManagers() {
@@ -309,9 +346,13 @@ private struct ExtensionManagerView:View {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.red).padding(12)
                 }
+                if let notice = model.notice {
+                    Text(notice).foregroundStyle(.secondary).textSelection(.enabled).padding(12)
+                }
                 ExtensionMarketplaceView(
                     browser: marketplace,
                     busy: model.busy,
+                    records: model.records,
                     openInstalled: { model.showsMarketplace = false },
                     review: model.reviewMarketplaceListing
                 )

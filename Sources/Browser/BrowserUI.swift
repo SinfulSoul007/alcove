@@ -254,6 +254,17 @@ struct BrowserUI: View {
                 HStack { Text("Local saving is paused. Your existing data is preserved."); Spacer(); Button(store.unlocking ? "Unlocking…" : "Unlock") { store.unlockLocalData() }.disabled(store.unlocking) }.font(.system(size: 11)).padding(9).background(Color.orange.opacity(0.18))
             }
             if store.isPrivate { Text("PRIVATE WINDOW · History is not saved. Downloads stay on disk.").font(.system(size: 10)).foregroundStyle(.white).frame(maxWidth: .infinity).padding(6).background(.indigo) }
+            if let web = store.currentView, let listing = store.extensionMarketplaceListing(for: web),
+               let profile = store.profileID(for: web) {
+                let action = ExtensionMarketplaceAction(listing: listing, records: store.extensionRecords(profileID: profile))
+                HStack {
+                    Label("Chrome Web Store", systemImage: "storefront").font(.system(size: 11, weight: .medium))
+                    Spacer(minLength: 8)
+                    Button(action.title) { store.requestExtensionMarketplaceReview(listing, from: web) }
+                        .controlSize(.small).buttonStyle(.borderedProminent)
+                }.padding(.horizontal, 12).padding(.vertical, 6)
+                    .foregroundStyle(theme.ink).background { theme.surface }
+            }
             if store.findVisible { FindBar(store: store) }
             if let web = store.currentView, web.isLoading { ProgressView(value: web.estimatedProgress).progressViewStyle(.linear).tint(.purple).frame(height: 2) }
             if let layout = store.splitLayout {

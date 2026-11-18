@@ -2,6 +2,32 @@ import SwiftUI
 import WebKit
 import BrowserCore
 
+enum ExtensionMarketplaceAction: Equatable {
+    case install
+    case update(BrowserExtensionRecord)
+    case manage
+
+    init(listing: ExtensionStoreLocation, records: [BrowserExtensionRecord]) {
+        guard let record = records.first(where: { $0.runtimeIdentifier == listing.id }) else {
+            self = .install
+            return
+        }
+        if record.source == .webStore, record.storeID == listing.id, record.hasValidIdentity, record.pendingRemoval != true {
+            self = .update(record)
+        } else {
+            self = .manage
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .install: "Add to Alcove…"
+        case .update: "Check for Update…"
+        case .manage: "Manage Extension…"
+        }
+    }
+}
+
 /// A separate WebKit view for discovery. The native review button is the only
 /// way a listing can request an install, using the existing verified transport.
 @MainActor
@@ -92,6 +118,7 @@ final class ExtensionMarketplaceBrowser: NSObject, ObservableObject, WKNavigatio
 struct ExtensionMarketplaceView: View {
     @ObservedObject var browser: ExtensionMarketplaceBrowser
     let busy: Bool
+    let records: [BrowserExtensionRecord]
     let openInstalled: () -> Void
     let review: (ExtensionStoreLocation) -> Void
 
@@ -108,10 +135,11 @@ struct ExtensionMarketplaceView: View {
                     .accessibilityLabel("Forward").disabled(busy || !browser.webView.canGoForward)
                 Button(action: browser.goHome) { Image(systemName: "house") }
                     .accessibilityLabel("Chrome Web Store home").disabled(busy)
-                Button("Review Extension") {
-                    if let listing = browser.listing { review(listing) }
-                }.buttonStyle(.borderedProminent).disabled(busy || browser.listing == nil)
-                    .help("Review the current listing’s permissions and install it in Alcove")
+                if let listing = browser.listing {
+                    Button(ExtensionMarketplaceAction(listing: listing, records: records).title) {
+                        review(listing)
+                    }.buttonStyle(.borderedProminent).disabled(busy)
+                }
             }.padding(.horizontal, 16).padding(.vertical, 10)
             if browser.webView.isLoading { ProgressView().progressViewStyle(.linear) }
             Divider()

@@ -3,6 +3,7 @@ import WebKit
 import BrowserCore
 import CryptoKit
 import Combine
+import SwiftUI
 
 actor OwnedExtensionUITransport {
     var started = false
@@ -29,6 +30,25 @@ actor OwnedExtensionUITransport {
         let key=SymmetricKey(data:Data(repeating:0x36,count:32))
         var failures=0
         func check(_ value:Bool,_ title:String) {print("\(value ? "PASS":"FAIL"): \(title)");if !value {failures+=1}}
+        let listing = try ExtensionStoreLocation("ddkjiahejlhfcafbddmgiahcphecmpfh")
+        let signedID = listing.id
+        var marketplaceRecord = BrowserExtensionRecord(name: "Recorded Store Package", version: "1",
+            manifestVersion: 3, packageDigest: String(repeating: "a", count: 64), source: .webStore)
+        marketplaceRecord.storeID = signedID
+        marketplaceRecord.signerID = signedID
+        marketplaceRecord.publisherVerified = true
+        check(ExtensionMarketplaceAction(listing: listing, records: []) == .install,
+              "An uninstalled Web Store listing offers native installation")
+        check(ExtensionMarketplaceAction(listing: listing, records: [marketplaceRecord]) == .update(marketplaceRecord),
+              "A verified installation offers its identity-bound update")
+        marketplaceRecord.pendingRemoval = true
+        check(ExtensionMarketplaceAction(listing: listing, records: [marketplaceRecord]) == .manage,
+              "A listing pending removal goes to management without starting a download")
+        marketplaceRecord.source = .crx3
+        marketplaceRecord.storeID = nil
+        marketplaceRecord.pendingRemoval = nil
+        check(ExtensionMarketplaceAction(listing: listing, records: [marketplaceRecord]) == .manage,
+              "A signed file installation matching the store ID remains managed as a file install")
         func rejects(_ title:String,_ body:()async throws->Void) async {
             do {try await body();check(false,title)} catch {check(true,title)}
         }
@@ -224,7 +244,71 @@ actor OwnedExtensionUITransport {
             for _ in 0..<200 {if try ownershipStatus(waiting.sessionURL)==0 {released=true;break};try await Task.sleep(for:.milliseconds(10))}
             check(released && waiting.extensionRecords(profileID:waitingProfile).isEmpty,"Draining a cancelled review releases ownership without saving privileges")
         }
-        do {try await exercise()}
+        func exerciseLiveListing() async throws {
+            let store = BrowserStore(dataRoot: root.appendingPathComponent("listing"), keyProvider: { _ in key })
+            defer { store.shutdown() }
+            let profile = try store.createProfile(name: "Owned listing")
+            try websites.register(profile)
+            try controllers.register(store.profiles.first(where: { $0.id == profile })!.extensionControllerID!)
+            try store.createSpace(name: "Owned listing", profileID: profile)
+            store.onboardingVisible = false
+            let w = window(store)
+            let host = NSHostingView(rootView: BrowserUI(store: store).environmentObject(UpdateController(installedTag: "test")))
+            host.safeAreaRegions = []
+            w.contentView = host
+            defer { w.contentView = nil; w.close() }
+            func wait(_ condition: () -> Bool) async -> Bool {
+                for _ in 0..<600 {
+                    if condition() { return true }
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                return false
+            }
+            let address = URL(string: "https://chromewebstore.google.com/detail/ublock-origin-lite/" + listing.id)!
+            store.navigate(address.absoluteString)
+            guard let web = store.currentView else { throw CocoaError(.coderInvalidValue) }
+            let ready = await wait { store.extensionMarketplaceListing(for: web) == listing && web.window === w }
+            check(ready, "The regular browser reaches an eligible committed Chrome Web Store listing")
+            guard ready else { print("LISTING STATE \(web.url?.absoluteString ?? "none") \(store.message)"); return }
+            if let output = ProcessInfo.processInfo.environment["ALCOVE_LISTING_SCREENSHOT_PATH"],
+               let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output))
+            }
+            store.requestExtensionMarketplaceReview(try ExtensionStoreLocation(String(repeating: "a", count: 32)), from: web)
+            check(store.extensionManagers.isEmpty, "A mismatched listing cannot begin a review")
+            store.requestExtensionMarketplaceReview(listing, from: web)
+            guard let model = store.extensionManagers.values.first?.model else { throw CocoaError(.coderInvalidValue) }
+            let received = await wait { model.session.currentReview != nil || model.error != nil }
+            if let error = model.error { print("LISTING REVIEW ERROR \(error)") }
+            guard received, let review = model.session.currentReview else {
+                check(false, "The native listing action opens a verified package review")
+                return
+            }
+            check(review.previous == nil && review.profileID == profile && review.package.storeID == listing.id &&
+                  review.package.publisherVerified && store.extensionRecords(profileID: profile).isEmpty,
+                  "The listing action reviews the signed package in the originating profile before saving anything")
+            let installedID = try await model.session.approve(review, permissions: [], hostPatterns: [], allowPrivate: false, enable: false)
+            let installed = store.extensionRecords(profileID: profile)
+            check(installed.count == 1 && installed.first?.id == installedID &&
+                  installed.first.map { ExtensionMarketplaceAction(listing: listing, records: installed) == .update($0) } == true,
+                  "Installing the real package changes the same listing to its native update action")
+            store.requestExtensionMarketplaceReview(listing, from: web)
+            let reported = await wait { model.notice != nil || model.error != nil }
+            check(reported && model.notice == ExtensionActionError.currentStoreVersion.localizedDescription &&
+                  model.session.currentReview == nil && store.extensionRecords(profileID: profile) == installed,
+                  "Checking the installed listing reports the current version without replacing the installation")
+            web.load(URLRequest(url: URL(string: "about:blank")!))
+            let leftListing = await wait { web.url?.absoluteString == "about:blank" && !web.isLoading }
+            check(leftListing && store.extensionMarketplaceListing(for: web) == nil,
+                  "Leaving the official listing removes the contextual install action")
+        }
+        do {
+            try await exercise()
+            if ProcessInfo.processInfo.environment["ALCOVE_LIVE_MARKETPLACE_TEST"] == "1" {
+                try await exerciseLiveListing()
+            }
+        }
         catch {print("FAIL: UI fixture threw: \(error)");failures+=1}
         let controllerClean=await controllers.cleanup(),websiteClean=await websites.cleanup()
         check(controllerClean && websiteClean,"Disposable UI fixture namespaces are cleaned through their owned journals")
