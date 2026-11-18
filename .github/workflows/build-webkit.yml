@@ -1,8 +1,8 @@
-name: Build and test WebKit extension privacy controls
+name: Build and test WebKit extension lifecycle and privacy
 
 on:
   push:
-    branches: [research/webkit-rtc-policy]
+    branches: [research/webkit-update-event]
 
 permissions:
   contents: read
@@ -61,7 +61,7 @@ jobs:
         timeout-minutes: 351
         run: |
           set -euo pipefail
-          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy; do
+          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy webkit-runtime-update-event; do
             patch="$GITHUB_WORKSPACE/diagnostics/$name.patch"
             git apply --check "$patch"
             git apply "$patch"
@@ -116,6 +116,7 @@ jobs:
           xcrun swiftc -parse-as-library diagnostics/webkit-extension-probe.swift diagnostics/webkit-request-cache-probe.swift \
             diagnostics/webkit-hyperlink-auditing-probe.swift diagnostics/webkit-network-prediction-probe.swift \
             diagnostics/webkit-rtc-policy-probe.swift -o "$scratch/probe"
+          xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-update-event-probe.swift -o "$scratch/update-probe"
           python3 diagnostics/webkit-probe-server.py "$scratch/port" > "$scratch/requests.log" 2>&1 &
           server=$!
           for attempt in {1..100}; do
@@ -146,7 +147,10 @@ jobs:
           auditing_status=0
           prediction_status=0
           rtc_status=0
+          update_status=0
           status=0
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/update-probe" || update_status=$?
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
             "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/rtc-port")/" --rtc-policy-only || rtc_status=$?
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
@@ -163,6 +167,7 @@ jobs:
           cat "$scratch/requests.log"
           cat "$scratch/prediction.log"
           cat "$scratch/rtc.log"
+          if (( update_status != 0 )); then exit "$update_status"; fi
           if (( rtc_status != 0 )); then exit "$rtc_status"; fi
           if (( prediction_status != 0 )); then exit "$prediction_status"; fi
           if (( auditing_status != 0 )); then exit "$auditing_status"; fi

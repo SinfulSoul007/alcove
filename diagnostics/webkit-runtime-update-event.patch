@@ -1,0 +1,227 @@
+diff --git a/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.h b/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.h
+index 3f77222b46a127a9d30098c0a51f898d7b0a7b9b..b32aa020f552cecd6142fd9ed1541c62a9b5de9f 100644
+--- a/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.h
++++ b/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.h
+@@ -100,6 +100,7 @@ enum class WebExtensionEventListenerType : uint8_t {
+     WindowsOnRemoved,
+     // Background listener state stores these ordinals across browser updates.
+     WebNavigationOnCreatedNavigationTarget,
++    RuntimeOnUpdateAvailable,
+ };
+
+ inline String toAPIString(WebExtensionEventListenerType eventType)
+@@ -171,6 +172,8 @@ inline String toAPIString(WebExtensionEventListenerType eventType)
+         return "onMessageExternal"_s;
+     case WebExtensionEventListenerType::RuntimeOnStartup:
+         return "onStartup"_s;
++    case WebExtensionEventListenerType::RuntimeOnUpdateAvailable:
++        return "onUpdateAvailable"_s;
+     case WebExtensionEventListenerType::StorageOnChanged:
+         return "onChanged"_s;
+     case WebExtensionEventListenerType::TabsOnActivated:
+diff --git a/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.serialization.in b/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.serialization.in
+index e0e629517f436fdefb4632df4ef79a5999f91fdd..b21b7efc0813d338cfa3036602cda8bc037ee5a0 100644
+--- a/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.serialization.in
++++ b/Source/WebKit/Shared/Extensions/WebExtensionEventListenerType.serialization.in
+@@ -90,6 +90,7 @@ enum class WebKit::WebExtensionEventListenerType : uint8_t {
+     WindowsOnFocusChanged,
+     WindowsOnRemoved,
+     WebNavigationOnCreatedNavigationTarget,
++    RuntimeOnUpdateAvailable,
+ };
+
+ #endif
+diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContext.mm b/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContext.mm
+index 114629bf3b0b4b9a968e5a29fc6c17d30363f5d8..916e4d2f929e54eaa42414121089dc839934b2d4 100644
+--- a/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContext.mm
++++ b/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContext.mm
+@@ -847,6 +847,13 @@ - (WKWebView *)_backgroundWebView
+     return self._protectedWebExtensionContext->backgroundWebView();
+ }
+
++- (void)_didFindExtensionUpdateWithVersion:(NSString *)version
++{
++    NSParameterAssert([version isKindOfClass:NSString.class]);
++
++    self._protectedWebExtensionContext->didFindExtensionUpdate(version);
++}
++
+ - (NSURL *)_backgroundContentURL
+ {
+     return self._protectedWebExtensionContext->backgroundContentURL().createNSURL().autorelease();
+@@ -1284,6 +1291,10 @@ - (WKWebView *)_backgroundWebView
+     return nil;
+ }
+
++- (void)_didFindExtensionUpdateWithVersion:(NSString *)version
++{
++}
++
+ - (NSURL *)_backgroundContentURL
+ {
+     return nil;
+diff --git a/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContextPrivate.h b/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContextPrivate.h
+index 23156583a68850c234446a1915802a2061f34779..1122d54ccbde48068edcca2b59a46c2794762434 100644
+--- a/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContextPrivate.h
++++ b/Source/WebKit/UIProcess/API/Cocoa/WKWebExtensionContextPrivate.h
+@@ -37,6 +37,15 @@ WK_HEADER_AUDIT_BEGIN(nullability, sendability)
+ /*! @abstract The extension background content URL for the extension, or `nil` if the extension does not have background content. */
+ @property (nonatomic, nullable, readonly) NSURL *_backgroundContentURL;
+
++/*!
++ @abstract Announces an approved pending extension update to `runtime.onUpdateAvailable` listeners.
++ @discussion The embedder must verify the package identity, version, and approved permissions before calling this method.
++ This notification does not install the package. The embedder owns installation when the extension reloads or is restarted.
++ Calls on unloaded contexts, with an empty version, or with the installed version are ignored.
++ @param version The version of the verified, approved pending package.
++ */
++- (void)_didFindExtensionUpdateWithVersion:(NSString *)version;
++
+ /*!
+  @abstract Sends a message to the JavaScript `browser.test.onMessage` API.
+  @discussion Allows code to trigger a `browser.test.onMessage` event, enabling bidirectional communication during testing.
+diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIRuntimeCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIRuntimeCocoa.mm
+index 887d159c0fa235274b60dc63e1311c8f0d8985d6..ed8d3edb5b42baee0b5d90a24239b45b6adabb21 100644
+--- a/Source/WebKit/UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIRuntimeCocoa.mm
++++ b/Source/WebKit/UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIRuntimeCocoa.mm
+@@ -575,6 +575,22 @@
+     sendToProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchRuntimeStartupEvent());
+ }
+
++void WebExtensionContext::didFindExtensionUpdate(const String& version)
++{
++    RefPtr extensionController = this->extensionController();
++    if (!extensionController || version.isEmpty() || version == protectedExtension()->version())
++        return;
++
++    // The embedder verifies and approves the pending package before announcing it.
++    constexpr auto type = WebExtensionEventListenerType::RuntimeOnUpdateAvailable;
++    wakeUpBackgroundContentIfNecessaryToFireEvents({ type }, [=, this, protectedThis = Ref { *this }] {
++        if (this->extensionController() != extensionController.get() || version == protectedExtension()->version())
++            return;
++
++        sendToProcessesForEvent(type, Messages::WebExtensionContextProxy::DispatchRuntimeUpdateAvailableEvent(version));
++    });
++}
++
+ void WebExtensionContext::fireRuntimeInstalledEventIfNeeded()
+ {
+     ASSERT(m_installReason != InstallReason::None);
+diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
+index c92217f4b68f896afe53cdeb568ac2b11e470088..f5f2d931bcddf342ccce87cfe8028e1670f63997 100644
+--- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
++++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
+@@ -125,7 +125,7 @@
+ static NSString * const sessionStorageAllowedInContentScriptsKey = @"SessionStorageAllowedInContentScripts";
+
+ // Update this value when any changes are made to the WebExtensionEventListenerType enum.
+-static constexpr NSInteger currentBackgroundContentListenerStateVersion = 4;
++static constexpr NSInteger currentBackgroundContentListenerStateVersion = 5;
+
+ // Update this value when any changes are made to the rule translation logic in _WKWebExtensionDeclarativeNetRequestRule.
+ static constexpr NSInteger currentDeclarativeNetRequestRuleTranslatorVersion = 6;
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
+index 0df4638a19650adb241cf3f7b7b610fc317836e4..f153d43ab7b95ed3cbf29d16b7a1287d1725f389 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
+@@ -348,6 +348,8 @@ public:
+     Expected<bool, RefPtr<API::Error>> unload();
+     Expected<bool, RefPtr<API::Error>> reload();
+
++    void didFindExtensionUpdate(const String& version);
++
+     bool isLoaded() const { return !!m_extensionController; }
+
+     WebExtension& extension() const { return *m_extension; }
+diff --git a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm
+index ee630dd9b6b4c2f7ae65fd40ace6986d5d4dc40a..fd20fc0cdc308889553a6555924e4cd9bd6285f8 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm
++++ b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm
+@@ -586,6 +586,16 @@ - (instancetype)initWithAggregator:(WebKit::ReplyCallbackAggregator&)aggregator
+     return *m_onConnectExternal;
+ }
+
++WebExtensionAPIEvent& WebExtensionAPIRuntime::onUpdateAvailable()
++{
++    // Documentation: https://developer.chrome.com/docs/extensions/reference/api/runtime#event-onUpdateAvailable
++
++    if (!m_onUpdateAvailable)
++        m_onUpdateAvailable = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::RuntimeOnUpdateAvailable);
++
++    return *m_onUpdateAvailable;
++}
++
+ WebExtensionAPIEvent& WebExtensionAPIRuntime::onMessageExternal()
+ {
+     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/onMessageExternal
+@@ -856,6 +866,15 @@ static bool matches(WebFrame& frame, const std::optional<WebExtensionMessageTarg
+     });
+ }
+
++void WebExtensionContextProxy::dispatchRuntimeUpdateAvailableEvent(const String& version)
++{
++    NSDictionary *details = @{ versionKey: version.createNSString().get() };
++
++    enumerateNamespaceObjects([&](auto& namespaceObject) {
++        namespaceObject.runtime().onUpdateAvailable().invokeListenersWithArgument(details);
++    });
++}
++
+ } // namespace WebKit
+
+ #endif // ENABLE(WK_WEB_EXTENSIONS)
+diff --git a/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h b/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h
+index 288d8c787edbccbb770c9f21d0c7bdb2b52b277e..a43964f78079e3f9522e5cedb1fbe33bc33f6712 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h
++++ b/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h
+@@ -92,6 +92,7 @@ public:
+     WebExtensionAPIEvent& onInstalled();
+     WebExtensionAPIEvent& onMessage();
+     WebExtensionAPIEvent& onStartup();
++    WebExtensionAPIEvent& onUpdateAvailable();
+     WebExtensionAPIEvent& onConnectExternal();
+     WebExtensionAPIEvent& onMessageExternal();
+
+@@ -104,6 +105,7 @@ private:
+     RefPtr<WebExtensionAPIEvent> m_onInstalled;
+     RefPtr<WebExtensionAPIEvent> m_onMessage;
+     RefPtr<WebExtensionAPIEvent> m_onStartup;
++    RefPtr<WebExtensionAPIEvent> m_onUpdateAvailable;
+     RefPtr<WebExtensionAPIEvent> m_onConnectExternal;
+     RefPtr<WebExtensionAPIEvent> m_onMessageExternal;
+ #endif
+diff --git a/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl b/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl
+index 938ebac3dfbf35a909412696434217505f17fcc4..40047b9f61767896126e6b870cd7c8fb33f1bce7 100644
+--- a/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl
++++ b/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl
+@@ -58,5 +58,6 @@
+     [MainWorldOnly] readonly attribute WebExtensionAPIEvent onMessageExternal;
+     [MainWorldOnly] readonly attribute WebExtensionAPIEvent onStartup;
+     [MainWorldOnly] readonly attribute WebExtensionAPIEvent onInstalled;
++    [MainWorldOnly] readonly attribute WebExtensionAPIEvent onUpdateAvailable;
+
+ };
+diff --git a/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.h b/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.h
+index 9aa46d40083500b3c871c163ac19bfad674d459e..086b07c3ccc5728067c216664aecac260282b2a1 100644
+--- a/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.h
++++ b/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.h
+@@ -198,6 +198,7 @@ private:
+     void dispatchRuntimeConnectEvent(WebExtensionContentWorldType, WebExtensionPortChannelIdentifier, const String& name, const std::optional<WebExtensionMessageTargetParameters>&, const WebExtensionMessageSenderParameters&, CompletionHandler<void(HashCountedSet<WebPageProxyIdentifier>&&)>&&);
+     void dispatchRuntimeInstalledEvent(WebExtensionContext::InstallReason, String previousVersion);
+     void dispatchRuntimeStartupEvent();
++    void dispatchRuntimeUpdateAvailableEvent(const String& version);
+
+     // Storage
+     void setStorageAccessLevel(bool);
+diff --git a/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.messages.in b/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.messages.in
+index 541fa8baa3022aea086b33c62e3f676ec16c754e..ca36e74133d9d9058f67dc23736b399751f121d2 100644
+--- a/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.messages.in
++++ b/Source/WebKit/WebProcess/Extensions/WebExtensionContextProxy.messages.in
+@@ -79,6 +79,7 @@ messages -> WebExtensionContextProxy {
+     DispatchRuntimeConnectEvent(WebKit::WebExtensionContentWorldType contentWorldType, WebKit::WebExtensionPortChannelIdentifier channelIdentifier, String name, struct std::optional<WebKit::WebExtensionMessageTargetParameters> targetParameters, struct WebKit::WebExtensionMessageSenderParameters senderParameters) -> (HashCountedSet<WebKit::WebPageProxyIdentifier> addedPortCounts)
+     DispatchRuntimeInstalledEvent(enum:uint8_t WebKit::WebExtensionContextInstallReason installReason, String previousVersion)
+     DispatchRuntimeStartupEvent()
++    DispatchRuntimeUpdateAvailableEvent(String version)
+
+     // Storage
+     SetStorageAccessLevel(bool allowedInContentScripts)
