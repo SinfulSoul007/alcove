@@ -73,11 +73,16 @@ public enum ExtensionZIP {
             }
             if !directory && requiredDirectories.contains(key) { throw invalid("file/directory path collision") }
             paths[key] = directory
-            guard try bytes.u32(localOffset) == 0x04034b50, try bytes.u16(localOffset + 4) <= 20,
+            let localVersion = try bytes.u16(localOffset + 4)
+            // Some CRX writers reserve a zeroed ZIP64 field even when all sizes fit in 32 bits.
+            let permitsReservedSizeField = localVersion == 45 && flags & 8 == 0
+            guard try bytes.u32(localOffset) == 0x04034b50, localVersion <= 20 || permitsReservedSizeField,
                   try bytes.u16(localOffset + 6) == flags, try bytes.u16(localOffset + 8) == method else { throw invalid("local header disagrees with central entry") }
             let localNameLength = Int(try bytes.u16(localOffset + 26)), localExtraLength = Int(try bytes.u16(localOffset + 28))
             guard localNameLength == nameLength, try bytes.slice(localOffset + 30,localNameLength) == rawName else { throw invalid("local filename disagrees with central entry") }
-            let localExtra = try extraFields(bytes.slice(localOffset + 30 + localNameLength,localExtraLength),rawName:rawName)
+            let localExtra = try extraFields(bytes.slice(localOffset + 30 + localNameLength,localExtraLength),
+                                             rawName:rawName,permitsReservedSizeField:permitsReservedSizeField)
+            guard !permitsReservedSizeField || localExtra.ids.contains(0x0001) else { throw invalid("missing reserved ZIP64 local field") }
             if let alternate = localExtra.unicodeName, alternate != name { throw invalid("conflicting local Unicode filename") }
             let start = localOffset + 30 + localNameLength + localExtraLength, payloadEnd = start + compressed
             guard payloadEnd <= directoryOffset else { throw invalid("entry extends into central directory") }
@@ -127,12 +132,15 @@ public enum ExtensionZIP {
     private static func crc(_ data:Data) -> UInt32 {
         data.withUnsafeBytes { buffer in UInt32(crc32(0,buffer.bindMemory(to:UInt8.self).baseAddress,uInt(buffer.count))) }
     }
-    private static func extraFields(_ data:Data,rawName:Data) throws -> (unicodeName:String?,ids:Set<UInt16>) {
+    private static func extraFields(_ data:Data,rawName:Data,permitsReservedSizeField:Bool = false) throws -> (unicodeName:String?,ids:Set<UInt16>) {
         let bytes = ExtensionBytes(data:data); var offset = 0, seen = Set<UInt16>(), name:String?
         while offset < data.count {
             let id = try bytes.u16(offset), size = Int(try bytes.u16(offset + 2)); offset += 4
             let value = try bytes.slice(offset,size); offset += size
-            guard seen.insert(id).inserted, id != 0x0001, id != 0x9901 else { throw invalid("ambiguous, ZIP64 or encrypted extra fields") }
+            guard seen.insert(id).inserted, id != 0x9901 else { throw invalid("ambiguous or encrypted extra fields") }
+            if id == 0x0001 {
+                guard permitsReservedSizeField, size == 16, value.allSatisfy({ $0 == 0 }) else { throw invalid("unsupported ZIP64 extra field") }
+            }
             if id == 0x7075 {
                 let field = ExtensionBytes(data:value)
                 guard value.count > 5, value.first == 1, try field.u32(1) == crc(rawName), let decoded = String(data:try field.slice(5,value.count - 5),encoding:.utf8) else { throw invalid("invalid Unicode path extra field") }

@@ -122,17 +122,32 @@ public enum ExtensionPackage {
     }
     private static func stagedPackage(_ entries:[ExtensionZIPEntry],stagingRoot:URL,source:ExtensionSourceKind,signerID:String?,storeID:String?,publisherVerified:Bool) throws -> PreparedExtensionPackage {
         try Task.checkCancellation()
-        let manifest = try inspectedManifest(entries)
-        let digest = fingerprint(entries)
+        let resources = source == .folder ? entries : resourcesAtManifestRoot(entries)
+        let manifest = try inspectedManifest(resources)
+        let digest = fingerprint(resources)
         let parent = try ExtensionDirectory(url:stagingRoot,create:true,owned:true), name = UUID().uuidString
         let stage = try parent.child(name,create:true,exclusive:true)
         let registration = parent.registryID + "/" + name; ExtensionStageActivity.shared.add(registration)
         do {
-            try write(entries,to:stage)
+            try write(resources,to:stage)
             try parent.verifyPath(); try stage.verifyPath()
             return PreparedExtensionPackage(manifest:manifest,digest:digest,source:source,parent:parent,name:name,directory:stage,signerID:signerID,storeID:storeID,publisherVerified:publisherVerified)
         } catch {
             try? parent.remove(name,matching:stage); ExtensionStageActivity.shared.remove(registration); throw error
+        }
+    }
+    private static func resourcesAtManifestRoot(_ entries:[ExtensionZIPEntry]) -> [ExtensionZIPEntry] {
+        guard !entries.contains(where: { !$0.isDirectory && $0.path == "manifest.json" }),
+              let root = entries.first?.path.split(separator: "/", maxSplits: 1).first else { return entries }
+        let folder = String(root)
+        let prefix = (folder + "/").utf8
+        guard entries.contains(where: { !$0.isDirectory && $0.path == folder + "/manifest.json" }),
+              entries.allSatisfy({ ($0.isDirectory && $0.path == folder) || $0.path.utf8.starts(with: prefix) })
+        else { return entries }
+        return entries.compactMap { entry in
+            guard entry.path != folder else { return nil }
+            return ExtensionZIPEntry(path: String(decoding: entry.path.utf8.dropFirst(prefix.count), as: UTF8.self),
+                                     isDirectory: entry.isDirectory, data: entry.data)
         }
     }
     public static func publish(_ package:PreparedExtensionPackage,profileID:UUID,extensionID:UUID,packagesRoot:URL) throws -> InstalledExtensionPackage {

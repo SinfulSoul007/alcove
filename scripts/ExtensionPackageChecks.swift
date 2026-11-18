@@ -121,6 +121,26 @@ import BrowserCore
     let zipped = try ExtensionPackage.prepare(at:zip,stagingRoot:stage)
     check(zipped.source == .zip && zipped.digest == prepared.digest,"Folder and ZIP copies of identical resources use the same deterministic content digest")
     try zipped.discard()
+    var wrapper = OwnedZIPFile()
+    wrapper.name = "extension/"
+    wrapper.contents = Data()
+    wrapper.checksum = 0
+    wrapper.mode = 0o040755 << 16
+    var wrappedManifest = archiveManifest, wrappedCode = archiveCode
+    wrappedManifest.name = "extension/manifest.json"
+    wrappedCode.name = "extension/content.js"
+    try ownedZIP([wrapper, wrappedManifest, wrappedCode]).write(to: zip)
+    let wrapped = try? ExtensionPackage.prepare(at: zip, stagingRoot: stage)
+    let stagedCode = wrapped.map { $0.stagingURL.appendingPathComponent("content.js") }
+    check(wrapped?.digest == prepared.digest && stagedCode.flatMap { try? Data(contentsOf: $0) } == archiveCode.contents,
+          "A single archived extension folder imports as the same verified resource tree")
+    try wrapped?.discard()
+    var otherRootManifest = archiveManifest
+    otherRootManifest.name = "other/manifest.json"
+    try ownedZIP([wrapper, wrappedManifest, wrappedCode, otherRootManifest]).write(to: zip)
+    check(rejected { _ = try ExtensionPackage.prepare(at: zip, stagingRoot: stage) }, "An archive with competing extension roots is rejected")
+    try ownedZIP([wrapper, wrappedManifest, wrappedCode, archiveCode]).write(to: zip)
+    check(rejected { _ = try ExtensionPackage.prepare(at: zip, stagingRoot: stage) }, "A wrapped extension cannot hide sibling files outside its package root")
     var retainedLibrary = BrowserLibrary()
     retainedLibrary.extensions = [BrowserExtensionRecord(id:id,name:"Retained",version:"1",manifestVersion:3,packageDigest:prepared.digest,source:.folder)]
     let activePreview = try ExtensionPackage.prepare(at:source,stagingRoot:stage)
