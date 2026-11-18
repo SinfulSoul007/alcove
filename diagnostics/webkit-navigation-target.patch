@@ -239,10 +239,10 @@ index 2c77ebf57eb0b45f77e8f93750e9aacef69d95af..2102c95fa4a0ebf53eba76886a5ed3a5
          if (openerAppInitiatedState)
              newPage->m_lastNavigationWasAppInitiated = *openerAppInitiatedState;
          RefPtr openedMainFrame = newPage->m_mainFrame ? newPage->m_mainFrame->opener() : nullptr;
-diff --git a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigation.idl b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigation.idl
+diff --git a/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIWebNavigation.idl b/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIWebNavigation.idl
 index c8414b661d888d42fafc0dec85a28ec3c40e5ec8..d3570e9fbf0bd375302f7acc72ef117b0186cc00 100644
---- a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigation.idl
-+++ b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIWebNavigation.idl
+--- a/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIWebNavigation.idl
++++ b/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIWebNavigation.idl
 @@ -31,6 +31,7 @@
 
      readonly attribute WebExtensionAPIWebNavigationEvent onBeforeNavigate;
