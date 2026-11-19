@@ -1,0 +1,153 @@
+diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionMenuItemCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionMenuItemCocoa.mm
+index 1d582aa..bb5dfa8 100644
+--- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionMenuItemCocoa.mm
++++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionMenuItemCocoa.mm
+@@ -134,6 +134,8 @@ + (BOOL)usesUserKeyEquivalents
+         for (auto& patternString : parameters.targetURLPatterns.value()) {
+             if (RefPtr pattern = WebExtensionMatchPattern::getOrCreate(patternString))
+                 m_targetPatterns.add(pattern.releaseNonNull());
++            else if (WebExtensionMatchPattern::isValidOpaqueMenuTargetPattern(patternString) && !m_opaqueTargetPatterns.contains(patternString))
++                m_opaqueTargetPatterns.append(patternString);
+         }
+     }
+ }
+@@ -227,10 +229,13 @@ + (BOOL)usesUserKeyEquivalents
+
+     if (parameters.targetURLPatterns) {
+         m_targetPatterns.clear();
++        m_opaqueTargetPatterns.clear();
+
+         for (auto& patternString : parameters.targetURLPatterns.value()) {
+             if (RefPtr pattern = WebExtensionMatchPattern::getOrCreate(patternString))
+                 m_targetPatterns.add(pattern.releaseNonNull());
++            else if (WebExtensionMatchPattern::isValidOpaqueMenuTargetPattern(patternString) && !m_opaqueTargetPatterns.contains(patternString))
++                m_opaqueTargetPatterns.append(patternString);
+         }
+     }
+ }
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionMatchPattern.cpp b/Source/WebKit/UIProcess/Extensions/WebExtensionMatchPattern.cpp
+index 9e9f8d3..fd4b71a 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionMatchPattern.cpp
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionMatchPattern.cpp
+@@ -360,6 +360,31 @@ bool WebExtensionMatchPattern::isValidScheme(String scheme)
+     return !scheme.isEmpty() && validSchemes().contains(scheme);
+ }
+
++bool WebExtensionMatchPattern::isValidOpaqueMenuTargetPattern(const String& pattern)
++{
++    auto separator = pattern.find(':');
++    if (!separator || separator == notFound || separator + 1 == pattern.length() || pattern.contains("://"_s))
++        return false;
++
++    auto scheme = URLParser::maybeCanonicalizeScheme(pattern.left(separator));
++    return scheme && !URLParser::isSpecialScheme(scheme.value()) && !extensionSchemes().contains(scheme.value());
++}
++
++bool WebExtensionMatchPattern::opaqueMenuTargetPatternMatchesURL(const String& pattern, const URL& url)
++{
++    if (!url.isValid() || !isValidOpaqueMenuTargetPattern(pattern))
++        return false;
++
++    auto separator = pattern.find(':');
++    auto scheme = URLParser::maybeCanonicalizeScheme(pattern.left(separator));
++    if (!url.protocolIs(scheme.value()))
++        return false;
++
++    // Include the query, keep '?' literal, and omit the fragment.
++    auto target = url.stringWithoutFragmentIdentifier();
++    return matchesWildcardPattern(pattern.substring(separator + 1), target.substring(url.protocol().length() + 1));
++}
++
+ bool WebExtensionMatchPattern::matchesURL(const URL& urlToMatch, OptionSet<Options> options) const
+ {
+     ASSERT(!options.contains(Options::MatchBidirectionally));
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionMatchPattern.h b/Source/WebKit/UIProcess/Extensions/WebExtensionMatchPattern.h
+index f0452a9..6be81b9 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionMatchPattern.h
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionMatchPattern.h
+@@ -98,6 +98,10 @@ public:
+     static void registerCustomURLScheme(String);
+     static bool isWebExtensionURL(const URL&);
+
++    // Opaque targets are menu filters, never permission or document patterns.
++    static bool isValidOpaqueMenuTargetPattern(const String&);
++    static bool opaqueMenuTargetPatternMatchesURL(const String&, const URL&);
++
+     bool operator==(const WebExtensionMatchPattern&) const;
+
+     bool isValid() const { return m_valid; }
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionMenuItem.cpp b/Source/WebKit/UIProcess/Extensions/WebExtensionMenuItem.cpp
+index ab444cf..8366e24 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionMenuItem.cpp
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionMenuItem.cpp
+@@ -100,6 +100,21 @@ bool WebExtensionMenuItem::matches(const WebExtensionMenuItemContextParameters&
+         return false;
+     };
+
++    auto matchesTargetPattern = [&](const URL& url) {
++        if (url.isNull() || (targetPatterns().isEmpty() && m_opaqueTargetPatterns.isEmpty()))
++            return true;
++
++        if (WebExtensionMatchPattern::patternsMatchURL(targetPatterns(), url))
++            return true;
++
++        for (auto& pattern : m_opaqueTargetPatterns) {
++            if (WebExtensionMatchPattern::opaqueMenuTargetPatternMatchesURL(pattern, url))
++                return true;
++        }
++
++        return false;
++    };
++
+     auto matchesPattern = [&](const auto& patterns, const URL& url) {
+         if (url.isNull() || patterns.isEmpty())
+             return true;
+@@ -121,15 +136,14 @@ bool WebExtensionMenuItem::matches(const WebExtensionMenuItemContextParameters&
+         return true;
+     }
+
+-    if (matchesType(ContextType::Link)) {
+-        ASSERT(!contextParameters.linkURL.isNull());
+-        if (!matchesPattern(targetPatterns(), contextParameters.linkURL))
+-            return false;
+-    }
+-
+-    if (matchesType({ ContextType::Image, ContextType::Video, ContextType::Audio })) {
+-        ASSERT(!contextParameters.sourceURL.isNull());
+-        if (!matchesPattern(targetPatterns(), contextParameters.sourceURL))
++    bool hasLinkContext = matchesType(ContextType::Link);
++    bool hasMediaContext = matchesType({ ContextType::Image, ContextType::Video, ContextType::Audio });
++    if (hasLinkContext || hasMediaContext) {
++        ASSERT(!hasLinkContext || !contextParameters.linkURL.isNull());
++        ASSERT(!hasMediaContext || !contextParameters.sourceURL.isNull());
++        bool linkMatches = hasLinkContext && matchesTargetPattern(contextParameters.linkURL);
++        bool mediaMatches = hasMediaContext && matchesTargetPattern(contextParameters.sourceURL);
++        if (!linkMatches && !mediaMatches)
+             return false;
+     }
+
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionMenuItem.h b/Source/WebKit/UIProcess/Extensions/WebExtensionMenuItem.h
+index 1fb2b5a..62c6672 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionMenuItem.h
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionMenuItem.h
+@@ -149,6 +149,7 @@ private:
+
+     WebExtension::MatchPatternSet m_documentPatterns;
+     WebExtension::MatchPatternSet m_targetPatterns;
++    Vector<String> m_opaqueTargetPatterns;
+     OptionSet<WebExtensionMenuItemContextType> m_contexts;
+
+     WeakPtr<WebExtensionMenuItem> m_parentMenuItem;
+diff --git a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIMenusCocoa.mm b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIMenusCocoa.mm
+index 7c32286..914d784 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIMenusCocoa.mm
++++ b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIMenusCocoa.mm
+@@ -209,7 +209,7 @@ static id toMenuIdentifierWebAPI(const String& identifier)
+             auto pattern = WebExtensionMatchPattern::getOrCreate(patternString);
+
+             // Any valid pattern is allowed, not just supported schemes.
+-            if (!pattern || !pattern->isValid()) {
++            if ((!pattern || !pattern->isValid()) && !WebExtensionMatchPattern::isValidOpaqueMenuTargetPattern(patternString)) {
+                 *outExceptionString = toErrorString(nullString(), targetURLPatternsKey, makeString("'"_s, String(patternString), "' is not a valid pattern"_s)).createNSString().autorelease();
+                 return false;
+             }

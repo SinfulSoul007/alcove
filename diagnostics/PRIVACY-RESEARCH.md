@@ -12,10 +12,18 @@ It supports callbacks, promises, extension installation precedence, and all four
 ChromeSetting scopes. Private session lifetime follows actual private windows.
 The per-page overlay preserves the embedder's shared WKPreferences object.
 
-The last patch adds WebKit's typed allocator annotations to the pending navigation
+The allocator patch adds WebKit's typed allocator annotations to the pending navigation
 target and effective preferences store. The former produced the concrete
 `WTFIsFastMallocAllocated` compile error in run 44363135515; both are heap-allocated
 with WTF::makeUnique in this series.
+
+The menu-target patch separately accepts opaque URI targets such as `abp:*` only
+for extension menus. Native menu items retain these separately from structured
+patterns, replace both sets on update, and match either set for link/media targets.
+General host, document and content-script patterns keep their existing parser.
+The native Swift probe opens and closes actual context menus and checks creation,
+matching, click delivery, updates, removal and unchanged grants. Stock WebKit is
+an expected negative; changed-engine runtime behavior remains a qualification gate.
 
 The standalone Swift probe requires the changed framework, observes real loopback
 audit requests, checks shared-preference/controller isolation, tests scope and
