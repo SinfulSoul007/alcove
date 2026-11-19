@@ -107,6 +107,7 @@ import BrowserCore
             }
         }.padding(24).frame(width:600,height:min(620,max(300,availableHeight)))
             .tint(store.activeTheme.accent).preferredColorScheme(store.activeTheme.isDark ? .dark : .light)
+            .background(BrowserSheetQuitPolicy(preventsTermination: editor.isDirty))
     }
     private func destinations(selection: Binding<LinkDestination>) -> some View {
         Picker("Open in",selection:selection) {

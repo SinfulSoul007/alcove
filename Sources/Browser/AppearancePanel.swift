@@ -8,6 +8,7 @@ struct AppearancePanel: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var nameDraft = ""
     @State private var editedSpaceID: UUID?
+    private var hasUnsavedName: Bool { editedSpaceID == store.space.id && nameDraft != store.space.name }
     private func loadName() { nameDraft = store.space.name; editedSpaceID = store.space.id }
     private func saveName() {
         guard editedSpaceID == store.space.id,let id = editedSpaceID else { return }
@@ -92,6 +93,7 @@ struct AppearancePanel: View {
                 }.padding(24)
             }
         }.frame(width: 720, height: min(640, max(360, availableHeight))).onAppear(perform:loadName).onChange(of:store.space.id) { _,_ in loadName() }
+            .background(BrowserSheetQuitPolicy(preventsTermination: hasUnsavedName))
     }
     private var motion: Animation? { store.appearance.animationsEnabled && !reduceMotion ? .easeInOut(duration: 0.2) : nil }
     private func appearanceBinding<Value>(_ path: WritableKeyPath<AppearanceSettings, Value>) -> Binding<Value> {

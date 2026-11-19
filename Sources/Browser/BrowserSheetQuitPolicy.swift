@@ -72,9 +72,12 @@ struct BrowserSheetQuitPolicy: NSViewRepresentable {
             super.viewDidMoveToWindow()
             stopObserving()
             guard active, let window else { releaseLease(); return }
-            for (name, object) in [(NSWindow.willBeginSheetNotification, nil), (NSWindow.didBecomeKeyNotification, window)] {
+            for (name, object) in [(NSWindow.willBeginSheetNotification, nil), (NSWindow.didBecomeKeyNotification, window), (NSWindow.didEndSheetNotification, nil)] {
                 observations.append(NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.scheduleApply() }
+                    MainActor.assumeIsolated {
+                        if name == NSWindow.didEndSheetNotification { self?.apply() }
+                        self?.scheduleApply()
+                    }
                 })
             }
             // SwiftUI may attach the native view before it attaches the sheet to its parent.

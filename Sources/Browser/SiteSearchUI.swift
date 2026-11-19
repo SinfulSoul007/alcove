@@ -31,6 +31,12 @@ struct SiteSearchPill: View {
     @State private var advertisement: AdvertisedSiteSearch?
     @State private var discoveryTask: Task<Void, Never>?
     private var scale: Double { store.appearance.textScale }
+    private var hasUnsavedDraft: Bool {
+        if let editingID, let saved = store.siteSearchCatalog.entries.first(where: { $0.id == editingID }) {
+            return name != saved.name || keyword != saved.keyword || template != saved.template
+        }
+        return !name.isEmpty || !keyword.isEmpty || !template.isEmpty
+    }
     var body: some View {
         let page = store.siteSearchDiscoveryPage
         VStack(alignment: .leading, spacing: 16) {
@@ -102,6 +108,7 @@ struct SiteSearchPill: View {
             }
         }.padding(24).frame(width: 600, height: min(620, max(360, availableHeight)))
             .tint(store.activeTheme.accent).preferredColorScheme(store.activeTheme.isDark ? .dark : .light)
+            .background(BrowserSheetQuitPolicy(preventsTermination: hasUnsavedDraft))
             .task(id: page) {
                 advertisement = nil
                 discoveryTask?.cancel()

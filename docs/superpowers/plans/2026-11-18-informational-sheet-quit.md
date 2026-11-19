@@ -28,7 +28,7 @@
 
 **Files:** create `Sources/Browser/BrowserSheetQuitPolicy.swift`, `scripts/BrowserSheetQuitChecks.swift`; modify `Sources/Browser/BrowserUI.swift` and `scripts/build.sh`.
 
-**Interfaces:** `BrowserSheetQuitPolicy(preventsTermination: Bool)` as a sheet-local `NSViewRepresentable`; a main-actor Host manages an original-value lease per native sheet. BrowserPanel policy allows all actual sheet panels except Boosts; spaces is not a sheet.
+**Interfaces:** `BrowserSheetQuitPolicy(preventsTermination: Bool)` as a sheet-local `NSViewRepresentable`; a main-actor Host manages an original-value lease per native sheet. BrowserPanel policy allows clean informational panels; child editors in LinkRoutingUI, SiteSearchUI and AppearancePanel protect their actual unsaved draft. Boosts stays protected; spaces is not a sheet.
 
 - [ ] Add actual BrowserUI Library/Settings sheet regression checks. Call actual AppDelegate.quit with a cancelling NSApplication delegate; expect the delegate to be consulted and the sheet to remain open.
 - [ ] Run native fixture before implementation; expect actual default policy to block these consultations. Compile/type errors do not count as RED.

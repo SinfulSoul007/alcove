@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import BrowserCore
+import CryptoKit
 
 @MainActor final class SheetQuitAudit: NSObject, NSApplicationDelegate {
     var consultations = 0
@@ -122,6 +123,16 @@ import BrowserCore
         check(sheet.preventsApplicationTerminationWhenModal && window.preventsApplicationTerminationWhenModal == parentPolicy, "Reparenting restores the old sheet and leaves the regular window unchanged")
         moved.removeFromSuperview()
         check(first.hitTest(.zero) == nil, "Policy bridge remains transparent to pointer input")
+        let retained = BrowserSheetQuitPolicy.Host(preventsTermination: false); container.addSubview(retained)
+        _ = await until { !sheet.preventsApplicationTerminationWhenModal }
+        window.endSheet(sheet); sheet.orderOut(nil)
+        _ = await until { sheet.sheetParent == nil && sheet.preventsApplicationTerminationWhenModal }
+        check(sheet.sheetParent == nil && sheet.preventsApplicationTerminationWhenModal, "Ending a native sheet restores its original policy while the bridge remains installed")
+        window.beginSheet(sheet, completionHandler: { _ in })
+        _ = await until { sheet.sheetParent === window && !sheet.preventsApplicationTerminationWhenModal }
+        check(sheet.sheetParent === window && !sheet.preventsApplicationTerminationWhenModal, "Re-presenting the same native sheet reacquires its informational policy")
+        retained.removeFromSuperview()
+        check(sheet.preventsApplicationTerminationWhenModal, "A re-presented native sheet still restores the true original policy")
         window.endSheet(sheet); sheet.orderOut(nil)
         _ = await until { sheet.sheetParent == nil }
         sheet.close()
@@ -137,6 +148,89 @@ import BrowserCore
         window.endSheet(originallyAllowed); originallyAllowed.orderOut(nil)
         _ = await until { originallyAllowed.sheetParent == nil }
         originallyAllowed.contentView = nil; originallyAllowed.close()
+        // Editable normal-window forms catch draft loss that a disabled private form cannot expose.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("Alcove.SheetDrafts.\(UUID().uuidString)")
+        let key = SymmetricKey(size: .bits256)
+        let normal = BrowserStore(dataRoot: root, keyProvider: { _ in key })
+        normal.onboardingVisible = false
+        var normalAppearance = normal.appearance; normalAppearance.animationsEnabled = false; normal.appearance = normalAppearance
+        defer { normal.shutdown(); try? FileManager.default.removeItem(at: root) }
+        check(normal.canEditLinkRules && normal.canEditSiteSearches, "Owned normal-window fixture enables the real route and shortcut editors")
+        let normalWindow = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1000, height: 760), styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        normalWindow.isReleasedWhenClosed = false
+        let normalHost = NSHostingView(rootView: BrowserUI(store: normal, sidebarDefaults: defaults).environmentObject(UpdateController(installedTag: "draft-quit-fixture")))
+        normalHost.sizingOptions = []; normalHost.safeAreaRegions = []; normalWindow.contentView = normalHost
+        let normalDelegate = AppDelegate(); normalDelegate.windows[normalWindow] = normal
+        defer {
+            normalDelegate.windows.removeAll()
+            if let sheet = normalWindow.attachedSheet { normalWindow.endSheet(sheet); sheet.orderOut(nil) }
+            normalWindow.contentView = nil; normalWindow.close()
+        }
+        normalWindow.makeKeyAndOrderFront(nil)
+        func fields(_ view: NSView) -> [NSTextField] { (view as? NSTextField).map { [$0] } ?? view.subviews.flatMap(fields) }
+        func edit(_ sheet: NSWindow, placeholder: String, value: String) async -> Bool {
+            guard let content = sheet.contentView,
+                  let field = fields(content).first(where: { $0.placeholderString == placeholder && $0.isEditable && $0.isEnabled }),
+                  sheet.makeFirstResponder(field), let editor = field.currentEditor() as? NSTextView else {
+                print("FIXTURE_ERROR: Editable native field unavailable", placeholder, sheet.contentView.map { fields($0).map { $0.placeholderString ?? "" } } ?? [])
+                return false
+            }
+            editor.insertText(value, replacementRange: NSRange(location: 0, length: (editor.string as NSString).length))
+            return await until { field.stringValue == value }
+        }
+        func submit(_ sheet: NSWindow, placeholder: String) async -> Bool {
+            guard let content = sheet.contentView,
+                  let field = fields(content).first(where: { $0.placeholderString == placeholder && $0.isEditable && $0.isEnabled }),
+                  sheet.makeFirstResponder(field), let editor = field.currentEditor() as? NSTextView,
+                  let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: sheet.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36) else {
+                print("FIXTURE_ERROR: Native submit field unavailable", placeholder); return false
+            }
+            // These three real fields already submit the same Save action on Return.
+            editor.keyDown(with: event)
+            try? await Task.sleep(for: .milliseconds(100))
+            return true
+        }
+        for panel: BrowserPanel in [.links, .siteSearch, .appearance] {
+            normal.presentedPanel = panel
+            guard await until({ normalWindow.attachedSheet?.preventsApplicationTerminationWhenModal == false }), let sheet = normalWindow.attachedSheet else {
+                check(false, "Clean normal \(panel.rawValue) editor allows Quit"); return 1
+            }
+            sheet.orderFront(nil)
+            check(sheet.sheetParent === normalWindow && sheet.isVisible, "Actual editable \(panel.rawValue) sheet is presented before draft testing")
+            let placeholder = panel == .links ? "example.com or part of a URL" : panel == .siteSearch ? "YouTube" : "Space name"
+            let value = panel == .links ? "owned-link-quit.example" : panel == .siteSearch ? "Owned quit shortcut" : "Owned renamed Space"
+            guard await edit(sheet, placeholder: placeholder, value: value) else { check(false, "Native \(panel.rawValue) draft editing works"); return 1 }
+            _ = await until { sheet.preventsApplicationTerminationWhenModal }
+            check(sheet.preventsApplicationTerminationWhenModal, "Unsaved \(panel.rawValue) native form protects its draft from Quit")
+            let beforeDirty = audit.consultations; normalDelegate.quit()
+            check(audit.consultations == beforeDirty, "Quit preserves the unsaved \(panel.rawValue) draft before termination is admitted")
+            if panel == .links {
+                guard await submit(sheet, placeholder: "example.com or part of a URL") else { return 1 }
+                check(normal.linkRuleCatalog.entries.contains(where: { $0.pattern == value }), "Real route Save commits the text entered in the native editor")
+            } else if panel == .siteSearch {
+                guard await edit(sheet, placeholder: "yt", value: "qxowned"),
+                      await edit(sheet, placeholder: "https://example.com/search?q=%s", value: "http://127.0.0.1:9/search?q=%s"),
+                      await submit(sheet, placeholder: "https://example.com/search?q=%s") else { return 1 }
+                check(normal.siteSearchCatalog.entries.contains(where: { $0.name == value && $0.keyword == "qxowned" }), "Real shortcut Save commits the native form draft")
+            } else {
+                guard await submit(sheet, placeholder: "Space name") else { return 1 }
+                check(normal.space.name == value, "Real Space-name Save commits the native form draft")
+            }
+            _ = await until { !sheet.preventsApplicationTerminationWhenModal }
+            check(!sheet.preventsApplicationTerminationWhenModal, "Saving \(panel.rawValue) clears draft protection")
+            guard await edit(sheet, placeholder: placeholder, value: "Owned draft to discard") else { return 1 }
+            _ = await until { sheet.preventsApplicationTerminationWhenModal }
+            check(sheet.preventsApplicationTerminationWhenModal, "A new \(panel.rawValue) edit after Save protects its new draft")
+            guard await edit(sheet, placeholder: placeholder, value: panel == .appearance ? normal.space.name : "") else { return 1 }
+            // Returning to the saved/empty value is an explicit native edit that discards the local draft.
+            _ = await until { !sheet.preventsApplicationTerminationWhenModal }
+            check(!sheet.preventsApplicationTerminationWhenModal, "Discarding the \(panel.rawValue) draft leaves the panel nonblocking")
+            let afterDiscard = audit.consultations; normalDelegate.quit()
+            check(audit.consultations == afterDiscard + 1, "A clean editable \(panel.rawValue) panel restores the native Quit decision after save or discard")
+            normal.presentedPanel = nil
+            guard await until({ normalWindow.attachedSheet == nil }) else { check(false, "Normal editor dismisses"); return 1 }
+        }
         print("BROWSER_SHEET_QUIT_FAILURES", failures)
         return failures == 0 ? 0 : 1
     }
