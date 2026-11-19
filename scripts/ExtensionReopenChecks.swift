@@ -71,6 +71,7 @@ enum OwnedExtensionReopenError:Error {case missingFixture,timedOut}
             try results[0].get()
             guard var enabled = client.views[tabID] else {throw OwnedExtensionReopenError.missingFixture}
             window.contentView = enabled;try await ready(enabled,url)
+            check((try await enabled.evaluateJavaScript("typeof requestIdleCallback")) as? String == "function","A confirmed private reopen retains the browser's native idle API")
             let enabledState = try await enabled.evaluateJavaScript("document.documentElement.dataset.ownedReopen === 'approved' && document.cookie.includes('owned_reopen_cookie=private') && document.getElementById('owned-form').value === ''") as? Bool
             check(enabled !== web && enabled.configuration.userContentController !== oldUCC && enabled.configuration.websiteDataStore === client.privateDataStore && enabledState == true,"Confirmed reopen uses a fresh controller and real approved injection while retaining only the private website store")
             let after = try canonical(normal.makeDocument())

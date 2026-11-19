@@ -207,6 +207,7 @@ final class OwnedExtensionKeyGate:@unchecked Sendable {
             let popupWeb = store.createPopup(from:quickWeb,configuration:popupConfiguration)!
             let popupURL = fixture.appending(queryItems:[URLQueryItem(name:"phase",value:"quick-popup")])
             popupWeb.load(URLRequest(url:popupURL));try await ready(popupWeb,popupURL)
+            check((try await popupWeb.evaluateJavaScript("typeof requestIdleCallback")) as? String == "function","A Quick Browse popup receives the browser's native idle API on its supplied configuration")
             check(await marker(popupWeb) == "mv2" && store.quickContext(for:popupWeb)?.profileID == other,"Popup creation wires the supplied Quick configuration to its actual owning account")
             let peekURL = fixture.appending(queryItems:[URLQueryItem(name:"phase",value:"peek")])
             store.openPeek(peekURL,from:quickWeb)

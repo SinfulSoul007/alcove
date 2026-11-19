@@ -125,6 +125,7 @@ run_extension_runtime_checks() {
     if [[ "$extension_check_name" == "reopen" ]]; then extension_check_source="scripts/ExtensionReopenChecks.swift"; fi
     if [[ "$extension_check_name" == "surface" ]]; then extension_check_source="scripts/ExtensionSurfaceChecks.swift"; fi
     if [[ "$extension_check_name" == "erasure" ]]; then extension_check_source="scripts/ExtensionErasureChecks.swift"; fi
+    if [[ "$extension_check_name" == "idle" ]]; then extension_check_source="scripts/ExtensionIdleChecks.swift"; fi
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" "$extension_check_source" scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$MANUAL/extension-$extension_check_name-checks"
     local extension_port_file extension_fixture_pid
     extension_port_file="$(mktemp "$MANUAL/extension-port.XXXXXX")"
@@ -140,6 +141,7 @@ run_extension_runtime_checks() {
     trap - EXIT
 }
 if [[ "${1:-}" == "extension-runtime-test" ]]; then run_extension_runtime_checks; exit; fi
+if [[ "${1:-}" == "extension-idle-test" ]]; then run_extension_runtime_checks idle; exit; fi
 if [[ "${1:-}" == "extension-navigation-test" ]]; then run_extension_runtime_checks navigation; exit; fi
 if [[ "${1:-}" == "extension-adapter-test" ]]; then run_extension_runtime_checks adapter; exit; fi
 if [[ "${1:-}" == "extension-multi-window-test" ]]; then run_extension_runtime_checks multi-window; exit; fi
@@ -358,6 +360,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_extension_store_checks
     run_extension_ui_checks
     run_extension_runtime_checks
+    run_extension_runtime_checks idle
     run_extension_runtime_checks navigation
     run_extension_runtime_checks adapter
     run_extension_runtime_checks multi-window

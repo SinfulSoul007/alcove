@@ -48,6 +48,7 @@ import BrowserCore
         let configuration = WKWebExtensionController.Configuration(identifier:controllerID)
         configuration.defaultWebsiteDataStore = dataStore
         let background = WKWebViewConfiguration(); background.websiteDataStore = dataStore
+        BrowserWebPreferences.enableIdleCallbacks(in:background.preferences)
         background.userContentController = contentController
         configuration.webViewConfiguration = background
         controller = WKWebExtensionController(configuration:configuration)

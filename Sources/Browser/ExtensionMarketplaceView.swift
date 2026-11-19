@@ -41,6 +41,7 @@ final class ExtensionMarketplaceBrowser: NSObject, ObservableObject, WKNavigatio
     override init() {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        BrowserWebPreferences.enableIdleCallbacks(in:configuration.preferences)
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()

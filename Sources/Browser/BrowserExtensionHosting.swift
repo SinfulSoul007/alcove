@@ -73,6 +73,7 @@ extension BrowserStore {
         let host=UnavailableBrowserExtensionHost(owner:self);extensionHosting=host;return host
     }
     func configureExtensions(_ configuration:WKWebViewConfiguration,profileID:UUID?) {
+        BrowserWebPreferences.enableIdleCallbacks(in:configuration.preferences)
         if let privateUserContentController {configuration.userContentController = privateUserContentController}
         if #available(macOS 15.4,*) {configuration.webExtensionController = nil}
         guard let profileID, !profileUnavailable(profileID), let host = ensureExtensionHost() else {return}

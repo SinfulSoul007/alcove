@@ -117,6 +117,7 @@ enum OwnedExtensionSurfaceError:Error {case missingFixture,timedOut}
                 let website = try await peekReady(store,destination);window.contentView = website
                 let privileged = try await website.callAsyncJavaScript("try{await browser.storage.local.get();return true}catch{return false}",arguments:[:],in:nil,contentWorld:.page) as? Bool
                 check(website !== specialized && privileged == false && store.peekPages[.primary]?.id == pageID,"An actual link out of the extension Peek creates an ordinary website view without extension storage authority")
+                check((try await website.evaluateJavaScript("typeof requestIdleCallback")) as? String == "function","An extension-to-website Peek transition retains the native idle API")
             } catch {check(false,"Owned Peek origin transition failed: " + error.localizedDescription)}
             store.closeAllPeeks();window.contentView = web
             let after = try canonical(store.makeDocument()),form = try await web.evaluateJavaScript("document.getElementById('owned-form').value === 'keep website surface'") as? Bool
