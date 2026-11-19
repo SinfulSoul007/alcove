@@ -1,0 +1,105 @@
+diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
+index 5e29ddcda29299817016a54cbbbde99dfb8ea383..6bb2cb94f9a74a7e7ffdf003ed7de8cad9f2f1d6 100644
+--- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
++++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
+@@ -192,6 +192,21 @@ static String privacyBaselineSignature(WKPreferences *preferences)
+     updatePrivacySettings();
+ }
+ 
++static void applyPrivacySettingsToPage(WebExtensionController& controller, WebPageProxy& page, WebPageProxy::NotifyPrivacyChange notify)
++{
++    bool incognito = !page.websiteDataStore().isPersistent();
++    std::optional<bool> prediction;
++    std::optional<bool> auditing;
++    String rtcPolicy;
++    if (auto *winner = controller.privacySettingController(@"networkPredictionEnabled", incognito))
++        prediction = winner->privacyValue(@"networkPredictionEnabled", incognito) == "true"_s;
++    if (auto *winner = controller.privacySettingController(@"hyperlinkAuditingEnabled", incognito))
++        auditing = winner->privacyValue(@"hyperlinkAuditingEnabled", incognito) == "true"_s;
++    if (auto *winner = controller.privacySettingController(@"webRTCIPHandlingPolicy", incognito))
++        rtcPolicy = winner->privacyValue(@"webRTCIPHandlingPolicy", incognito);
++    page.setExtensionPrivacyPreferences(prediction, auditing, WTF::move(rtcPolicy), notify);
++}
++
+ void WebExtensionController::updatePrivacySettings()
+ {
+     if (m_updatingPrivacySettings) {
+@@ -206,19 +221,8 @@ static String privacyBaselineSignature(WKPreferences *preferences)
+             for (Ref context : m_extensionContexts)
+                 context->clearPrivateSessionPrivacySettings();
+         }
+-        for (Ref page : m_pages) {
+-            bool incognito = !page->websiteDataStore().isPersistent();
+-            std::optional<bool> prediction;
+-            std::optional<bool> auditing;
+-            String rtcPolicy;
+-            if (auto *winner = privacySettingController(@"networkPredictionEnabled", incognito))
+-                prediction = winner->privacyValue(@"networkPredictionEnabled", incognito) == "true"_s;
+-            if (auto *winner = privacySettingController(@"hyperlinkAuditingEnabled", incognito))
+-                auditing = winner->privacyValue(@"hyperlinkAuditingEnabled", incognito) == "true"_s;
+-            if (auto *winner = privacySettingController(@"webRTCIPHandlingPolicy", incognito))
+-                rtcPolicy = winner->privacyValue(@"webRTCIPHandlingPolicy", incognito);
+-            page->setExtensionPrivacyPreferences(prediction, auditing, WTF::move(rtcPolicy));
+-        }
++        for (Ref page : m_pages)
++            applyPrivacySettingsToPage(*this, page.get(), WebPageProxy::NotifyPrivacyChange::Yes);
+         for (Ref context : m_extensionContexts) {
+             for (NSString *key in @[ @"networkPredictionEnabled", @"hyperlinkAuditingEnabled", @"webRTCIPHandlingPolicy" ]) {
+                 context->firePrivacySettingChangedIfNeeded(key, false);
+@@ -506,6 +510,9 @@ static String privacyBaselineSignature(WKPreferences *preferences)
+ void WebExtensionController::addPage(WebPageProxy& page)
+ {
+     ASSERT(!m_pages.contains(page));
++    // WebPageProxy is still constructing its native view client. Initialize the
++    // overlay before registration, so even reentrant updates cannot notify it.
++    applyPrivacySettingsToPage(*this, page, WebPageProxy::NotifyPrivacyChange::No);
+     m_pages.add(page);
+ 
+     for (auto& entry : m_registeredSchemeHandlers)
+@@ -519,7 +526,6 @@ static String privacyBaselineSignature(WKPreferences *preferences)
+ 
+     Ref controller = page.userContentController();
+     addUserContentController(controller, dataStore->isPersistent() ? ForPrivateBrowsing::No : ForPrivateBrowsing::Yes);
+-    updatePrivacySettings();
+ }
+ 
+ void WebExtensionController::removePage(WebPageProxy& page)
+diff --git a/Source/WebKit/UIProcess/WebPageProxy.cpp b/Source/WebKit/UIProcess/WebPageProxy.cpp
+index 4b2dd01cf6072ffbec9923f1a21fe09076da6848..e1c4ccb7c1026e2ea1371ec457cbc79c4618d5e5 100644
+--- a/Source/WebKit/UIProcess/WebPageProxy.cpp
++++ b/Source/WebKit/UIProcess/WebPageProxy.cpp
+@@ -4558,7 +4558,7 @@ const WebPreferencesStore& WebPageProxy::preferencesStore() const
+     return m_preferences->store();
+ }
+ 
+-void WebPageProxy::setExtensionPrivacyPreferences(std::optional<bool> networkPrediction, std::optional<bool> hyperlinkAuditing, String webRTCIPHandlingPolicy)
++void WebPageProxy::setExtensionPrivacyPreferences(std::optional<bool> networkPrediction, std::optional<bool> hyperlinkAuditing, String webRTCIPHandlingPolicy, NotifyPrivacyChange notify)
+ {
+     if (m_extensionNetworkPrediction == networkPrediction && m_extensionHyperlinkAuditing == hyperlinkAuditing && m_extensionWebRTCIPHandlingPolicy == webRTCIPHandlingPolicy)
+         return;
+@@ -4566,7 +4566,10 @@ void WebPageProxy::setExtensionPrivacyPreferences(std::optional<bool> networkPre
+     m_extensionNetworkPrediction = networkPrediction;
+     m_extensionHyperlinkAuditing = hyperlinkAuditing;
+     m_extensionWebRTCIPHandlingPolicy = WTF::move(webRTCIPHandlingPolicy);
+-    preferencesDidChange();
++    if (notify == NotifyPrivacyChange::Yes)
++        preferencesDidChange();
++    else
++        updateExtensionPrivacyPreferencesStore();
+ }
+ 
+ void WebPageProxy::updateExtensionPrivacyPreferencesStore()
+diff --git a/Source/WebKit/UIProcess/WebPageProxy.h b/Source/WebKit/UIProcess/WebPageProxy.h
+index 379d5b8213ca035f7ae86594bf6539e46ba61369..659e4824a030f53a1145eb20e5b1178cb493e1dc 100644
+--- a/Source/WebKit/UIProcess/WebPageProxy.h
++++ b/Source/WebKit/UIProcess/WebPageProxy.h
+@@ -1836,7 +1836,8 @@ public:
+ #endif
+ 
+     void preferencesDidChange();
+-    void setExtensionPrivacyPreferences(std::optional<bool> networkPrediction, std::optional<bool> hyperlinkAuditing, String webRTCIPHandlingPolicy);
++    enum class NotifyPrivacyChange : bool { No, Yes };
++    void setExtensionPrivacyPreferences(std::optional<bool> networkPrediction, std::optional<bool> hyperlinkAuditing, String webRTCIPHandlingPolicy, NotifyPrivacyChange = NotifyPrivacyChange::Yes);
+ 
+ #if ENABLE(CONTEXT_MENUS)
+     // Called by the WebContextMenuProxy.

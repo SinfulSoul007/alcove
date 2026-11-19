@@ -14,5 +14,5 @@ keyUsage = digitalSignature,keyEncipherment
 extendedKeyUsage = serverAuth
 CONFIG
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -config "$directory/loopback.cnf" \
-    -keyout "$directory/loopback.key" -out "$directory/loopback.pem" 2>/dev/null
+    -keyout "$directory/loopback.key" -out "$directory/loopback.pem"
 openssl x509 -in "$directory/loopback.pem" -outform DER -out "$directory/loopback.der"

@@ -1,0 +1,13 @@
+# Privacy policy during native page construction
+
+A loaded extension's effective privacy policy must apply to a newly created native page without calling a not-yet-initialized macOS view client. Existing pages must continue receiving live preference changes. Keep each page's own preference overlay, profile/private-access rules, precedence, shared preferences and underlying browser baseline intact.
+
+The verified 13-patch runtime at wrapper12c1b30 crashes when full original uBlock Origin is re-enabled. VM753 captured PageClientImpl::preferencesDidChange from WebPageProxy::preferencesDidChange, WebExtensionController::updatePrivacySettings and addPage, during WebPageProxy/WebViewImpl construction. VM755 reproduces the same native stack with an owned minimal privacy extension and a second native page; no browser or uBO implementation is involved. WKWebView's native implementation is assigned only after its constructor returns, while addPage currently calls the client through preferencesDidChange during that constructor.
+
+Initialize the new page's overlay synchronously before it can load, with no view-client notification. Factor the effective-policy calculation into one per-page helper, initialize before addPage registers the page; retain general updates at the existing policy-change sources, and retain ordinary notifications for existing pages. Do not defer initial policy application or suppress future live changes.
+
+The update-event fixture also uses an ephemeral native store. VM754 shows listeners registered but no delivery because the contexts have no private access; WebExtensionContext::processes intentionally excludes ephemeral sessions without that grant. VM756 changes only that fixture grant and passes every event test, including actually unloaded background wake-up. Correct that fixture without weakening engine access checks or real installed-package grants.
+
+CI's earlier verification setup exited without runtime output. VM757 reproduces all three fixture servers and TLS setup successfully. The exact hosted cause is unknown: keep per-stage logs and report failures without silently deleting evidence. Do not claim the hosted failure was fixed from this result.
+
+Completion gates: compile the exact native patch; the second-page native witness succeeds; existing privacy API tests prove actual fresh-page network policy and live changes; update events preserve listener/sibling/unload/wake behavior; the complete engine witnesses pass; original unmodified uBO ZIP and CRX startup/filter/disable/re-enable and integrity checks pass. These are qualification gates, not permission to bundle or publish a runtime. Public app remains stock WebKit until separate distribution/security gates are met.

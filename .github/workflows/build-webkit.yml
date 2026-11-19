@@ -1,8 +1,8 @@
-name: Build and test WebKit extension menu targets
+name: Build and test WebKit page privacy
 
 on:
   push:
-    branches: [research/webkit-menu-targets]
+    branches: [research/webkit-page-privacy]
 
 permissions:
   contents: read
@@ -64,7 +64,7 @@ jobs:
         timeout-minutes: 351
         run: |
           set -euo pipefail
-          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy webkit-runtime-update-event webkit-privacy-overlay webkit-privacy-api webkit-native-allocators webkit-menu-targets webkit-privacy-result-string; do
+          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy webkit-runtime-update-event webkit-privacy-overlay webkit-privacy-api webkit-native-allocators webkit-menu-targets webkit-privacy-result-string webkit-privacy-page-construction; do
             patch="$GITHUB_WORKSPACE/diagnostics/$name.patch"
             git apply --check "$patch"
             git apply "$patch"
@@ -110,18 +110,33 @@ jobs:
           prediction_server=''
           rtc_server=''
           cleanup() {
+            local result=$?
+            if (( result != 0 )); then
+              printf 'NATIVE_PROBE_FAILURE %s\n' "$result"
+              for log in "$scratch/requests.log" "$scratch/prediction.log" "$scratch/rtc.log"; do
+                if [[ -f "$log" ]]; then printf 'NATIVE_FIXTURE_LOG %s\n' "$log"; cat "$log"; fi
+              done
+            fi
             if [[ -n "$server" ]]; then kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true; fi
             if [[ -n "$prediction_server" ]]; then kill "$prediction_server" 2>/dev/null || true; wait "$prediction_server" 2>/dev/null || true; fi
             if [[ -n "$rtc_server" ]]; then kill "$rtc_server" 2>/dev/null || true; wait "$rtc_server" 2>/dev/null || true; fi
             rm -rf "$scratch"
+            return "$result"
           }
           trap cleanup EXIT
+          printf 'NATIVE_PROBE_STAGE compile-base\n'
           xcrun swiftc -parse-as-library diagnostics/webkit-extension-probe.swift diagnostics/webkit-request-cache-probe.swift \
             diagnostics/webkit-hyperlink-auditing-probe.swift diagnostics/webkit-network-prediction-probe.swift \
             diagnostics/webkit-rtc-policy-probe.swift diagnostics/webkit-privacy-overlay-probe.swift -o "$scratch/probe"
+          printf 'NATIVE_PROBE_STAGE compile-update\n'
           xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-update-event-probe.swift -o "$scratch/update-probe"
+          printf 'NATIVE_PROBE_STAGE compile-privacy\n'
           xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-privacy-api-probe.swift -o "$scratch/privacy-probe"
+          printf 'NATIVE_PROBE_STAGE compile-menu\n'
           xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-menu-targets-probe.swift -o "$scratch/menu-probe"
+          printf 'NATIVE_PROBE_STAGE compile-construction\n'
+          xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-privacy-construction-probe.swift -o "$scratch/construction-probe"
+          printf 'NATIVE_PROBE_STAGE start-http\n'
           python3 diagnostics/webkit-probe-server.py "$scratch/port" > "$scratch/requests.log" 2>&1 &
           server=$!
           for attempt in {1..100}; do
@@ -130,7 +145,9 @@ jobs:
             sleep 0.1
           done
           test -s "$scratch/port"
+          printf 'NATIVE_PROBE_STAGE generate-tls\n'
           bash diagnostics/webkit-prediction-tls.sh "$scratch"
+          printf 'NATIVE_PROBE_STAGE start-https\n'
           python3 diagnostics/webkit-probe-server.py "$scratch/prediction-port" "$scratch/loopback.pem" "$scratch/loopback.key" > "$scratch/prediction.log" 2>&1 &
           prediction_server=$!
           for attempt in {1..100}; do
@@ -139,6 +156,7 @@ jobs:
             sleep 0.1
           done
           test -s "$scratch/prediction-port"
+          printf 'NATIVE_PROBE_STAGE start-rtc\n'
           python3 diagnostics/webkit-stun-fixture.py "$scratch/rtc-port" > "$scratch/rtc.log" 2>&1 &
           rtc_server=$!
           for attempt in {1..100}; do
@@ -152,11 +170,17 @@ jobs:
           auditing_status=0
           prediction_status=0
           rtc_status=0
+          construction_status=0
           update_status=0
           overlay_status=0
           privacy_status=0
           menu_status=0
           status=0
+          printf 'NATIVE_PROBE_STAGE run-construction\n'
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            perl -e '$ENV{DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; $ENV{__XPC_DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; alarm 90; exec @ARGV or die "construction probe failed to launch: $!"' \
+            "$scratch/construction-probe" || construction_status=$?
+          printf 'NATIVE_PROBE_STAGE run-api-witnesses\n'
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
             "$scratch/update-probe" || update_status=$?
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
@@ -184,6 +208,7 @@ jobs:
           cat "$scratch/requests.log"
           cat "$scratch/prediction.log"
           cat "$scratch/rtc.log"
+          if (( construction_status != 0 )); then exit "$construction_status"; fi
           if (( update_status != 0 )); then exit "$update_status"; fi
           if (( menu_status != 0 )); then exit "$menu_status"; fi
           if (( overlay_status != 0 )); then exit "$overlay_status"; fi

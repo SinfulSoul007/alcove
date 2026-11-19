@@ -70,6 +70,16 @@ import WebKit
             }
             return false
         }
+        let denied = try await makeExtension(root: root.appendingPathComponent("private-denied"), controller: controller, privateAccess: false)
+        defer { if denied.0.isLoaded { try? controller.unload(denied.0) } }
+        announce(denied.0, "8.0")
+        try await Task.sleep(for: .milliseconds(300))
+        guard try await stored(denied.1).isEmpty, try await options(denied.1).isEmpty else { return false }
+        print("PASS: a context without private access receives no event in the owned ephemeral store")
+        denied.0.hasAccessToPrivateData = true
+        announce(denied.0, "8.1")
+        guard try await waitFor(denied.1, versions: ["8.1"]) else { return false }
+        print("PASS: explicit private approval enables only that owned context's delivery")
         announce(first.0, "2.3.4")
         guard try await waitFor(first.1, versions: ["2.3.4"]) else { return false }
         let detailsAreExact = try await first.1.evaluateJavaScript("JSON.stringify(window.updateEvents) === '[{\"version\":\"2.3.4\"}]'") as? Bool == true
@@ -121,7 +131,7 @@ import WebKit
     }
 
     @available(macOS 15.4, *)
-    @MainActor static func makeExtension(root: URL, controller: WKWebExtensionController, persistent: Bool = true) async throws -> (WKWebExtensionContext, WKWebView) {
+    @MainActor static func makeExtension(root: URL, controller: WKWebExtensionController, persistent: Bool = true, privateAccess: Bool = true) async throws -> (WKWebExtensionContext, WKWebView) {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let manifest: [String: Any] = ["manifest_version": 2, "name": root.lastPathComponent,
             "version": "1.0", "permissions": ["storage"], "options_page": "options.html",
@@ -147,6 +157,8 @@ import WebKit
         let ext = try await WKWebExtension(resourceBaseURL: root)
         let context = WKWebExtensionContext(for: ext)
         context.grantedPermissions = [WKWebExtension.Permission(rawValue: "storage"): .distantFuture]
+        // This owned fixture uses an ephemeral store; native event delivery honors private access.
+        context.hasAccessToPrivateData = privateAccess
         try controller.load(context)
         guard let pageConfiguration = context.webViewConfiguration, let optionsURL = context.optionsPageURL else { throw CocoaError(.featureUnsupported) }
         let page = WKWebView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), configuration: pageConfiguration)
