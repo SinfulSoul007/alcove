@@ -302,6 +302,11 @@ run_native_fullscreen_checks() {
     "$MANUAL/native-fullscreen-checks"
 }
 if [[ "${1:-}" == "native-fullscreen-test" ]]; then run_native_fullscreen_checks; exit; fi
+run_browser_sheet_quit_checks() {
+    xcrun swiftc "${FLAGS[@]}" -warnings-as-errors -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/BrowserSheetQuitChecks.swift -o "$MANUAL/browser-sheet-quit-checks"
+    "$MANUAL/browser-sheet-quit-checks"
+}
+if [[ "${1:-}" == "browser-sheet-quit-test" ]]; then run_browser_sheet_quit_checks; exit; fi
 if [[ "${1:-}" == "chrome-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ChromeChecks.swift -o "$MANUAL/chrome-checks"
     "$MANUAL/chrome-checks"
@@ -382,6 +387,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_website_prompt_checks
     run_writer_checks
     run_startup_checks
+    run_browser_sheet_quit_checks
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostInputChecks.swift -o "$MANUAL/boosts-input-checks"
     "$MANUAL/boosts-input-checks"
     run_boosts_website_checks

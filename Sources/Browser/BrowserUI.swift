@@ -203,21 +203,23 @@ struct BrowserUI: View {
             .onChange(of: floatingAllowed) { _, value in reveal.setEnabled(value) }
             .onChange(of: store.sidebarVisible) { _, _ in resize.cancel(); reveal.endResize() }
             .sheet(item: sheetPanel) { panel in
-                switch panel {
-                case .library: LibraryPanel(store: store, availableHeight: geometry.size.height - 40)
-                case .settings: SettingsPanel(store: store, availableHeight: geometry.size.height - 40)
-                case .siteSearch: SiteSearchPanel(store: store, availableHeight: geometry.size.height - 40)
-                case .links: LinkRoutingPanel(store: store, availableHeight: geometry.size.height - 40)
-                case .boosts: BoostPanel(store: store, availableHeight: geometry.size.height - 40)
-                case .appearance:
-                    if store.canModifyLocalMetadata {
-                        AppearancePanel(store: store, availableHeight: geometry.size.height - 40, onResetSidebarWidth: resetSidebarWidth)
+                Group {
+                    switch panel {
+                    case .library: LibraryPanel(store: store, availableHeight: geometry.size.height - 40)
+                    case .settings: SettingsPanel(store: store, availableHeight: geometry.size.height - 40)
+                    case .siteSearch: SiteSearchPanel(store: store, availableHeight: geometry.size.height - 40)
+                    case .links: LinkRoutingPanel(store: store, availableHeight: geometry.size.height - 40)
+                    case .boosts: BoostPanel(store: store, availableHeight: geometry.size.height - 40)
+                    case .appearance:
+                        if store.canModifyLocalMetadata {
+                            AppearancePanel(store: store, availableHeight: geometry.size.height - 40, onResetSidebarWidth: resetSidebarWidth)
+                        }
+                        else { lockedAppearancePanel }
+                    case .spaces: EmptyView()
+                    case .profiles: ProfilesPanel(store: store, availableHeight: geometry.size.height - 40)
+                    case .updates: UpdatesPanel(controller: updates, channel: Binding(get: { UpdateChannel(rawValue: store.preferences.updateChannel ?? "preview") ?? .preview }, set: { guard store.canModifyLocalMetadata else { return }; store.preferences.updateChannel = $0.rawValue; store.save() }), availableHeight: geometry.size.height - 40, canModifyChannel: store.canModifyLocalMetadata, onClose: { store.presentedPanel = nil })
                     }
-                    else { lockedAppearancePanel }
-                case .spaces: EmptyView()
-                case .profiles: ProfilesPanel(store: store, availableHeight: geometry.size.height - 40)
-                case .updates: UpdatesPanel(controller: updates, channel: Binding(get: { UpdateChannel(rawValue: store.preferences.updateChannel ?? "preview") ?? .preview }, set: { guard store.canModifyLocalMetadata else { return }; store.preferences.updateChannel = $0.rawValue; store.save() }), availableHeight: geometry.size.height - 40, canModifyChannel: store.canModifyLocalMetadata, onClose: { store.presentedPanel = nil })
-                }
+                }.background(BrowserSheetQuitPolicy(preventsTermination: panel.preventsApplicationTerminationWhenModal))
             }
         }
     }
