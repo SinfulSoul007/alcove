@@ -25,6 +25,11 @@ The native Swift probe opens and closes actual context menus and checks creation
 matching, click delivery, updates, removal and unchanged grants. Stock WebKit is
 an expected negative; changed-engine runtime behavior remains a qualification gate.
 
+The final result-string patch fixes the concrete privacy callback compile error
+from run 44404820194. Its JSON null success token is explicitly a WTF String,
+which can be converted to Expected<String, WebExtensionError> at the completion
+boundary; an ASCIILiteral would require two implicit user conversions.
+
 The standalone Swift probe requires the changed framework, observes real loopback
 audit requests, checks shared-preference/controller isolation, tests scope and
 permission lifecycle, and verifies expiry using actual UDP STUN traffic. Its expiry

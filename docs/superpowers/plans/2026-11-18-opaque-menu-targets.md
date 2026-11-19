@@ -33,5 +33,5 @@
 - [x] Add owned native extension create/update probe, including exact uBO mixed targets, ordinary controls and unchanged grants.
 - [x] Run on stock VM; expect rejection specifically for abp:* while structured controls work. Prove actual menu inspection works on the structured control before using it for the changed engine.
 - [x] Add only native menu-specific validation/storage/matching. Preserve general match-pattern parsing.
-- [ ] Apply all12 patches to fresh pinned sources, verify resulting bytes, and type-check probe warning-clean. Review whole branch and fix material findings with regressions.
+- [ ] Apply all13 patches to fresh pinned sources, verify resulting bytes, and type-check probe warning-clean. Review whole branch and fix material findings with regressions.
 - [ ] Push research branch and track actual engine compile/native checks. Native positive is a completion gate, not inferred from source checks.

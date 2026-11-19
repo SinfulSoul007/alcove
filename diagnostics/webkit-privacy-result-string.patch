@@ -1,0 +1,13 @@
+diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
+index 806c321..84eaafb 100644
+--- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
++++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
+@@ -358,7 +358,7 @@ static bool isValidStoredPrivacyValue(NSString *key, NSString *value)
+         writeStateToStorage();
+     }
+     controller->updatePrivacySettings();
+-    completionHandler("null"_s);
++    completionHandler(String("null"_s));
+ }
+
+ void WebExtensionContext::firePrivacySettingChangedIfNeeded(NSString *key, bool incognito)

@@ -64,7 +64,7 @@ jobs:
         timeout-minutes: 351
         run: |
           set -euo pipefail
-          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy webkit-runtime-update-event webkit-privacy-overlay webkit-privacy-api webkit-native-allocators webkit-menu-targets; do
+          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy webkit-runtime-update-event webkit-privacy-overlay webkit-privacy-api webkit-native-allocators webkit-menu-targets webkit-privacy-result-string; do
             patch="$GITHUB_WORKSPACE/diagnostics/$name.patch"
             git apply --check "$patch"
             git apply "$patch"
