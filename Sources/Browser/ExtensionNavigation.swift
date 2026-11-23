@@ -105,6 +105,7 @@ extension BrowserStore {
         for ticket in Array(extensionNavigationTickets.values) where ticket.source.web === web && (!mainFrameOnly || ticket.isMainFrame) {ticket.finish(.cancel)}
     }
     func cancelInvalidExtensionNavigations() {
+        cancelInvalidWebsiteProtectionTickets()
         for ticket in Array(extensionNavigationTickets.values) where ticket.source.currentWeb == nil {ticket.finish(.cancel)}
         if extensionNavigationProblem?.source.currentWeb == nil {extensionNavigationProblem = nil}
     }

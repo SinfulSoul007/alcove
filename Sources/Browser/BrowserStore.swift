@@ -10,6 +10,8 @@ enum BrowserPanel: String, Identifiable { case library, settings, appearance, up
 @MainActor
 final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     let sidebarDragID = UUID()
+    let websiteProtection:WebsiteProtectionService
+    var websiteProtectionTickets:[UUID:WebsiteProtectionTicket]=[:]
     weak var windowGroup: BrowserWindowGroup?
     var windowGroupID: UUID?
     var extensionPopupProfileID: UUID?
@@ -190,6 +192,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return identity
     }
     func invalidateDocumentIdentity(for web: WKWebView) {
+        cancelWebsiteProtectionTickets(for:web)
         documentIDs.setObject(NSUUID(), forKey: web)
         reconcilePrivateExtensionReopen()
         cancelInvalidExtensionNavigations()
@@ -226,6 +229,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return (web, icon)
     }
     func transferDocumentBindings(for web: WKWebView, to destination: BrowserStore) {
+        cancelWebsiteProtectionTickets(for:web)
         let identity = documentIdentity(for: web)
         let extensionOrigin = extensionOriginPopups.contains(web)
         let popupOwner = extensionPopupOwners.object(forKey: web)
@@ -286,9 +290,11 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
 
     init(isPrivate: Bool = false, dataRoot: URL? = nil, keyProvider: ((Bool) throws -> SymmetricKey)? = nil,
-         metadataKeyAccess: MetadataKeyAccess? = nil, windowGroup: BrowserWindowGroup? = nil) {
+         metadataKeyAccess: MetadataKeyAccess? = nil, windowGroup: BrowserWindowGroup? = nil,
+         websiteProtection:WebsiteProtectionService? = nil) {
         self.isPrivate = isPrivate
         self.windowGroup = windowGroup
+        self.websiteProtection = websiteProtection ?? windowGroup?.root?.websiteProtection ?? .shared
         self.metadataKeyAccess = metadataKeyAccess ?? .shared
         privateDataStore = isPrivate ? .nonPersistent() : nil
         privateUserContentController = isPrivate ? WKUserContentController() : nil
@@ -297,6 +303,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         sessionURL = root.appendingPathComponent("session-v2.sealed")
         previousSessionURL = root.appendingPathComponent("session.sealed")
         super.init()
+        let protection=self.websiteProtection
+        Task{_ = await protection.load()}
         guard !isPrivate else { return }
         profileOperationSubscription = ProfileDataOperations.shared.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         if windowGroup != nil { return }
@@ -359,7 +367,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         guard !isShuttingDown else { return }
         closeExtensionManagers()
         cancelRecentTabSwitcher()
-        flush(); isShuttingDown = true; privateExtensionReopenJob?.finish(.failure(ExtensionHostError.closed)); cancelAllExtensionNavigations(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
+        cancelAllWebsiteProtectionTickets(); flush(); isShuttingDown = true; privateExtensionReopenJob?.finish(.failure(ExtensionHostError.closed)); cancelAllExtensionNavigations(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
         metadataOwnership?.release(); metadataOwnership = nil
@@ -606,6 +614,16 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         extensionBrowserStateChanged()
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if action.targetFrame?.isMainFrame != false {cancelWebsiteProtectionTickets(for:webView)}
+        guard let url=action.request.url,["http","https"].contains(url.scheme?.lowercased() ?? "") else {
+            continueBrowserNavigation(webView,action:action,decisionHandler:decisionHandler);return
+        }
+        decideWebsiteProtection(webView,url:url,kind:action.shouldPerformDownload ? .download:.navigation(isMainFrame:action.targetFrame?.isMainFrame != false)) { [weak self,weak webView] approved in
+            guard approved,let self,let webView else {decisionHandler(.cancel);return}
+            self.continueBrowserNavigation(webView,action:action,decisionHandler:decisionHandler)
+        }
+    }
+    private func continueBrowserNavigation(_ webView:WKWebView,action:WKNavigationAction,decisionHandler:@escaping(WKNavigationActionPolicy)->Void) {
         if action.targetFrame?.isMainFrame != false {beginExtensionMainNavigation(webView)}
         guard let owner = profileID(for: webView), !profileUnavailable(owner), let url = action.request.url else { decisionHandler(.cancel); return }
         guard ["https", "http", "about", "blob", "data"].contains(url.scheme?.lowercased() ?? "") || extensionHosting?.allowsExtensionURL(url,profileID:owner) == true else {

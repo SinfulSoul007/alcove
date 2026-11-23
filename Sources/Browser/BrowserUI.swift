@@ -4,6 +4,8 @@ import BrowserCore
 
 class EdgeToEdgeWebHost: NSView {
     private var recovery:ExtensionRecoveryBanner?
+    private var protection:WebsiteProtectionOverlay?
+    private weak var protectionWebView:WKWebView?
     private weak var recoveryWebView: WKWebView?
     func setRecovery(store:BrowserStore,webView:WKWebView) {
         let banner=recovery ?? ExtensionRecoveryBanner(container:self);recovery=banner
@@ -12,6 +14,7 @@ class EdgeToEdgeWebHost: NSView {
         banner.bind(store:store,webView:webView);layoutRecovery()
     }
     func removeContent(_ webView: WKWebView) {
+        if protectionWebView === webView {protection?.removeFromSuperview();protection=nil;protectionWebView=nil}
         if webView.superview === self { webView.removeFromSuperview() }
         if recoveryWebView === webView {
             recovery?.removeFromSuperview()
@@ -20,10 +23,17 @@ class EdgeToEdgeWebHost: NSView {
         }
     }
     func layoutRecovery() {
+        protection?.frame=bounds
+        protection?.layoutSubtreeIfNeeded()
         guard let recovery,!recovery.isHidden else {return}
         let width=max(0,min(560,bounds.width-16)),height=recovery.measuredHeight(width:width,maximum:max(0,bounds.height-16))
         recovery.frame=NSRect(x:(bounds.width-width)/2,y:bounds.maxY-height-8,width:width,height:height)
         recovery.layoutSubtreeIfNeeded()
+    }
+    func setWebsiteProtection(store:BrowserStore,webView:WKWebView) {
+        let overlay=protection ?? WebsiteProtectionOverlay(frame:bounds);protection=overlay;protectionWebView=webView
+        if overlay.superview !== self {addSubview(overlay)}
+        overlay.frame=bounds;overlay.autoresizingMask=[.width,.height];overlay.bind(store:store,web:webView)
     }
     func setContent(_ view: NSView) {
         guard subviews.first !== view else { fitContent();return }
@@ -65,6 +75,7 @@ struct WebPane: NSViewRepresentable {
             }
             host.setContent(webView)
             host.setRecovery(store: store, webView: webView)
+            host.setWebsiteProtection(store:store,webView:webView)
         } else { host.setContent(webView) }
         splitHost?.bindDrop(store: store, destination: splitDestination, color: splitAccent)
     }
