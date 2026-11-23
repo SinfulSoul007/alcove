@@ -93,6 +93,7 @@ jobs:
           trap 'status=$?; if [[ "$status" != 0 && -f "$log" ]]; then tail -n 180 "$log"; fi' EXIT
           # Invoke this project's aggregate exactly once; build-webkit also invokes ImageDiff.
           cp "$GITHUB_WORKSPACE/diagnostics/build-webkit-project-only.pl" Tools/Scripts/build-alcove-webkit-project
+          cp "$GITHUB_WORKSPACE/diagnostics/AlcoveWebKit.xcscheme" Tools/Scripts/AlcoveWebKit.xcscheme
           perl Tools/Scripts/build-alcove-webkit-project 2>&1 |
             tee "$log" |
             awk '/^The following build commands failed/ { failureSummary = 32 }

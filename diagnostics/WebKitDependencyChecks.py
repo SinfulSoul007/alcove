@@ -12,6 +12,7 @@ import tarfile
 import tempfile
 import unittest
 import zipfile
+import xml.etree.ElementTree as ET
 
 HELPER = Path(__file__).with_name("prepare-webkit-dependencies.py")
 OLD = "WebKit.framework/Versions/A/WebKit"
@@ -207,13 +208,16 @@ class LauncherChecks(unittest.TestCase):
         source = Path(__file__).with_name("build-webkit-project-only.pl")
         if source.exists():
             shutil.copyfile(source, self.launcher)
+        scheme = Path(__file__).with_name("AlcoveWebKit.xcscheme")
+        if scheme.exists():
+            shutil.copyfile(scheme, scripts / scheme.name)
         (scripts / "webkitdirs.pm").write_text('''package webkitdirs;
 use strict;use warnings;
 sub sourceDir {return $ENV{'OWNED_SOURCE_ROOT'};}
 sub XcodeOptions {
  die 'workspace was not suppressed' unless @ARGV == 1 && $ARGV[0] eq '--no-use-workspace';
  @ARGV=();
- return ('-configuration','Release','GCC_OPTIMIZATION_LEVEL=1','WK_LTO_MODE=none',
+ return ('-configuration','Release','-destination','platform=macOS,devicetype=Mac,arch=arm64','GCC_OPTIMIZATION_LEVEL=1','WK_LTO_MODE=none',
   'SYMROOT='.$ENV{'OWNED_SOURCE_ROOT'}.'/WebKitBuild','SDKROOT=macosx');
 }
 1;
@@ -242,7 +246,13 @@ sys.exit(int(os.environ.get('COMPILER_STATUS','0')))
         self.assertEqual(result.returncode, 0, result.stderr)
         commands = [json.loads(row) for row in self.capture.read_text().splitlines()]
         self.assertEqual(len(commands), 1)
-        self.assertEqual(commands[0], {'arguments': ['-project', str(self.root / 'Source/WebKit/WebKit.xcodeproj'), '-target', 'Everything', '-configuration', 'Release', 'GCC_OPTIMIZATION_LEVEL=1', 'WK_LTO_MODE=none', 'SYMROOT=' + str(self.root / 'WebKitBuild'), 'SDKROOT=macosx', 'GCC_GENERATE_DEBUGGING_SYMBOLS=NO', 'COMPILER_INDEX_STORE_ENABLE=NO'], 'cwd': str(self.root)})
+        self.assertEqual(commands[0], {'arguments': ['-project', str(self.root / 'Source/WebKit/WebKit.xcodeproj'), '-scheme', 'AlcoveWebKit', '-configuration', 'Release', '-destination', 'platform=macOS,devicetype=Mac,arch=arm64', 'GCC_OPTIMIZATION_LEVEL=1', 'WK_LTO_MODE=none', 'SYMROOT=' + str(self.root / 'WebKitBuild'), 'SDKROOT=macosx', 'GCC_GENERATE_DEBUGGING_SYMBOLS=NO', 'COMPILER_INDEX_STORE_ENABLE=NO'], 'cwd': str(self.root)})
+        published = self.root / 'Source/WebKit/WebKit.xcodeproj/xcshareddata/xcschemes/AlcoveWebKit.xcscheme'
+        action = ET.parse(published).getroot().find('BuildAction')
+        self.assertEqual(action.get('buildImplicitDependencies'), 'YES')
+        reference = action.find('BuildActionEntries/BuildActionEntry/BuildableReference')
+        self.assertEqual(reference.get('BlueprintIdentifier'), 'CD0C36D52639D39A004E35D8')
+        self.assertEqual(reference.get('BlueprintName'), 'Everything')
 
     def test_compiler_failure_is_the_launcher_failure(self):
         self.assertEqual(self.run_launcher(status=23).returncode, 23)
