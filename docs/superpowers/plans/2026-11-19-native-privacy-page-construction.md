@@ -32,3 +32,5 @@
 - [ ] Verify exact patch application/diff, warning-clean Swift probes and all local orchestrator checks. One fresh whole-branch review, one material fix pass.
 - [ ] Build the exact revised engine; run every native gate including fresh-page actual privacy behavior. Verify artifact source/digests and execute both original uBO asset lifecycle checks.
 - [ ] Record actual results and remaining blockers; do not publish an unqualified runtime or mark the overall browser goal complete.
+
+Review fix constraints: use one side-effect-free permission snapshot time for initial policy, preserve explicit deny/expiry semantics, retain a stable snapshot of live pages across callbacks, and coalesce the ordinary expiry refresh until after native construction. The actual shared-preferences clipboard expiry witness must construct/load and still clear the expired clipboard preference. One fresh source review is complete; no re-review. Mixed-key expiry/reentrant callback invariants need runtime coverage and are not independently claimed as observed RED→GREEN.

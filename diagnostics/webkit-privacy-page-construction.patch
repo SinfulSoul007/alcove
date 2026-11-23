@@ -1,22 +1,61 @@
+diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
+index 84eaafbd8d7f7091205fbbdf90ee6b2b7f792a25..e1fc28e200f935eb0f65423092f4133e7e1d776c 100644
+--- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
++++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
+@@ -811,6 +811,19 @@ static String permissionNotification(WebExtensionContext::PermissionNotification
+     }
+ }
+ 
++bool WebExtensionContext::hasPrivacyPermissionAt(WallTime time) const
++{
++    // Constructor-time policy reads must not prune unrelated permissions or
++    // notify views that are still being initialized. Match explicit denial
++    // precedence and expiry semantics without mutating either permission map.
++    auto permission = WebExtensionPermission::privacy();
++    auto denied = m_deniedPermissions.find(permission);
++    if (denied != m_deniedPermissions.end() && !(denied->value <= time))
++        return false;
++    auto granted = m_grantedPermissions.find(permission);
++    return granted != m_grantedPermissions.end() && !(granted->value <= time);
++}
++
+ void WebExtensionContext::privacyPermissionDatesDidChange()
+ {
+     if (RefPtr controller = extensionController()) {
 diff --git a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
-index 5e29ddcda29299817016a54cbbbde99dfb8ea383..6bb2cb94f9a74a7e7ffdf003ed7de8cad9f2f1d6 100644
+index 5e29ddcda29299817016a54cbbbde99dfb8ea383..689b19cdbe39a2db234b11137601e9340ceb48da 100644
 --- a/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
 +++ b/Source/WebKit/UIProcess/Extensions/Cocoa/WebExtensionControllerCocoa.mm
-@@ -192,6 +192,21 @@ static String privacyBaselineSignature(WKPreferences *preferences)
+@@ -139,11 +139,11 @@ static bool hasPrivacyPrecedence(WebExtensionContext& left, WebExtensionContext&
+     return false;
+ }
+ 
+-WebExtensionContext* WebExtensionController::privacySettingController(NSString *key, bool incognito)
++WebExtensionContext* WebExtensionController::privacySettingController(NSString *key, bool incognito, std::optional<WallTime> snapshotTime)
+ {
+     WebExtensionContext *winner = nullptr;
+     for (Ref context : m_extensionContexts) {
+-        if (!context->isLoaded() || !context->hasPermission(WebExtensionPermission::privacy()) || (incognito && !context->hasAccessToPrivateData()) || context->privacyValue(key, incognito).isNull())
++        if (!context->isLoaded() || !(snapshotTime ? context->hasPrivacyPermissionAt(*snapshotTime) : context->hasPermission(WebExtensionPermission::privacy())) || (incognito && !context->hasAccessToPrivateData()) || context->privacyValue(key, incognito).isNull())
+             continue;
+         if (!winner || hasPrivacyPrecedence(context.get(), *winner))
+             winner = context.ptr();
+@@ -192,6 +192,22 @@ static String privacyBaselineSignature(WKPreferences *preferences)
      updatePrivacySettings();
  }
  
 +static void applyPrivacySettingsToPage(WebExtensionController& controller, WebPageProxy& page, WebPageProxy::NotifyPrivacyChange notify)
 +{
++    auto snapshotTime = WallTime::now();
 +    bool incognito = !page.websiteDataStore().isPersistent();
 +    std::optional<bool> prediction;
 +    std::optional<bool> auditing;
 +    String rtcPolicy;
-+    if (auto *winner = controller.privacySettingController(@"networkPredictionEnabled", incognito))
++    if (auto *winner = controller.privacySettingController(@"networkPredictionEnabled", incognito, snapshotTime))
 +        prediction = winner->privacyValue(@"networkPredictionEnabled", incognito) == "true"_s;
-+    if (auto *winner = controller.privacySettingController(@"hyperlinkAuditingEnabled", incognito))
++    if (auto *winner = controller.privacySettingController(@"hyperlinkAuditingEnabled", incognito, snapshotTime))
 +        auditing = winner->privacyValue(@"hyperlinkAuditingEnabled", incognito) == "true"_s;
-+    if (auto *winner = controller.privacySettingController(@"webRTCIPHandlingPolicy", incognito))
++    if (auto *winner = controller.privacySettingController(@"webRTCIPHandlingPolicy", incognito, snapshotTime))
 +        rtcPolicy = winner->privacyValue(@"webRTCIPHandlingPolicy", incognito);
 +    page.setExtensionPrivacyPreferences(prediction, auditing, WTF::move(rtcPolicy), notify);
 +}
@@ -24,7 +63,7 @@ index 5e29ddcda29299817016a54cbbbde99dfb8ea383..6bb2cb94f9a74a7e7ffdf003ed7de8ca
  void WebExtensionController::updatePrivacySettings()
  {
      if (m_updatingPrivacySettings) {
-@@ -206,19 +221,8 @@ static String privacyBaselineSignature(WKPreferences *preferences)
+@@ -206,18 +222,12 @@ static String privacyBaselineSignature(WKPreferences *preferences)
              for (Ref context : m_extensionContexts)
                  context->clearPrivateSessionPrivacySettings();
          }
@@ -40,13 +79,16 @@ index 5e29ddcda29299817016a54cbbbde99dfb8ea383..6bb2cb94f9a74a7e7ffdf003ed7de8ca
 -            if (auto *winner = privacySettingController(@"webRTCIPHandlingPolicy", incognito))
 -                rtcPolicy = winner->privacyValue(@"webRTCIPHandlingPolicy", incognito);
 -            page->setExtensionPrivacyPreferences(prediction, auditing, WTF::move(rtcPolicy));
--        }
++        Vector<Ref<WebPageProxy>> pages;
 +        for (Ref page : m_pages)
-+            applyPrivacySettingsToPage(*this, page.get(), WebPageProxy::NotifyPrivacyChange::Yes);
++            pages.append(WTF::move(page));
++        for (auto& page : pages) {
++            if (m_pages.contains(page.get()))
++                applyPrivacySettingsToPage(*this, page.get(), WebPageProxy::NotifyPrivacyChange::Yes);
+         }
          for (Ref context : m_extensionContexts) {
              for (NSString *key in @[ @"networkPredictionEnabled", @"hyperlinkAuditingEnabled", @"webRTCIPHandlingPolicy" ]) {
-                 context->firePrivacySettingChangedIfNeeded(key, false);
-@@ -506,6 +510,9 @@ static String privacyBaselineSignature(WKPreferences *preferences)
+@@ -506,6 +516,9 @@ static String privacyBaselineSignature(WKPreferences *preferences)
  void WebExtensionController::addPage(WebPageProxy& page)
  {
      ASSERT(!m_pages.contains(page));
@@ -56,14 +98,56 @@ index 5e29ddcda29299817016a54cbbbde99dfb8ea383..6bb2cb94f9a74a7e7ffdf003ed7de8ca
      m_pages.add(page);
  
      for (auto& entry : m_registeredSchemeHandlers)
-@@ -519,7 +526,6 @@ static String privacyBaselineSignature(WKPreferences *preferences)
+@@ -519,7 +532,15 @@ static String privacyBaselineSignature(WKPreferences *preferences)
  
      Ref controller = page.userContentController();
      addUserContentController(controller, dataStore->isPersistent() ? ForPrivateBrowsing::No : ForPrivateBrowsing::Yes);
 -    updatePrivacySettings();
++    // Preserve normal expiry cleanup after native view construction has returned,
++    // coalescing page arrivals rather than firing callbacks during initialization.
++    if (!m_privacyRefreshScheduled) {
++        m_privacyRefreshScheduled = true;
++        RunLoop::mainSingleton().dispatch([protectedThis = Ref { *this }] {
++            protectedThis->m_privacyRefreshScheduled = false;
++            protectedThis->updatePrivacySettings();
++        });
++    }
  }
  
  void WebExtensionController::removePage(WebPageProxy& page)
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
+index ab678e5dc9e7a1077b39b1a1570af04ae294df05..62964f9a3d3ccc18c4d4177a02b818107fa43d4f 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionContext.h
+@@ -351,6 +351,7 @@ public:
+     void didFindExtensionUpdate(const String& version);
+     void privacySettingOperation(const String& key, const String& operation, const String& detailsJSON, CompletionHandler<void(Expected<String, WebExtensionError>&&)>&&);
+     String privacyValue(NSString *key, bool incognito) const;
++    bool hasPrivacyPermissionAt(WallTime) const;
+     bool privacyValueIsIncognitoSpecific(NSString *key) const;
+     double privacyInstallationTime() const;
+     void setPrivacyInstallationTime(double);
+diff --git a/Source/WebKit/UIProcess/Extensions/WebExtensionController.h b/Source/WebKit/UIProcess/Extensions/WebExtensionController.h
+index 400388a950ccb101431bebbab6bc7fd7b2a3fb35..e42218618b55303c3ef760f8e6604a2ab673ce69 100644
+--- a/Source/WebKit/UIProcess/Extensions/WebExtensionController.h
++++ b/Source/WebKit/UIProcess/Extensions/WebExtensionController.h
+@@ -144,7 +144,7 @@ public:
+     void removePage(WebPageProxy&);
+     void didCreateNavigationTarget(WebPageProxyIdentifier, WebExtensionCreatedNavigationTarget&&);
+     bool hasPrivatePrivacyWindows() const;
+-    WebExtensionContext* privacySettingController(NSString *key, bool incognito);
++    WebExtensionContext* privacySettingController(NSString *key, bool incognito, std::optional<WallTime> snapshotTime = std::nullopt);
+     NSDictionary *privacySettingDetails(WebExtensionContext&, NSString *key, bool incognito);
+     void updatePrivacySettings();
+     void browserPrivacyPreferencesDidChange();
+@@ -308,6 +308,7 @@ private:
+     bool m_showingActionPopup { false };
+     bool m_updatingPrivacySettings { false };
+     bool m_privacySettingsNeedUpdate { false };
++    bool m_privacyRefreshScheduled { false };
+     String m_browserPrivacySignature;
+     std::unique_ptr<RunLoop::Timer> m_privacyExpirationTimer;
+ 
 diff --git a/Source/WebKit/UIProcess/WebPageProxy.cpp b/Source/WebKit/UIProcess/WebPageProxy.cpp
 index 4b2dd01cf6072ffbec9923f1a21fe09076da6848..e1c4ccb7c1026e2ea1371ec457cbc79c4618d5e5 100644
 --- a/Source/WebKit/UIProcess/WebPageProxy.cpp

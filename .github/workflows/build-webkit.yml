@@ -177,9 +177,13 @@ jobs:
           menu_status=0
           status=0
           printf 'NATIVE_PROBE_STAGE run-construction\n'
-          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
-            perl -e '$ENV{DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; $ENV{__XPC_DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; alarm 90; exec @ARGV or die "construction probe failed to launch: $!"' \
-            "$scratch/construction-probe" || construction_status=$?
+          for mode in ordinary clipboard-expiry; do
+            arguments=()
+            if [[ "$mode" == clipboard-expiry ]]; then arguments+=(--clipboard-expiry); fi
+            ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+              perl -e '$ENV{DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; $ENV{__XPC_DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; alarm 90; exec @ARGV or die "construction probe failed to launch: $!"' \
+              "$scratch/construction-probe" "${arguments[@]}" || construction_status=$?
+          done
           printf 'NATIVE_PROBE_STAGE run-api-witnesses\n'
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
             "$scratch/update-probe" || update_status=$?
