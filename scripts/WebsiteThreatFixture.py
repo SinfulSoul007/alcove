@@ -32,7 +32,8 @@ class Handler(BaseHTTPRequestHandler):
         case=query.get('case',[''])[0]
         if parsed.path.startswith('/redirect'):
             status=307 if parsed.path=='/redirect307' else 302
-            self.respond(status,b'','text/plain',{'Location':'http://listed.alcove.example/target?case='+case});return
+            target='file' if parsed.path=='/redirect-download' else 'target'
+            self.respond(status,b'','text/plain',{'Location':'http://listed.alcove.example/'+target+'?case='+case});return
         if parsed.path=='/file':
             self.respond(200,b'owned download fixture','application/octet-stream',{'Content-Disposition':'attachment; filename="owned.txt"'});return
         if parsed.path=='/frame':

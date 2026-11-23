@@ -175,6 +175,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var metadataDidLoad: (() -> Void)?
     var privateWindowRequested: (() -> Void)?
     let pendingDownloadProfiles = NSMapTable<WKDownload, NSUUID>.weakToStrongObjects()
+    let downloadProtectionSources = NSMapTable<WKDownload, WebsiteProtectionSource>.weakToStrongObjects()
+    let downloadProtectionTickets = NSMapTable<WKDownload, WebsiteProtectionTicket>.weakToWeakObjects()
     var archiveTimer: Timer?
     var archivingOldTabs = false
     @Published var clearingToday = false
@@ -220,7 +222,11 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return true
     }
     func takeRegisteredView(_ id: UUID, transferringTo destination: BrowserStore) -> (web: WKWebView, icon: NSImage?)? {
-        guard let web = views.removeValue(forKey: id) else { return nil }
+        guard let web = views[id] else { return nil }
+        // A canceled warning restores the original address through this registration.
+        cancelWebsiteProtectionTickets(for:web)
+        guard views[id] === web else { return nil }
+        views.removeValue(forKey:id)
         let icon = siteIcons.removeValue(forKey: id)
         observations.removeValue(forKey: id)
         viewProfileIDs.removeValue(forKey: id)

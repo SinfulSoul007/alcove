@@ -15,7 +15,7 @@ enum WebsiteProtectionPurpose {
     init(store:BrowserStore,web:WKWebView,profileID:UUID) {
         self.store=store;self.web=web;self.profileID=profileID
         document=store.documentIdentity(for:web);dataStore=web.configuration.websiteDataStore
-        previousURL=web.backForwardList.currentItem?.url;previousTitle=web.title
+        previousURL=web.backForwardList.currentItem?.url;previousTitle=web.title.flatMap{$0.isEmpty ? nil:$0}
     }
     var currentWeb:WKWebView? {
         guard let store,let web,!store.isShuttingDown,web.navigationDelegate === store,
@@ -97,7 +97,10 @@ extension BrowserStore {
     @discardableResult func decideWebsiteProtection(_ web:WKWebView,url:URL,kind:WebsiteProtectionPurpose,timeout:Duration = .seconds(10),decision:@escaping @MainActor (Bool)->Void) -> WebsiteProtectionTicket? {
         guard !isShuttingDown,let profile=profileID(for:web),!profileUnavailable(profile) else {decision(false);return nil}
         let source=WebsiteProtectionSource(store:self,web:web,profileID:profile)
-        guard source.currentWeb != nil else {decision(false);return nil}
+        return decideWebsiteProtection(source,url:url,kind:kind,timeout:timeout,decision:decision)
+    }
+    @discardableResult func decideWebsiteProtection(_ source:WebsiteProtectionSource,url:URL,kind:WebsiteProtectionPurpose,timeout:Duration = .seconds(10),decision:@escaping @MainActor (Bool)->Void) -> WebsiteProtectionTicket? {
+        guard source.store === self,let web=source.currentWeb else {decision(false);return nil}
         if let value=websiteProtection.cachedAssessment(for:url),case .unlisted=value {decision(true);return nil}
         guard websiteProtectionTickets.count<128,
               websiteProtectionTickets.values.filter({$0.source.web === web}).count<8 else {decision(false);return nil}

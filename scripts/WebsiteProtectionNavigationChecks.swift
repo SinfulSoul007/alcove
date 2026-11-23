@@ -3,8 +3,10 @@ import WebKit
 import Network
 import CryptoKit
 import BrowserCore
+import Darwin
 
 @main struct WebsiteProtectionNavigationChecks {
+    nonisolated(unsafe) static var returnedFromRun=false
     enum Failure:Error {case fixture,timeout,checks(Int)}
     @MainActor static func descendants(_ root:NSView) -> [NSView] { [root]+root.subviews.flatMap{descendants($0)} }
     @MainActor static func ready(_ web:WKWebView,host:String) async throws {
@@ -15,8 +17,6 @@ import BrowserCore
         throw Failure.timeout
     }
     @MainActor static func run() async throws {
-        NSApplication.shared.setActivationPolicy(.regular)
-        NSApp.finishLaunching()
         guard let raw=ProcessInfo.processInfo.environment["ALCOVE_OWNED_PROXY_PORT"],let number=UInt16(raw),let port=NWEndpoint.Port(rawValue:number),let resources=Bundle.main.resourceURL?.appendingPathComponent("WebsiteProtection") else {throw Failure.fixture}
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("alcove-browser-protection-"+UUID().uuidString)
         try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
@@ -67,7 +67,13 @@ import BrowserCore
         if let warning {print("NATIVE_WARNING_GEOMETRY","overlay",warning.frame,"host",host.bounds,"layer",warning.wantsLayer,"window",window.isVisible)}
         if warning != nil,let raw=ProcessInfo.processInfo.environment["ALCOVE_VISUAL_WITNESS_SECONDS"],let seconds=Double(raw),seconds>0,seconds<=60 {
             print("NATIVE_WEBSITE_WARNING_VISUAL_READY")
-            try await Task.sleep(for:.seconds(seconds))
+            if ProcessInfo.processInfo.environment["ALCOVE_PHYSICAL_WARNING_SAFE"]=="1" {
+                for _ in 0..<Int(seconds*50) {
+                    if store.websiteProtectionTicket(for:web)==nil {break}
+                    try await Task.sleep(for:.milliseconds(20))
+                }
+                check(store.websiteProtectionTicket(for:web)==nil,"A physical safe key cancels the warning before the fixture clicks")
+            } else {try await Task.sleep(for:.seconds(seconds))}
         }
         if let button=warning.flatMap({descendants($0).first{$0.identifier?.rawValue=="AlcoveWebsiteProtectionSafe"} as? NSButton}) {
             button.performClick(nil)
@@ -116,9 +122,63 @@ import BrowserCore
             if kind=="post307" {check(received.first?["method"] as? String=="POST" && received.first?["body"] as? String=="token=typed-owned",name+": form method and body survive the redirect and warning")}
             if kind=="frame" {check((try? await web.evaluateJavaScript("window.ownedOriginalDocument===true&&document.getElementById('token')?.value==='typed-owned'")) as? Bool==true,name+": continuing the iframe preserves its parent form")}
         }
+        for (native,allow) in [(false,false),(false,true),(true,false),(true,true)] {
+            let name="browser-"+(native ? "native-":"")+"download-redirect-"+(allow ? "continue":"cancel")
+            web.load(URLRequest(url:URL(string:"http://safe.alcove.example/form?case=baseline-"+name)!))
+            try await ready(web,host:"safe.alcove.example")
+            _=try await web.evaluateJavaScript("window.ownedOriginalDocument=true;document.getElementById('token').value='typed-owned';true")
+            var nativeDownload:WKDownload?
+            if native {
+                web.startDownload(using:URLRequest(url:URL(string:"http://safe.alcove.example/redirect-download?case="+name)!)) { download in
+                    nativeDownload=download
+                    store.trackDownload(download,from:web)
+                }
+            } else {
+                _=try await web.evaluateJavaScript("const link=document.createElement('a');link.href='http://safe.alcove.example/redirect-download?case="+name+"';link.download='owned.txt';document.body.appendChild(link);link.click();true")
+            }
+            var current:NSView?
+            for _ in 0..<250 {
+                current=descendants(host).first{$0.identifier?.rawValue=="AlcoveWebsiteProtection" && !$0.isHidden}
+                if current != nil || NSApp.windows.contains(where:{$0 is NSSavePanel && $0.isVisible}) {break}
+                try await Task.sleep(for:.milliseconds(20))
+            }
+            check(try await targetRequests(name).isEmpty,name+": a download redirect is held before contacting its target")
+            check(current != nil,name+": the download redirect has a native warning")
+            let identifier=allow ? "AlcoveWebsiteProtectionContinue":"AlcoveWebsiteProtectionSafe"
+            if let button=current.flatMap({descendants($0).first{$0.identifier?.rawValue==identifier} as? NSButton}) {button.performClick(nil)}
+            if allow && current != nil {
+                var offered=false
+                for _ in 0..<750 {
+                    if let panel=NSApp.windows.first(where:{$0 is NSSavePanel && $0.isVisible}) as? NSSavePanel {offered=true;panel.cancel(nil);break}
+                    try await Task.sleep(for:.milliseconds(20))
+                }
+                check(offered,name+": the original native download reaches its actual destination chooser")
+                check(try await targetRequests(name).count==1,name+": continue allows exactly the captured download redirect")
+            } else {
+                for panel in NSApp.windows.compactMap({$0 as? NSSavePanel}) {panel.cancel(nil)}
+                if current != nil {check(try await targetRequests(name).isEmpty,name+": safe cancellation never starts the redirected request")}
+            }
+            check((try? await web.evaluateJavaScript("window.ownedOriginalDocument===true&&document.getElementById('token')?.value==='typed-owned'")) as? Bool==true,name+": download decisions keep the typed page")
+            withExtendedLifetime(nativeDownload) {}
+        }
         check(!FileManager.default.fileExists(atPath:root.appendingPathComponent("metadata").path),"Private warning browsing saves no metadata directory")
         print("BROWSER_WEBSITE_PROTECTION_CHECKS",checks,"FAILURES",failures)
         if failures>0 {throw Failure.checks(failures)}
     }
-    @MainActor static func main() async {setbuf(stdout,nil);do{try await run()}catch{print("BROWSER_WEBSITE_PROTECTION_FAILED",error);exit(1)}}
+    @MainActor static func main() {
+        setbuf(stdout,nil)
+        atexit {
+            if !WebsiteProtectionNavigationChecks.returnedFromRun {
+                fputs("BROWSER_WEBSITE_PROTECTION_PREMATURE_EXIT\n",stderr)
+                fputs(Thread.callStackSymbols.joined(separator:"\n")+"\n",stderr)
+                _exit(86)
+            }
+        }
+        NSApplication.shared.setActivationPolicy(.regular)
+        Task { @MainActor in
+            do {try await run();returnedFromRun=true;exit(0)}
+            catch {returnedFromRun=true;print("BROWSER_WEBSITE_PROTECTION_FAILED",error);exit(1)}
+        }
+        NSApp.run()
+    }
 }

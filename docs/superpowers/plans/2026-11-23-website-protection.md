@@ -31,10 +31,10 @@
 
 **Interfaces:** Produce `WebsiteThreatCatalog(domains: Data, metadata: Data) throws`, immutable `metadata`, `domainCount`, `threat(for: URL) -> WebsiteThreat?`, and `isStale(at: Date) -> Bool`. `WebsiteThreat` exposes canonical destination `host` and `listedHost`; metadata carries provider, source revision/date, SHA-256 and count. Constructor failures use `WebsiteThreatCatalogError`.
 
-- [ ] Write literal core checks for listed/subdomain/lookalike, IDNA/encoded/root-dot/user-info cases, invalid catalogs, non-web/IP destinations and the exact 30-day freshness boundary. Run before implementation; expected missing-catalog API RED, not a fixture typo.
-- [ ] Implement bounded validated parsing and canonical host classification. Run `./scripts/build.sh website-protection-core-test`; expected all behavioral checks pass.
-- [ ] Bundle the byte-exact pinned source, license and provenance; add a maintainer command that validates new source and refuses an invalid replacement. Test its actual output, digest/count and bad-input refusal using owned fixture inputs; no source-text assertions.
-- [ ] Copy resources into both app bundles and manual test executables, verify provenance/license during packaging, and add core checks to the existing full-test command. Verify actual pinned feed loading and independent sample membership without visiting threats. Commit.
+- [x] Write literal core checks for listed/subdomain/lookalike, IDNA/encoded/root-dot/user-info cases, invalid catalogs, non-web/IP destinations and the exact 30-day freshness boundary. Run before implementation; expected missing-catalog API RED, not a fixture typo.
+- [x] Implement bounded validated parsing and canonical host classification. Run `./scripts/build.sh website-protection-core-test`; expected all behavioral checks pass.
+- [x] Bundle the byte-exact pinned source, license and provenance; add a maintainer command that validates new source and refuses an invalid replacement. Test its actual output, digest/count and bad-input refusal using owned fixture inputs; no source-text assertions.
+- [x] Copy resources into both app bundles and manual test executables, verify provenance/license during packaging, and add core checks to the existing full-test command. Verify actual pinned feed loading and independent sample membership without visiting threats. Commit.
 
 ### Task 2: Gate real requests and present native warnings
 
@@ -42,7 +42,7 @@
 
 **Interfaces:** Consume Task 1 catalog. Service asynchronously returns listed/not-listed/unavailable plus freshness. Ticket captures a real WebKit decision and existing source lifetime, resolving it once; native overlay binds to that ticket. Exact helper names are settled after the native redirect characterization, without altering this contract.
 
-- [ ] First characterize actual WebKit redirects with owned 127.0.0.1/localhost endpoints and record the action/response policy order. Write native RED fixtures proving a listed endpoint currently receives a request and no warning is shown.
+- [x] First characterize actual WebKit redirects with owned 127.0.0.1/localhost endpoints and record the action/response policy order. Write native RED fixtures proving a listed endpoint currently receives a request and no warning is shown.
 - [ ] Implement asynchronous loading and exact-request tickets before the existing extension preparation/routing consumer; preserve original action semantics. Add cancellation to real lifecycle boundaries. Run owned request tests; expected blocked target count zero, original method/body/frame/download on explicit continuation, and no stale approvals.
 - [ ] Implement the native page overlay with safe keyboard defaults and visible unavailable/stale state. Add actual control/lifetime/resize fixtures; test in the VM with an owned temporary metadata key, then quit the QA app.
 - [ ] Run nearby extension-navigation, page-output/lifetime and multi-window suites, full exact-source hosted CI, and ZIP/mounted-DMG resource verification. One fresh whole-branch review, one material fix pass, record every remaining limitation. Integrate/publish only verified behavior; do not mark the full browser goal complete.

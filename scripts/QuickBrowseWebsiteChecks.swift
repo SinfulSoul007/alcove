@@ -13,17 +13,16 @@ enum QuickWebsiteError: Error { case fixtureMissing, timedOut }
         self.store = store
         let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
         unowned = WKWebView(frame: .zero, configuration: config)
+        super.init()
+        unowned.navigationDelegate = self
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        guard let store else { decisionHandler(.cancel); return }
-        store.webView(webView, decidePolicyFor: action, decisionHandler: decisionHandler)
+        decisionHandler(.allow)
     }
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         guard let store else { decisionHandler(.cancel); return }
-        store.webView(unowned, decidePolicyFor: response) { self.unownedPolicy = $0 }
-        store.webView(webView, decidePolicyFor: response, decisionHandler: decisionHandler)
+        store.webView(webView, decidePolicyFor: response) { self.unownedPolicy = $0; decisionHandler($0) }
     }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { store?.webView(webView, didFinish: navigation) }
 }
 
 @main struct QuickBrowseWebsiteChecks {
@@ -54,8 +53,10 @@ enum QuickWebsiteError: Error { case fixtureMissing, timedOut }
         let quickA = try store.openQuickPage(url: initial, profileID: a, intendedSpaceID: spaceA)
         var webA: WKWebView? = store.view(for: quickA)
         webA!.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
-        var probe: ResponsePolicyProbe? = ResponsePolicyProbe(store: store); webA!.navigationDelegate = probe
+        var probe: ResponsePolicyProbe? = ResponsePolicyProbe(store: store)
+        probe!.unowned.load(URLRequest(url:initial))
         try await ready(webA!, url: landing)
+        for _ in 0..<500 where probe!.unownedPolicy == nil {try await Task.sleep(for:.milliseconds(20))}
         check(probe!.unownedPolicy == .cancel, "A real stale response cannot navigate or start a download from an unowned page")
         let repeated = try store.openQuickPage(url: initial, profileID: a)
         check(repeated == quickA && store.views[quickA] === webA, "Repeating a real redirected external URL retains its existing live page")
@@ -220,6 +221,7 @@ enum QuickWebsiteError: Error { case fixtureMissing, timedOut }
         while store.closingPages.contains(where: { $0.webView != nil }) && clock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
         store.namedDataStores.removeAll()
         if !(await owned.cleanup()) { failures += 1 }
+        print("REAL_QUICK_BROWSE_WEBSITE_CHECKS_FAILURES",failures)
         exit(failures == 0 ? 0 : 1)
     }
 }

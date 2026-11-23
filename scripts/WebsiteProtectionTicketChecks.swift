@@ -53,6 +53,17 @@ import BrowserCore
         _=await delayed.load()
         await Task.yield()
         check(late==[false],"A late catalog result cannot revive a canceled native request")
+        let destination=BrowserStore(isPrivate:true,dataRoot:root.appendingPathComponent("destination"),websiteProtection:service)
+        defer {destination.shutdown()}
+        let movingID=store.newTab(),movingWeb=store.view(for:movingID)
+        var transferred=[Bool]()
+        guard let moving=store.decideWebsiteProtection(movingWeb,url:url,kind:.navigation(isMainFrame:true),decision:{transferred.append($0)}) else {throw Failure.fixture}
+        store.update(movingID){$0.url=url.absoluteString;$0.title="Pending destination"}
+        guard let retained=store.takeRegisteredView(movingID,transferringTo:destination) else {throw Failure.fixture}
+        moving.approve(expectedRevision:moving.revision)
+        check(retained.web === movingWeb && transferred==[false],"Moving a registered page cancels its old warning exactly once")
+        check(store.tab(movingID)?.url=="","Moving a page restores its original displayed address before detaching the view")
+        check(store.tab(movingID)?.title=="New Tab","Canceling a warning on an untitled blank page restores New Tab")
         var shutdown=[Bool]()
         _=store.decideWebsiteProtection(webA,url:url,kind:.navigation(isMainFrame:true)){shutdown.append($0)}
         store.shutdown()

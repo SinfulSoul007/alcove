@@ -107,6 +107,7 @@ extension BrowserStore {
         guard let index = downloads.firstIndex(where: { $0.id == id && $0.profileID == activeProfileID }),
               case .downloading(let transfer) = downloads[index].state else { return }
         downloads[index].state = .canceling(transfer)
+        cancelDownloadWebsiteProtection(transfer.download)
         transfer.download.cancel { [weak self, staging = transfer.staging] _ in
             staging.discard()
             guard let self, let index = self.downloads.firstIndex(where: { $0.id == id }),
@@ -121,7 +122,39 @@ extension BrowserStore {
             return
         }
         pendingDownloadProfiles.setObject(profileID as NSUUID, forKey: download)
+        downloadProtectionSources.setObject(WebsiteProtectionSource(store:self,web:webView,profileID:profileID),forKey:download)
         download.delegate = self
+    }
+
+    private func websiteProtectionOwner(of download:WKDownload) -> UUID? {
+        guard !isShuttingDown else {return nil}
+        let active=downloads.first { item in
+            if case .downloading(let transfer)=item.state {return transfer.download === download}
+            return false
+        }?.profileID
+        guard let profile=(pendingDownloadProfiles.object(forKey:download) as UUID?) ?? active,
+              !profileUnavailable(profile) else {return nil}
+        return profile
+    }
+
+    private func cancelDownloadWebsiteProtection(_ download:WKDownload) {
+        downloadProtectionTickets.object(forKey:download)?.cancel()
+        downloadProtectionTickets.removeObject(forKey:download)
+        downloadProtectionSources.removeObject(forKey:download)
+    }
+
+    func download(_ download:WKDownload,willPerformHTTPRedirection response:HTTPURLResponse,newRequest request:URLRequest,decisionHandler:@escaping(WKDownload.RedirectPolicy)->Void) {
+        guard let profile=websiteProtectionOwner(of:download),let url=request.url,
+              ["http","https"].contains(url.scheme?.lowercased() ?? "") else {decisionHandler(.cancel);return}
+        // An unlisted background download can keep running after its page closes.
+        if let assessment=websiteProtection.cachedAssessment(for:url),case .unlisted=assessment {decisionHandler(.allow);return}
+        guard let source=downloadProtectionSources.object(forKey:download),source.profileID==profile,
+              source.currentWeb != nil,downloadProtectionTickets.object(forKey:download)?.isPending != true else {decisionHandler(.cancel);return}
+        let ticket=decideWebsiteProtection(source,url:url,kind:.download) { [weak self,weak download] approved in
+            guard approved,let self,let download,self.websiteProtectionOwner(of:download)==profile else {decisionHandler(.cancel);return}
+            decisionHandler(.allow)
+        }
+        if let ticket {downloadProtectionTickets.setObject(ticket,forKey:download)}
     }
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
@@ -132,6 +165,7 @@ extension BrowserStore {
             self.pendingDownloadProfiles.removeObject(forKey: download)
             let profileID = owner as UUID
             guard result == .OK, let url = panel.url, !self.isShuttingDown, !self.profileUnavailable(profileID) else {
+                self.cancelDownloadWebsiteProtection(download)
                 completionHandler(nil)
                 return
             }
@@ -143,6 +177,7 @@ extension BrowserStore {
                 if !self.libraryVisible && profileID == self.activeProfileID { self.librarySection = .downloads }
                 completionHandler(staging.fileURL)
             } catch {
+                self.cancelDownloadWebsiteProtection(download)
                 if profileID == self.activeProfileID { self.message = "Download failed: \(error.localizedDescription)" }
                 completionHandler(nil)
             }
@@ -150,6 +185,7 @@ extension BrowserStore {
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        cancelDownloadWebsiteProtection(download)
         if let index = downloads.firstIndex(where: { $0.state.transfer?.download === download }) {
             downloads[index].state.transfer?.staging.discard()
             if case .canceling = downloads[index].state {
@@ -165,6 +201,7 @@ extension BrowserStore {
     }
 
     func downloadDidFinish(_ download: WKDownload) {
+        cancelDownloadWebsiteProtection(download)
         guard let index = downloads.firstIndex(where: { $0.state.transfer?.download === download }),
               let transfer = downloads[index].state.transfer else { return }
         if case .canceling = downloads[index].state {
