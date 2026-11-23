@@ -175,7 +175,7 @@ jobs:
           cat > release-notes.txt <<'NOTE'
           Universal macOS 14+ preview for Apple Silicon and Intel.
 
-          This patch preserves saved extension settings and approvals during ordinary reloads while retiring the old extension pages' access. Saved extension metadata recovers more reliably. Website scheduling stays consistent across normal and private pages, Quick Browse popups and Peek transitions.
+          Command-Q now works while a clean Library, Settings, Profiles, Updates, Site Search, Link Routing or Appearance panel is open. Unsaved route, search shortcut and Space-name drafts keep their protection until saved or discarded. Native confirmation panels and pending save/print operations retain their normal Quit choices.
 
           If the active tab scrolls out of view, click the arrow in its sidebar section to bring it back. A dot marks the collapsed folder or Pinned heading that contains the active tab. The arrow can reveal an offscreen folder while keeping it closed.
 
@@ -227,7 +227,7 @@ jobs:
 
           The native extension manager has limited tested compatibility with uBlock Origin Lite. Full uBlock Origin support is still in development. Native extension APIs need macOS 15.4+. Private request-blocking extensions need a fixed system WebKit (624.1.16 or later).
 
-          Alcove 0.19.1 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
+          Alcove 0.19.2 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
 
           SHA256SUMS.txt contains checksums for both installers. Checksums detect changed bytes; they do not establish developer identity.
           NOTE
