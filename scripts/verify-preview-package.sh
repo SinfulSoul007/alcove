@@ -34,6 +34,8 @@ for medium in zip dmg; do
     codesign --verify --deep --strict --all-architectures "$app"
     lipo "$app/Contents/MacOS/Alcove" -verify_arch arm64 x86_64
     cmp scripts/Info.plist "$app/Contents/Info.plist"
+    python3 scripts/refresh-website-protection.py --verify "$app/Contents/Resources/WebsiteProtection"
+    diff -qr Resources/WebsiteProtection "$app/Contents/Resources/WebsiteProtection"
 done
 cmp "$stage/zip/Alcove.app/Contents/MacOS/Alcove" "$stage/dmg/Alcove.app/Contents/MacOS/Alcove"
 hdiutil detach "$stage/dmg"

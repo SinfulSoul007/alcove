@@ -33,6 +33,16 @@ import BrowserCore
         }
         let catalog = try WebsiteThreatCatalog(domains: rows, metadata: metadata())
         check(catalog.domainCount == 3 && catalog.metadata.provider == "PhishDestroy", "Verified source count and provider survive catalog loading")
+        for (name, bytes, count) in [
+            ("CRLF source rows preserve physical domain boundaries", Data("phishing.example\r\nxn--bcher-kva.example\r\nlogin.bad.example\r\n".utf8), 3),
+            ("Mixed LF and CRLF source rows preserve physical domain boundaries", Data("phishing.example\nxn--bcher-kva.example\r\n".utf8), 2)
+        ] {
+            do {
+                let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+                let source = try WebsiteThreatCatalog(domains: bytes, metadata: metadata(["sha256": digest, "domainCount": count]))
+                check(source.domainCount == count && source.threat(for: URL(string: "https://bücher.example/")!)?.listedHost == "xn--bcher-kva.example", name)
+            } catch {check(false, name + " (" + String(describing: error) + ")")}
+        }
         let matches: [(String, String, String)] = [
             ("https://phishing.example/login?secret=owned#fragment", "phishing.example", "phishing.example"),
             ("HTTP://PHISHING.EXAMPLE:8080/", "phishing.example", "phishing.example"),
@@ -93,8 +103,9 @@ import BrowserCore
         let invalidUTF8 = Data([0xff, 0xfe])
         try rejected("Non-UTF8 threat data is rejected", .invalidDomains, domains: invalidUTF8, changes: ["sha256": SHA256.hash(data: invalidUTF8).map { String(format: "%02x", $0) }.joined(), "domainCount": 1])
 
-        if let path = CommandLine.arguments.dropFirst().first {
-            let root = URL(fileURLWithPath: path)
+        do {
+            guard let root = CommandLine.arguments.dropFirst().first.map({ URL(fileURLWithPath: $0) }) ??
+                Bundle.main.resourceURL?.appendingPathComponent("WebsiteProtection") else {throw CocoaError(.fileReadNoSuchFile)}
             let source = try WebsiteThreatCatalog(domains: Data(contentsOf: root.appendingPathComponent("domains.txt")), metadata: Data(contentsOf: root.appendingPathComponent("source.json")))
             let license = try Data(contentsOf: root.appendingPathComponent("LICENSE.PhishDestroy.txt"))
             let digest = SHA256.hash(data: license).map { String(format: "%02x", $0) }.joined()

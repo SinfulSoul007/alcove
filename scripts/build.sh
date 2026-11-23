@@ -10,6 +10,11 @@ OUT="${BROWSER_OUTPUT:-build/Alcove.app}"
 MANUAL="$PWD/.build/manual/$ARCH"
 FLAGS=(-sdk "$SDK" -module-cache-path "$PWD/.build/cache" -target "$ARCH-apple-macosx14.0")
 mkdir -p "$MANUAL" "$OUT/Contents/MacOS"
+python3 scripts/refresh-website-protection.py --verify Resources/WebsiteProtection
+mkdir -p "$MANUAL/WebsiteProtection"
+for resource in domains.txt source.json LICENSE.PhishDestroy.txt; do
+    cp "Resources/WebsiteProtection/$resource" "$MANUAL/WebsiteProtection/$resource"
+done
 xcrun swiftc "${FLAGS[@]}" -emit-module -emit-library -enable-testing -module-name BrowserCore Sources/BrowserCore/*.swift -o "$MANUAL/libBrowserCore.dylib" -emit-module-path "$MANUAL/BrowserCore.swiftmodule"
 run_window_model_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/BrowserWindowWorkspaceChecks.swift -o "$MANUAL/window-workspace-checks"
@@ -100,7 +105,7 @@ run_extension_core_checks() {
 if [[ "${1:-}" == "extension-core-test" ]]; then run_extension_core_checks; exit; fi
 run_website_threat_core_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/WebsiteThreatCoreChecks.swift -o "$MANUAL/website-threat-core-checks"
-    "$MANUAL/website-threat-core-checks" "$PWD/Resources/WebsiteProtection"
+    "$MANUAL/website-threat-core-checks"
 }
 if [[ "${1:-}" == "website-protection-core-test" ]]; then run_website_threat_core_checks; exit; fi
 run_extension_download_checks() {
@@ -366,6 +371,7 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
 fi
 if [[ "${1:-}" == "test" ]]; then
     run_website_threat_core_checks
+    python3 scripts/WebsiteThreatResourceChecks.py
     run_extension_core_checks
     run_extension_download_checks
     run_extension_store_checks
@@ -466,6 +472,10 @@ if [[ ! -f .build/resources/Alcove.icns || scripts/Icon.swift -nt .build/resourc
 fi
 cp .build/resources/Alcove.icns "$OUT/Contents/Resources/Alcove.icns"
 cp LICENSE "$OUT/Contents/Resources/LICENSE.txt"
+mkdir -p "$OUT/Contents/Resources/WebsiteProtection"
+for resource in domains.txt source.json LICENSE.PhishDestroy.txt; do
+    cp "Resources/WebsiteProtection/$resource" "$OUT/Contents/Resources/WebsiteProtection/$resource"
+done
 cp scripts/Info.plist "$OUT/Contents/Info.plist"
 if [[ -n "${BROWSER_BUNDLE_ID:-}" ]]; then
     /usr/libexec/PlistBuddy -c "Set CFBundleIdentifier $BROWSER_BUNDLE_ID" "$OUT/Contents/Info.plist"

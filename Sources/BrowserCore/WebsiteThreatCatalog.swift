@@ -47,14 +47,15 @@ public struct WebsiteThreatCatalog: Sendable {
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         guard digest == metadata.sha256 else { throw WebsiteThreatCatalogError.checksumMismatch }
         guard let text = String(data: data, encoding: .utf8) else { throw WebsiteThreatCatalogError.invalidDomains }
-        var rows = text.split(separator: "\n", omittingEmptySubsequences: false)
+        var rows = text.utf8.split(separator: 10, omittingEmptySubsequences: false)
         if rows.last?.isEmpty == true { rows.removeLast() }
         guard rows.count == metadata.domainCount else { throw WebsiteThreatCatalogError.invalidDomains }
         var domains = Set<String>()
         domains.reserveCapacity(metadata.domainCount)
         for var row in rows {
-            if row.hasSuffix("\r") { row = row.dropLast() }
-            guard Self.isDNSName(row), domains.insert(String(row)).inserted else { throw WebsiteThreatCatalogError.invalidDomains }
+            if row.last == 13 { row = row.dropLast() }
+            let domain = String(decoding: row, as: UTF8.self)
+            guard Self.isDNSName(domain[...]), domains.insert(domain).inserted else { throw WebsiteThreatCatalogError.invalidDomains }
         }
         self.metadata = metadata
         self.domains = domains
