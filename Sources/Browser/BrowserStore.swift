@@ -621,21 +621,22 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if action.targetFrame?.isMainFrame != false {cancelWebsiteProtectionTickets(for:webView)}
-        guard let url=action.request.url,["http","https"].contains(url.scheme?.lowercased() ?? "") else {
-            continueBrowserNavigation(webView,action:action,decisionHandler:decisionHandler);return
-        }
-        decideWebsiteProtection(webView,url:url,kind:action.shouldPerformDownload ? .download:.navigation(isMainFrame:action.targetFrame?.isMainFrame != false)) { [weak self,weak webView] approved in
-            guard approved,let self,let webView else {decisionHandler(.cancel);return}
-            self.continueBrowserNavigation(webView,action:action,decisionHandler:decisionHandler)
-        }
+        continueBrowserNavigation(webView,action:action,decisionHandler:decisionHandler)
     }
     private func continueBrowserNavigation(_ webView:WKWebView,action:WKNavigationAction,decisionHandler:@escaping(WKNavigationActionPolicy)->Void) {
+        guard !isShuttingDown,let owner = profileID(for: webView), !profileUnavailable(owner), let url = action.request.url else { decisionHandler(.cancel); return }
+        let protectionSource:WebsiteProtectionSource?
+        if ["http","https"].contains(url.scheme?.lowercased() ?? "") {
+            let source=WebsiteProtectionSource(store:self,web:webView,profileID:owner)
+            guard source.currentWeb != nil else {decisionHandler(.cancel);return}
+            protectionSource=source
+        } else {protectionSource=nil}
         if action.targetFrame?.isMainFrame != false {beginExtensionMainNavigation(webView)}
-        guard let owner = profileID(for: webView), !profileUnavailable(owner), let url = action.request.url else { decisionHandler(.cancel); return }
         guard ["https", "http", "about", "blob", "data"].contains(url.scheme?.lowercased() ?? "") || extensionHosting?.allowsExtensionURL(url,profileID:owner) == true else {
             decisionHandler(.cancel); message = "This prototype only opens web links (http and https)."; return
         }
-        if action.navigationType == .linkActivated && action.modifierFlags.contains(.shift) && ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+        if action.navigationType == .linkActivated && action.modifierFlags.contains(.shift) && !action.shouldPerformDownload,
+           (action.request.httpMethod ?? "GET").uppercased()=="GET",ExtensionNavigationProblem.canReplay(action.request),["http", "https"].contains(url.scheme?.lowercased() ?? "") {
             decisionHandler(.cancel); openPeek(url, from: webView); return
         }
         if action.targetFrame?.isMainFrame != false,extensionOriginPopups.contains(webView),["http","https"].contains(url.scheme?.lowercased() ?? "") {
@@ -663,7 +664,15 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             }
             return
         }
-        decideExtensionNavigation(webView,request:action.request,isMainFrame:action.targetFrame?.isMainFrame != false,allow:action.shouldPerformDownload ? .download : .allow,decision:decisionHandler)
+        // A rerouted request is checked in its actual destination view, once.
+        if let protectionSource {
+            decideWebsiteProtection(protectionSource,url:url,kind:action.shouldPerformDownload ? .download:.navigation(isMainFrame:action.targetFrame?.isMainFrame != false)) { [weak self,weak webView] approved in
+                guard approved,let self,let webView else {decisionHandler(.cancel);return}
+                self.decideExtensionNavigation(webView,request:action.request,isMainFrame:action.targetFrame?.isMainFrame != false,allow:action.shouldPerformDownload ? .download:.allow,decision:decisionHandler)
+            }
+        } else {
+            decideExtensionNavigation(webView,request:action.request,isMainFrame:action.targetFrame?.isMainFrame != false,allow:action.shouldPerformDownload ? .download : .allow,decision:decisionHandler)
+        }
     }
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         guard let owner = profileID(for: webView), !profileUnavailable(owner) else { decisionHandler(.cancel); return }

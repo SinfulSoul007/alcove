@@ -161,6 +161,98 @@ import Darwin
             check((try? await web.evaluateJavaScript("window.ownedOriginalDocument===true&&document.getElementById('token')?.value==='typed-owned'")) as? Bool==true,name+": download decisions keep the typed page")
             withExtendedLifetime(nativeDownload) {}
         }
+        let shiftCase="browser-shift-peek"
+        web.load(URLRequest(url:URL(string:"http://safe.alcove.example/form?case=baseline-"+shiftCase)!))
+        try await ready(web,host:"safe.alcove.example")
+        let coordinates=try await web.evaluateJavaScript("""
+            window.ownedOriginalDocument=true;document.getElementById('token').value='typed-owned';
+            const ownedLink=document.createElement('a');ownedLink.href='http://listed.alcove.example/target?case=browser-shift-peek';
+            ownedLink.textContent='Owned preview';ownedLink.style.display='block';document.body.appendChild(ownedLink);
+            ownedLink.addEventListener('click',event=>{window.ownedShiftClick={shift:event.shiftKey,trusted:event.isTrusted};});
+            const ownedRect=ownedLink.getBoundingClientRect();[ownedRect.x+ownedRect.width/2,ownedRect.y+ownedRect.height/2];
+            """) as? [Double]
+        guard let coordinates,coordinates.count==2 else {throw Failure.fixture}
+        let point=web.convert(NSPoint(x:coordinates[0],y:web.isFlipped ? coordinates[1]:web.bounds.height-coordinates[1]),to:nil)
+        window.makeFirstResponder(web)
+        for type:NSEvent.EventType in [.leftMouseDown,.leftMouseUp] {
+            guard let event=NSEvent.mouseEvent(with:type,location:point,modifierFlags:.shift,timestamp:ProcessInfo.processInfo.systemUptime,windowNumber:window.windowNumber,context:nil,eventNumber:1,clickCount:1,pressure:type == .leftMouseDown ? 1:0) else {throw Failure.fixture}
+            window.sendEvent(event)
+        }
+        for _ in 0..<250 {
+            if store.primaryPeekView != nil || store.websiteProtectionTicket(for:web) != nil {break}
+            try await Task.sleep(for:.milliseconds(20))
+        }
+        let trustedShift=(try? await web.evaluateJavaScript("window.ownedShiftClick?.shift===true&&window.ownedShiftClick?.trusted===true")) as? Bool==true
+        check(trustedShift,"A real native shift-click reaches the owned page")
+        guard trustedShift else {throw Failure.fixture}
+        let peek=store.primaryPeekView
+        check(peek != nil && store.websiteProtectionTicket(for:web)==nil,"Shift-click routes the request to Peek before presenting its website warning")
+        let peekHost=EdgeToEdgeWebHost(frame:host.bounds)
+        if let peek {WebPane(webView:peek,store:store).mount(in:peekHost);window.contentView=peekHost}
+        var peekSafe:NSButton?
+        for _ in 0..<250 {
+            peekSafe=descendants(peekHost).first{$0.identifier?.rawValue=="AlcoveWebsiteProtectionSafe" && !$0.isHiddenOrHasHiddenAncestor} as? NSButton
+            if peekSafe != nil || peek==nil {break}
+            try await Task.sleep(for:.milliseconds(20))
+        }
+        check(peekSafe != nil,"Only the actual Peek presents the native warning")
+        check(try await targetRequests(shiftCase).isEmpty,"A blocked Peek request never contacts its target before choice")
+        if let peekSafe {peekSafe.performClick(nil)} else {store.websiteProtectionTicket(for:web)?.cancel()}
+        check(try await targetRequests(shiftCase).isEmpty,"Safe cancellation of the Peek keeps the target untouched")
+        store.closePrimaryPeek();window.contentView=host
+        check((try? await web.evaluateJavaScript("window.ownedOriginalDocument===true&&document.getElementById('token')?.value==='typed-owned'")) as? Bool==true,"Canceling a blocked Peek preserves its original parent form")
+        web.load(URLRequest(url:URL(string:"http://listed.alcove.example/form?case=baseline-shift-download")!))
+        var baselineContinue:NSButton?
+        for _ in 0..<250 {
+            baselineContinue=descendants(host).first{$0.identifier?.rawValue=="AlcoveWebsiteProtectionContinue" && !$0.isHiddenOrHasHiddenAncestor} as? NSButton
+            if baselineContinue != nil {break}
+            try await Task.sleep(for:.milliseconds(20))
+        }
+        guard let baselineContinue else {throw Failure.fixture}
+        baselineContinue.performClick(nil);try await ready(web,host:"listed.alcove.example")
+        let downloadCoordinates=try await web.evaluateJavaScript("""
+            window.ownedOriginalDocument=true;document.getElementById('token').value='typed-owned';
+            const downloadLink=document.createElement('a');downloadLink.href='http://listed.alcove.example/target?case=browser-shift-download';
+            downloadLink.download='owned-page.html';downloadLink.textContent='Owned download';downloadLink.style.display='block';document.body.appendChild(downloadLink);
+            downloadLink.addEventListener('click',event=>{window.ownedDownloadClick=event.shiftKey&&event.isTrusted;});
+            const downloadRect=downloadLink.getBoundingClientRect();[downloadRect.x+downloadRect.width/2,downloadRect.y+downloadRect.height/2];
+            """) as? [Double]
+        guard let downloadCoordinates,downloadCoordinates.count==2 else {throw Failure.fixture}
+        let downloadPoint=web.convert(NSPoint(x:downloadCoordinates[0],y:web.isFlipped ? downloadCoordinates[1]:web.bounds.height-downloadCoordinates[1]),to:nil)
+        window.makeFirstResponder(web)
+        for type:NSEvent.EventType in [.leftMouseDown,.leftMouseUp] {
+            guard let event=NSEvent.mouseEvent(with:type,location:downloadPoint,modifierFlags:.shift,timestamp:ProcessInfo.processInfo.systemUptime,windowNumber:window.windowNumber,context:nil,eventNumber:2,clickCount:1,pressure:type == .leftMouseDown ? 1:0) else {throw Failure.fixture}
+            window.sendEvent(event)
+        }
+        for _ in 0..<250 {
+            if store.websiteProtectionTicket(for:web) != nil || store.primaryPeekView != nil {break}
+            try await Task.sleep(for:.milliseconds(20))
+        }
+        let downloadClick=(try? await web.evaluateJavaScript("window.ownedDownloadClick===true")) as? Bool==true
+        check(downloadClick,"A real native shift-download reaches the owned page")
+        guard downloadClick else {throw Failure.fixture}
+        let downloadTicket=store.websiteProtectionTicket(for:web)
+        var downloadKind=false
+        if let downloadTicket,case .download=downloadTicket.kind {downloadKind=true}
+        check(downloadKind,"A native shift-download is captured as a download")
+        var downloadContinue:NSButton?
+        for _ in 0..<250 {
+            downloadContinue=descendants(host).first{$0.identifier?.rawValue=="AlcoveWebsiteProtectionContinue" && !$0.isHiddenOrHasHiddenAncestor} as? NSButton
+            if downloadContinue != nil || store.primaryPeekView != nil {break}
+            try await Task.sleep(for:.milliseconds(20))
+        }
+        downloadContinue?.performClick(nil)
+        var downloadOffered=false
+        for _ in 0..<750 {
+            if let panel=NSApp.windows.first(where:{$0 is NSSavePanel && $0.isVisible}) as? NSSavePanel {downloadOffered=true;panel.cancel(nil);break}
+            if store.primaryPeekView != nil {break}
+            try await Task.sleep(for:.milliseconds(20))
+        }
+        check(downloadOffered,"A shift-download continues to the original native destination chooser")
+        check(store.primaryPeekView==nil,"A shift-download never becomes a Peek page")
+        check(try await targetRequests("browser-shift-download").count==1,"A shift-download sends exactly its captured native request")
+        store.closePrimaryPeek()
+        check((try? await web.evaluateJavaScript("window.ownedOriginalDocument===true&&document.getElementById('token')?.value==='typed-owned'")) as? Bool==true,"A shift-download preserves its original page and typed form")
         check(!FileManager.default.fileExists(atPath:root.appendingPathComponent("metadata").path),"Private warning browsing saves no metadata directory")
         print("BROWSER_WEBSITE_PROTECTION_CHECKS",checks,"FAILURES",failures)
         if failures>0 {throw Failure.checks(failures)}

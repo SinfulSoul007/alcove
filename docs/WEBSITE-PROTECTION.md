@@ -11,8 +11,21 @@ match means unlisted. It does not classify page content, URL paths, IP addresses
 or downloaded files. Its content date determines the thirty-day freshness limit.
 Catalog updates initially ship in app releases.
 
-At this development checkpoint, catalog validation and packaging are implemented;
-the native navigation gate and visible warnings are still in progress.
+The development branch includes native warnings that hold the original WebKit
+request. Go back cancels it and keeps the current page; Open anyway continues
+that request. Forms, embedded pages and downloads keep their original request
+semantics. Shift-click links are checked in their Peek, while Shift-click
+downloads retain the native download chooser. There is no permanent allow list.
+
+Settings shows whether the local list is loading, available, older than thirty
+days or unavailable, together with its provider and content date. Missing or
+invalid data requires an explicit choice before an unchecked address opens.
+This local check does not upload browsing addresses or save warning approvals.
+An unlisted address can still be harmful.
+
+Broader surface and lifecycle qualification, accessibility checks and the final
+feature review remain in progress. This feature does not establish complete
+phishing or malware protection, or make the preview a stable release.
 
 ## Maintainer refresh
 

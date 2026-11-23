@@ -191,6 +191,7 @@ struct SettingsPanel: View {
                     }
                 }.font(.system(size: 12)).padding(8).frame(maxWidth: .infinity, alignment: .leading)
             }
+            WebsiteProtectionSettings(service: store.websiteProtection) { store.updatesVisible = true }
             GroupBox("Tabs") {
                 VStack(alignment: .leading, spacing: 12) {
                     Toggle("Suspend idle background tabs after six live pages", isOn: $store.preferences.suspendTabs)
