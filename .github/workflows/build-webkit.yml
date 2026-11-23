@@ -1,8 +1,8 @@
-name: Build and test WebKit page privacy
+name: Build and test WebKit runtime errors
 
 on:
   push:
-    branches: [research/webkit-page-privacy]
+    branches: [research/webkit-runtime-errors]
 
 permissions:
   contents: read
@@ -64,7 +64,7 @@ jobs:
         timeout-minutes: 351
         run: |
           set -euo pipefail
-          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy webkit-runtime-update-event webkit-privacy-overlay webkit-privacy-api webkit-native-allocators webkit-menu-targets webkit-privacy-result-string webkit-privacy-page-construction; do
+          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy webkit-runtime-update-event webkit-privacy-overlay webkit-privacy-api webkit-native-allocators webkit-menu-targets webkit-privacy-result-string webkit-privacy-page-construction webkit-runtime-last-error; do
             patch="$GITHUB_WORKSPACE/diagnostics/$name.patch"
             git apply --check "$patch"
             git apply "$patch"
@@ -113,7 +113,7 @@ jobs:
             local result=$?
             if (( result != 0 )); then
               printf 'NATIVE_PROBE_FAILURE %s\n' "$result"
-              for log in "$scratch/requests.log" "$scratch/prediction.log" "$scratch/rtc.log"; do
+              for log in "$scratch/requests.log" "$scratch/prediction.log" "$scratch/rtc.log" "$scratch/http-startup-sample.txt" "$scratch/https-startup-sample.txt" "$scratch/rtc-startup-sample.txt"; do
                 if [[ -f "$log" ]]; then printf 'NATIVE_FIXTURE_LOG %s\n' "$log"; cat "$log"; fi
               done
             fi
@@ -124,6 +124,28 @@ jobs:
             return "$result"
           }
           trap cleanup EXIT
+          # Observe live fixture initialization separately from native API outcomes.
+          # A missing port after the deadline remains a failed gate.
+          # ALCOVE_FIXTURE_READINESS_BEGIN
+          wait_for_fixture_port() {
+            local port_file="$1" fixture_pid="$2" fixture_name="$3"
+            local fixture_deadline=$((SECONDS + 60))
+            while [[ ! -s "$port_file" ]]; do
+              if ! kill -0 "$fixture_pid" 2>/dev/null; then
+                printf 'NATIVE_FIXTURE_EXITED %s\n' "$fixture_name"
+                wait "$fixture_pid" || true
+                return 1
+              fi
+              if (( SECONDS >= fixture_deadline )); then
+                printf 'NATIVE_FIXTURE_READINESS_TIMEOUT %s\n' "$fixture_name"
+                /bin/ps -p "$fixture_pid" -o pid,ppid,etime,stat,comm || true
+                /usr/bin/sample "$fixture_pid" 2 -file "$scratch/$fixture_name-startup-sample.txt" || true
+                return 1
+              fi
+              sleep 0.1
+            done
+          }
+          # ALCOVE_FIXTURE_READINESS_END
           printf 'NATIVE_PROBE_STAGE compile-base\n'
           xcrun swiftc -parse-as-library diagnostics/webkit-extension-probe.swift diagnostics/webkit-request-cache-probe.swift \
             diagnostics/webkit-hyperlink-auditing-probe.swift diagnostics/webkit-network-prediction-probe.swift \
@@ -136,54 +158,46 @@ jobs:
           xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-menu-targets-probe.swift -o "$scratch/menu-probe"
           printf 'NATIVE_PROBE_STAGE compile-construction\n'
           xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-privacy-construction-probe.swift -o "$scratch/construction-probe"
+          printf 'NATIVE_PROBE_STAGE compile-runtime-error\n'
+          xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-runtime-error-probe.swift -o "$scratch/runtime-error-probe"
           printf 'NATIVE_PROBE_STAGE start-http\n'
           python3 diagnostics/webkit-probe-server.py "$scratch/port" > "$scratch/requests.log" 2>&1 &
           server=$!
-          for attempt in {1..100}; do
-            [[ ! -s "$scratch/port" ]] || break
-            kill -0 "$server"
-            sleep 0.1
-          done
-          test -s "$scratch/port"
+          wait_for_fixture_port "$scratch/port" "$server" http
           printf 'NATIVE_PROBE_STAGE generate-tls\n'
           bash diagnostics/webkit-prediction-tls.sh "$scratch"
           printf 'NATIVE_PROBE_STAGE start-https\n'
           python3 diagnostics/webkit-probe-server.py "$scratch/prediction-port" "$scratch/loopback.pem" "$scratch/loopback.key" > "$scratch/prediction.log" 2>&1 &
           prediction_server=$!
-          for attempt in {1..100}; do
-            [[ ! -s "$scratch/prediction-port" ]] || break
-            kill -0 "$prediction_server"
-            sleep 0.1
-          done
-          test -s "$scratch/prediction-port"
+          wait_for_fixture_port "$scratch/prediction-port" "$prediction_server" https
           printf 'NATIVE_PROBE_STAGE start-rtc\n'
           python3 diagnostics/webkit-stun-fixture.py "$scratch/rtc-port" > "$scratch/rtc.log" 2>&1 &
           rtc_server=$!
-          for attempt in {1..100}; do
-            [[ ! -s "$scratch/rtc-port" ]] || break
-            kill -0 "$rtc_server"
-            sleep 0.1
-          done
-          test -s "$scratch/rtc-port"
+          wait_for_fixture_port "$scratch/rtc-port" "$rtc_server" rtc
           navigation_status=0
           cache_status=0
           auditing_status=0
           prediction_status=0
           rtc_status=0
           construction_status=0
+          runtime_error_status=0
           update_status=0
           overlay_status=0
           privacy_status=0
           menu_status=0
           status=0
           printf 'NATIVE_PROBE_STAGE run-construction\n'
-          for mode in ordinary clipboard-expiry; do
-            arguments=()
-            if [[ "$mode" == clipboard-expiry ]]; then arguments+=(--clipboard-expiry); fi
+          run_construction() {
             ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
               perl -e '$ENV{DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; $ENV{__XPC_DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; alarm 90; exec @ARGV or die "construction probe failed to launch: $!"' \
-              "$scratch/construction-probe" "${arguments[@]}" || construction_status=$?
-          done
+              "$scratch/construction-probe" "$@" || construction_status=$?
+          }
+          run_construction
+          run_construction --clipboard-expiry
+          printf 'NATIVE_PROBE_STAGE run-runtime-error\n'
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            perl -e '$ENV{DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; $ENV{__XPC_DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; alarm 90; exec @ARGV or die "runtime-error probe failed to launch: $!"' \
+            "$scratch/runtime-error-probe" || runtime_error_status=$?
           printf 'NATIVE_PROBE_STAGE run-api-witnesses\n'
           ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
             "$scratch/update-probe" || update_status=$?
@@ -213,6 +227,7 @@ jobs:
           cat "$scratch/prediction.log"
           cat "$scratch/rtc.log"
           if (( construction_status != 0 )); then exit "$construction_status"; fi
+          if (( runtime_error_status != 0 )); then exit "$runtime_error_status"; fi
           if (( update_status != 0 )); then exit "$update_status"; fi
           if (( menu_status != 0 )); then exit "$menu_status"; fi
           if (( overlay_status != 0 )); then exit "$overlay_status"; fi

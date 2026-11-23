@@ -1,0 +1,49 @@
+diff --git a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm
+index fd20fc0..f7d7211 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm
++++ b/Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm
+@@ -324,13 +324,16 @@ - (instancetype)initWithAggregator:(WebKit::ReplyCallbackAggregator&)aggregator
+     WebProcess::singleton().send(Messages::WebExtensionContext::RuntimeReload(), extensionContext().identifier());
+ }
+ 
+-JSValue *WebExtensionAPIRuntime::lastError()
++JSValue *WebExtensionAPIRuntime::lastError(JSContextRef context)
+ {
+     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/lastError
+ 
+     m_lastErrorAccessed = true;
+ 
+-    return m_lastError.get();
++    if (m_lastError)
++        return m_lastError.get();
++
++    return [JSValue valueWithUndefinedInContext:[JSContext contextWithJSGlobalContextRef:JSContextGetGlobalContext(context)]];
+ }
+ 
+ void WebExtensionAPIRuntime::sendMessage(WebPageProxyIdentifier webPageProxyIdentifier, WebFrame& frame, const String& extensionID, const String& messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
+diff --git a/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h b/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h
+index a43964f..85ae956 100644
+--- a/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h
++++ b/Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h
+@@ -80,7 +80,7 @@ public:
+ 
+     String runtimeIdentifier();
+ 
+-    JSValue *lastError();
++    JSValue *lastError(JSContextRef);
+ 
+     void sendMessage(WebPageProxyIdentifier, WebFrame&, const String& extensionID, const String& messageJSON, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+     RefPtr<WebExtensionAPIPort> connect(WebPageProxyIdentifier, WebFrame&, JSContextRef, const String& extensionID, NSDictionary *options, NSString **outExceptionString);
+diff --git a/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl b/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl
+index 40047b9..515d4b9 100644
+--- a/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl
++++ b/Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl
+@@ -43,7 +43,7 @@
+     [MainWorldOnly] void openOptionsPage([Optional, CallbackHandler] function callback);
+     [MainWorldOnly] void reload();
+ 
+-    [MainWorldOnly] readonly attribute any lastError;
++    [MainWorldOnly, NeedsScriptContext] readonly attribute any lastError;
+ 
+     [ProcessArgumentsLeftToRight, RaisesException, NeedsPageIdentifier, NeedsFrame] void sendMessage([Optional] DOMString extensionID, [Serialization=JSON] any message, [Optional, NSDictionary] any options, [Optional, CallbackHandler] function callback);
+     [RaisesException, NeedsPageIdentifier, NeedsFrame, NeedsScriptContext] WebExtensionAPIPort connect([Optional] DOMString extensionID, [Optional, NSDictionary] any options);

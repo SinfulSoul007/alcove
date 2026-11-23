@@ -17,8 +17,8 @@ sdk = os.environ.get("ALCOVE_PROBE_SDK") or (
     subprocess.check_output(["xcrun", "--show-sdk-path"], text=True).strip())
 scripts = [code for code in re.findall(r"perl -e '([^']*)'", workflow.read_text())
            if "probe failed to launch" in code]
-if len(scripts) != 3:
-    raise SystemExit("Expected the actual privacy, menu and construction watchdogs")
+if len(scripts) != 4:
+    raise SystemExit("Expected the actual privacy, menu, construction and runtime-error watchdogs")
 
 with tempfile.TemporaryDirectory(prefix="alcove-watchdog-environment-") as scratch:
     root = Path(scratch)
