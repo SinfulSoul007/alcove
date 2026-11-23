@@ -1,0 +1,58 @@
+{
+  "formatVersion": 1,
+  "artifactID": 14795969764,
+  "archiveSHA256": "bffebbdccad4877250d1d515fa1a014321cdaa980d9de81fab7ea887edb0ba24",
+  "runtimeSHA256": "52cef56646fca1a6e08b06ca4b2d6cca848f42d2d22922f1015e8bd710ec10e3",
+  "wrapperCommit": "6666768cd9f6920bb06e9c9750b4eeae746223a6",
+  "webkitRevision": "26695efdefc6076049ec50713a2c4e54b90b4d47",
+  "patches": {
+    "webkit-before-send-cancellation.patch": "352f901848623646369c1c7cc32a517c9b40f5f459fabca33e7d69eafce2c524",
+    "webkit-hyperlink-auditing.patch": "494bbc86029c4a9de99931b6e022406b66c47c5e2f4d7533f8eaeaf74fcc5ee2",
+    "webkit-menu-targets.patch": "7e2607e9afa81af003cd9096dc73a9dd3e711dc64d80547d3a6153332f67a6f9",
+    "webkit-native-allocators.patch": "176700dc202ee54c8f78676695cdbb268a16f99c801e0c93f337754e126b759f",
+    "webkit-navigation-target.patch": "94af1d386a286dd5389228ee40481b22510394a6a8adc7baf7c96e3422e03bbd",
+    "webkit-network-prediction.patch": "c6c0e32a08953bfb5f10e6966c4ddfbb85ce392e7c488b185627982bb8efa624",
+    "webkit-privacy-api.patch": "b49923ff1bc51105593eea3b429a4d7e5a2b86766428fd9debc14589a75b8d12",
+    "webkit-privacy-overlay.patch": "84e14e0bdba2419428108d822854761efc19d4c5549a20150fe6cf7a4ba56d20",
+    "webkit-privacy-page-construction.patch": "4a430655e734ad0ee7e63179c155318af998e99d6a5e203bd423a639787346a3",
+    "webkit-privacy-result-string.patch": "016e50c8c51f9b96f3aa0bf7f4671504aea1a842a5f366cdf799abc4c293d8b8",
+    "webkit-rtc-policy.patch": "6f0c1e8672a51c73a4e5e63a8c0132da24ecda6fa8d543ebea83e50be8e30544",
+    "webkit-runtime-owner.patch": "4c3ee1aa3eb3ed601f482e05b82c7b1d5bbe4e4bca8d739d749b56840ecc93df",
+    "webkit-runtime-update-event.patch": "1299b7e95ee8c12535b0b844f0e8fb632f57064fec532520311fcb9e795b8c40",
+    "webkit-webrequest-cache.patch": "da198d9b4a7720cfbaf2e42ef3ae06efd7a67f2cd085bf103ffbeb55b7282e96"
+  },
+  "additionalPatch": {
+    "name": "webkit-runtime-last-error.patch",
+    "sha256": "2c61057124c80ebad360760c4b566f148255de19b9f1d509316c7549807f1845",
+    "paths": [
+      "Source/WebKit/WebProcess/Extensions/API/Cocoa/WebExtensionAPIRuntimeCocoa.mm",
+      "Source/WebKit/WebProcess/Extensions/API/WebExtensionAPIRuntime.h",
+      "Source/WebKit/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl"
+    ]
+  },
+  "dependencyBinaries": {
+    "JavaScriptCore.framework/Versions/A/JavaScriptCore": "d67841e442fbfc5907ba17abf2de89f9eca8a06da530a6b1858d57ec68452b70",
+    "WebCore.framework/Versions/A/WebCore": "c4058f7478ec004dc82243307ae4d42f86950c5797e4c53b8b606819160754f2",
+    "WebGPU.framework/Versions/A/WebGPU": "951b3312d33f8be2725711599af3ea4601f9020f186684a07e0665cab2ae09be",
+    "libANGLE-shared.dylib": "50016319d07c5a9f230a207e64e563d33c3cc3b7d1fdfef72bd7688ea929f858",
+    "libwebrtc.dylib": "e8fadd4b8f9a2ef3d758c6254d9a915dae07af0f89b6edc0fcea4065f5b77180",
+    "WebKitLegacy.framework/Versions/A/WebKitLegacy": "ac8f6beb93f4b4906af9ab97ba195f3382c57274b1881d3ebf8d6049efc0136c",
+    "WebInspectorUI.framework/Versions/A/WebInspectorUI": "b0fae1b0b63a43e73027efccb88faa010639621ff3bb14b047ebf8decd07048e"
+  },
+  "oldWebKitSHA256": "23fb44df9b68f1f12a52ed282f4f53f8a5b0f99c59702803672ae6be256559cb",
+  "rebuiltProducts": [
+    "webpushd",
+    "webpushtool",
+    "adattributiond",
+    "libWebKitSwift.dylib",
+    "com.apple.WebKit.WebContent.EnhancedSecurity.xpc/Contents/MacOS/com.apple.WebKit.WebContent.EnhancedSecurity.Development",
+    "com.apple.WebKit.GPU.xpc/Contents/MacOS/com.apple.WebKit.GPU.Development",
+    "_WebKit_SwiftUI.framework/Versions/A/_WebKit_SwiftUI",
+    "com.apple.WebKit.Model.xpc/Contents/MacOS/com.apple.WebKit.Model.Development",
+    "WebKit.framework/Versions/A/WebKit",
+    "com.apple.WebKit.WebContent.Development.xpc/Contents/MacOS/com.apple.WebKit.WebContent.Development.Development",
+    "com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent.Development",
+    "com.apple.WebKit.WebContent.CaptivePortal.xpc/Contents/MacOS/com.apple.WebKit.WebContent.CaptivePortal.Development",
+    "com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking.Development"
+  ]
+}

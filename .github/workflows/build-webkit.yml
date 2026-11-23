@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   macos:
@@ -27,6 +28,7 @@ jobs:
           xcode-select -p
           xcodebuild -version
           xcrun --sdk macosx --show-sdk-version
+          test "$(xcrun --sdk macosx --show-sdk-version)" = 26.5
           df -h "$RUNNER_TEMP"
           printf 'kernel void probe() {}\n' > "$RUNNER_TEMP/compile-probe.metal"
           if ! xcrun --sdk macosx metal -c "$RUNNER_TEMP/compile-probe.metal" -o "$RUNNER_TEMP/compile-probe.air"; then
@@ -54,14 +56,29 @@ jobs:
           test "$(git -C "$RUNNER_TEMP/WebKit" rev-parse HEAD)" = "$WEBKIT_REVISION"
           df -h "$RUNNER_TEMP"
 
-      - name: Verify native probe watchdog environment
-        run: python3 diagnostics/verify-probe-environment.py
+      - name: Verify native probe and dependency inputs
+        run: |
+          python3 diagnostics/verify-probe-environment.py
+          python3 diagnostics/WebKitDependencyChecks.py
+
+      - name: Prepare pinned WebKit dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact="$(python3 -c 'import json,os; c=json.load(open("diagnostics/webkit-dependency-baseline.json")); assert c["webkitRevision"] == os.environ["WEBKIT_REVISION"]; assert type(c["artifactID"]) is int and c["artifactID"] > 0; print(c["artifactID"])')"
+          archive="$RUNNER_TEMP/alcove-webkit-dependency-baseline.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$archive"
+          python3 diagnostics/prepare-webkit-dependencies.py prepare \
+            --archive "$archive" --destination "$RUNNER_TEMP/WebKit/WebKitBuild/Release" \
+            --patch-directory diagnostics
 
       - name: Compile the macOS engine
         id: compile
         working-directory: ${{ runner.temp }}/WebKit
         shell: bash
-        timeout-minutes: 351
+        timeout-minutes: 330
         run: |
           set -euo pipefail
           for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy webkit-runtime-update-event webkit-privacy-overlay webkit-privacy-api webkit-native-allocators webkit-menu-targets webkit-privacy-result-string webkit-privacy-page-construction webkit-runtime-last-error; do
@@ -74,8 +91,9 @@ jobs:
           Tools/Scripts/set-webkit-configuration --release --force-optimization-level=O1 --lto-mode=none
           log="$RUNNER_TEMP/webkit-probe-build.log"
           trap 'status=$?; if [[ "$status" != 0 && -f "$log" ]]; then tail -n 180 "$log"; fi' EXIT
-          Tools/Scripts/build-webkit --release --lto-mode=none --only='Everything up to WebKit' \
-            GCC_GENERATE_DEBUGGING_SYMBOLS=NO COMPILER_INDEX_STORE_ENABLE=NO 2>&1 |
+          # Invoke this project's aggregate exactly once; build-webkit also invokes ImageDiff.
+          cp "$GITHUB_WORKSPACE/diagnostics/build-webkit-project-only.pl" Tools/Scripts/build-alcove-webkit-project
+          perl Tools/Scripts/build-alcove-webkit-project 2>&1 |
             tee "$log" |
             awk '/^The following build commands failed/ { failureSummary = 32 }
               NR <= 80 || NR % 4000 == 0 || failureSummary > 0 ||
@@ -84,6 +102,7 @@ jobs:
                 fflush()
               }
               failureSummary > 0 { failureSummary-- }'
+          python3 "$GITHUB_WORKSPACE/diagnostics/prepare-webkit-dependencies.py" verify --destination WebKitBuild/Release
           framework=WebKitBuild/Release/WebKit.framework/WebKit
           test -s "$framework"
           file "$framework"
