@@ -98,6 +98,11 @@ run_extension_core_checks() {
     "$MANUAL/extension-core-checks"
 }
 if [[ "${1:-}" == "extension-core-test" ]]; then run_extension_core_checks; exit; fi
+run_website_threat_core_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/WebsiteThreatCoreChecks.swift -o "$MANUAL/website-threat-core-checks"
+    "$MANUAL/website-threat-core-checks" "$PWD/Resources/WebsiteProtection"
+}
+if [[ "${1:-}" == "website-protection-core-test" ]]; then run_website_threat_core_checks; exit; fi
 run_extension_download_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/ExtensionStoreDownload.swift scripts/ExtensionDownloadChecks.swift scripts/ExtensionZIPChecks.swift scripts/ExtensionCRXChecks.swift -o "$MANUAL/extension-download-checks"
     "$MANUAL/extension-download-checks"
@@ -360,6 +365,7 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    run_website_threat_core_checks
     run_extension_core_checks
     run_extension_download_checks
     run_extension_store_checks

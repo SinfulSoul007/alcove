@@ -1,0 +1,10 @@
+{
+  "formatVersion": 1,
+  "provider": "PhishDestroy",
+  "sourceRevision": "c22df68d2bded72fdb5415f929556dd220c8056c",
+  "sourceUpdatedAt": "2026-11-23T06:43:18Z",
+  "retrievedAt": "2026-11-23T07:38:09Z",
+  "sha256": "9431f1f10334d9bf08991e039045aba63cdc3d490d9ab979140798ddf106af35",
+  "licenseSHA256": "362a139d27061c725cdaad49d3ba2e61501cdfb33bcdf640c153aa259c8716f4",
+  "domainCount": 233194
+}
