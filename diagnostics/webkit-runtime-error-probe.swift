@@ -2,7 +2,14 @@ import AppKit
 import WebKit
 
 @main struct RuntimeErrorProbe {
-    @MainActor static func main() async throws {
+    private enum Failure:Error {case checks(Int)}
+
+    @MainActor static func main() async {
+        do {try await runChecks()}
+        catch {print("RUNTIME_ERROR_PROBE_FAILED",error);exit(1)}
+    }
+
+    @MainActor static func runChecks() async throws {
         setbuf(stdout,nil)
         NSApplication.shared.setActivationPolicy(.prohibited)
         guard #available(macOS 15.4,*) else {throw CocoaError(.featureUnsupported)}
@@ -66,6 +73,6 @@ import WebKit
         check(promise["absent"] as? Bool == true,"Promise rejection does not publish callback error state")
         print("RUNTIME_ERROR_CHECKS",checks,"FAILURES",failures)
         if failures==0 {print("NATIVE_RUNTIME_ERROR_PROVEN true")}
-        exit(failures==0 ? 0:1)
+        if failures>0 {throw Failure.checks(failures)}
     }
 }
