@@ -25,9 +25,14 @@ enum WebsiteProtectionPurpose {
               store.websiteDataStore(forProfile:profileID) === dataStore else {return nil}
         return web
     }
+    func restoredTab(_ original:BrowserCore.Tab) -> BrowserCore.Tab {
+        var tab=original
+        tab.url=previousURL?.absoluteString ?? "";tab.title=previousTitle ?? previousURL?.host ?? "New Tab"
+        return tab
+    }
     func restoreAddress() {
         guard let store,let web,let id=store.views.first(where:{$0.value === web})?.key else {return}
-        store.update(id){$0.url=previousURL?.absoluteString ?? "";$0.title=previousTitle ?? previousURL?.host ?? "New Tab"}
+        store.update(id){$0=restoredTab($0)}
         if let profile=store.quickProfileID(id) {
             // Only a committed page can identify an existing Quick Browse route.
             // Preserve its original address when that page arrived via redirects.

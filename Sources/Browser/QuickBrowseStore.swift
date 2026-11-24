@@ -117,6 +117,12 @@ extension BrowserStore {
     }
     func archivedQuickTab(_ page: QuickPage) -> BrowserCore.Tab? {
         var tab = page.tab
+        if let web=views[page.id],let ticket=websiteProtectionTicket(for:web) {
+            // Snapshot the page kept behind the warning without canceling it.
+            // A failed durable close must leave the live request untouched.
+            tab=ticket.source.restoredTab(tab)
+            guard URL(string:tab.url).flatMap({QuickBrowseRouting.host(for:$0)}) != nil else {return nil}
+        }
         if URL(string: tab.url).flatMap({ QuickBrowseRouting.host(for: $0) }) == nil {
             guard let original = page.requestedURL, URL(string: original).flatMap({ QuickBrowseRouting.host(for: $0) }) != nil else { return nil }
             tab.url = original

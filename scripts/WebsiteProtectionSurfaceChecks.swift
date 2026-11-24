@@ -129,9 +129,30 @@ import Darwin
         try store.navigateQuickPage(quick,input:quickClosing.absoluteString)
         let closingWarning=try await warning(quickWeb,store:store,url:quickClosing)
         let oldQuickContinue=try button(closingWarning,continueRequest:true)
+        let heldTicket=store.websiteProtectionTicket(for:quickWeb),beforeClose=try Data(contentsOf:store.sessionURL),savedVault=store.vault
+        store.vault=MetadataStore(url:root,key:key)
+        controller.window?.performClose(nil)
+        let afterFailedClose=try Data(contentsOf:store.sessionURL)
+        check(controller.window?.isVisible==true && store.quickPage(quick) != nil && heldTicket?.isPending==true && store.websiteProtectionTicket(for:quickWeb) === heldTicket && afterFailedClose==beforeClose,"A failed Quick Browse close keeps its warning, page and prior ciphertext intact")
+        store.vault=savedVault
+        _=store.unlockLocalData(keyProvider:{key})
+        for _ in 0..<500 where store.unlocking {try await Task.sleep(for:.milliseconds(10))}
+        guard store.savingEnabled else {throw Failure.fixture}
+        check(store.websiteProtectionTicket(for:quickWeb) === heldTicket && heldTicket?.isPending==true,"Unlocking after a failed close preserves the same live warning")
         controller.window?.performClose(nil);oldQuickContinue.performClick(nil)
         check(store.quickPage(quick)==nil && store.websiteProtectionTicket(for:quickWeb)==nil,"Closing the real Quick Browse window cancels its warning")
         check(try await requests(port:raw,name:"quick-surface-close").isEmpty,"A closed Quick Browse warning cannot replay its request")
+        check(store.library(for:profile).archive.first(where:{$0.id==quick})?.url==quickDocument.absoluteString,"Closing a Quick Browse warning archives the displayed page rather than its unvisited blocked destination")
+        let initialBlocked=URL(string:"http://listed.alcove.example/target?case=quick-surface-initial-close")!
+        let neverOpened=try store.openQuickPage(url:initialBlocked,profileID:profile,intendedSpaceID:store.space.id)
+        let initialController=try QuickBrowseWindowController(owner:owner,pageID:neverOpened,requestPrimary:{},requestProfiles:{},didClose:{})
+        initialController.surface()
+        defer {initialController.window?.performClose(nil)}
+        guard let initialWeb=initialController.activeWebView else {throw Failure.fixture}
+        _=try await warning(initialWeb,store:store,url:initialBlocked)
+        initialController.window?.performClose(nil)
+        check(!store.library(for:profile).archive.contains(where:{$0.id==neverOpened}),"Closing a Quick Browse page at its first warning does not archive an unvisited destination")
+        check(try await requests(port:raw,name:"quick-surface-initial-close").isEmpty && store.quickPage(neverOpened)==nil,"Closing an initial Quick Browse warning cancels its request without contacting the target")
         window.makeKeyAndOrderFront(nil)
         let clearA=URL(string:"http://listed.alcove.example/target?case=clear-surface-a")!,clearB=URL(string:"http://listed.alcove.example/target?case=clear-surface-b")!
         web.load(URLRequest(url:clearA));other.load(URLRequest(url:clearB))
