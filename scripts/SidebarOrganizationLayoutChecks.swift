@@ -166,6 +166,15 @@ import BrowserCore
             shelf.reflectScrolledClipView(shelf.contentView)
             await settle(); hosting.layoutSubtreeIfNeeded()
         }
+        func waitForLayout(_ predicate: () -> Bool) async -> Bool {
+            for _ in 0..<100 {
+                hosting.layoutSubtreeIfNeeded()
+                if predicate() { return true }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            hosting.layoutSubtreeIfNeeded()
+            return predicate()
+        }
         func capture(_ name: String) throws {
             guard let output = ProcessInfo.processInfo.environment["ALCOVE_SIDEBAR_SCREENSHOT_DIR"],
                   let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { return }
@@ -206,9 +215,23 @@ import BrowserCore
                 check(button != nil && pins.contentView.bounds.origin.y > 0 && store.selectedID == pinned,
                       "The return control reveals the active tab inside an expanded pinned folder")
                 try store.setTabFolderExpanded("Projects", expanded: false, in: store.space.id)
-                await settle(); hosting.layoutSubtreeIfNeeded()
-                check(overflowButton("above") == nil && overflowButton("below") == nil && store.selectedID == pinned,
-                      "A collapsed folder stays closed with its active tab selected and no stale return control")
+                // Collapsing can leave the folder header offscreen. Its return control
+                // is valid until that header, rather than the hidden child, is visible.
+                await scroll(pins, to: 0)
+                let collapsedReturnAppeared = await waitForLayout { overflowButton("below") != nil }
+                let collapsedReturn = overflowButton("below")
+                check(collapsedReturnAppeared && overflowButton("above") == nil && store.selectedID == pinned &&
+                      store.space.collapsedFolders?.contains("Projects") == true && collapsedSelection() == .folder("Projects"),
+                      "An offscreen collapsed folder offers a return control while preserving its active tab")
+                let collapsedOffset = pins.contentView.bounds.origin.y
+                collapsedReturn?.performClick(nil)
+                let collapsedHeaderVisible = await waitForLayout {
+                    overflowButton("above") == nil && overflowButton("below") == nil
+                }
+                check(collapsedReturn != nil && collapsedHeaderVisible && pins.contentView.bounds.origin.y > collapsedOffset &&
+                      store.selectedID == pinned && store.space.collapsedFolders?.contains("Projects") == true &&
+                      collapsedSelection() == .folder("Projects"),
+                      "Returning to the active folder reveals its header without opening it or changing selection")
                 try store.setTabFolderExpanded("Projects", expanded: true, in: store.space.id)
             }
             if let favorite = store.favorites.last?.id {
