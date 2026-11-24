@@ -42,8 +42,16 @@ def run(product,contract_path,manifest_path,output):
         runtime.verify_links(product,members,allowed_roots=set(roots))
         for name,member in members.items():
             if member.issym():
-                target=(product/name).resolve(strict=True).relative_to(product.resolve()).as_posix()
-                require(target in members,'Runtime link targets an omitted product')
+                path=(product/name).resolve(strict=False)
+                target=path.relative_to(product.resolve()).as_posix()
+                # Xcode emits this standard WebCore bundle link even when the
+                # build has no embedded frameworks. Preserve its exact layout;
+                # every other link still needs its actual packaged target.
+                optional=(name=='WebCore.framework/Frameworks' and
+                          member.linkname=='Versions/Current/Frameworks' and
+                          target=='WebCore.framework/Versions/A/Frameworks' and
+                          not path.exists())
+                require(optional or (path.exists() and target in members),'Runtime link targets an omitted product')
         require(not output.exists() and not output.is_symlink(),'Archive output already exists')
         os.rename(stage,output)
     finally:

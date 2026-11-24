@@ -43,4 +43,29 @@ class EntryRuntimePackagingChecks(unittest.TestCase):
     def test_link_to_omitted_product_is_refused(self):
         (self.product/'DerivedSources').mkdir();(self.product/'DerivedSources/owned').write_text('owned generated input')
         (self.product/'WebCore.framework/owned-link').symlink_to('../DerivedSources/owned');self.assertNotEqual(self.run_helper().returncode,0);self.assertFalse(self.output.exists())
+    def test_canonical_optional_frameworks_link_is_preserved(self):
+        # The pinned WebCore build, and the previously verified runtime, both
+        # contain this standard bundle link without an embedded Frameworks dir.
+        framework=self.product/'WebCore.framework'
+        (framework/'Versions/Current').symlink_to('A')
+        (framework/'Frameworks').symlink_to('Versions/Current/Frameworks')
+        result=self.run_helper();self.assertEqual(result.returncode,0,result.stderr)
+        with tarfile.open(self.output) as archive:
+            link=archive.getmember('WebCore.framework/Frameworks')
+            self.assertTrue(link.issym());self.assertEqual(link.linkname,'Versions/Current/Frameworks')
+            self.assertNotIn('WebCore.framework/Versions/A/Frameworks',archive.getnames())
+            record=json.load(archive.extractfile('AlcoveEngineBuild.json'))
+            self.assertEqual(record['frameworkSHA256']['WebCore.framework'],hashlib.sha256(self.binaries['WebCore.framework'].read_bytes()).hexdigest())
+    def test_arbitrary_dangling_link_is_refused(self):
+        (self.product/'WebCore.framework/owned-link').symlink_to('Versions/A/absent')
+        self.assertNotEqual(self.run_helper().returncode,0);self.assertFalse(self.output.exists())
+    def test_lookalike_optional_link_to_another_framework_is_refused(self):
+        (self.product/'WebCore.framework/Frameworks').symlink_to('../WebKit.framework/Versions/A/Frameworks')
+        self.assertNotEqual(self.run_helper().returncode,0);self.assertFalse(self.output.exists())
+    def test_canonical_link_cannot_hide_an_omitted_existing_target(self):
+        framework=self.product/'WebCore.framework';(framework/'Versions/Current').symlink_to('A')
+        target=framework/'Versions/A/Frameworks';target.symlink_to('../../../DerivedSources')
+        (self.product/'DerivedSources').mkdir();(self.product/'DerivedSources/owned').write_text('not a runtime')
+        (framework/'Frameworks').symlink_to('Versions/Current/Frameworks')
+        self.assertNotEqual(self.run_helper().returncode,0);self.assertFalse(self.output.exists())
 if __name__=='__main__':unittest.main()
