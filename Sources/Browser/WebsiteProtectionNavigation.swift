@@ -11,11 +11,12 @@ enum WebsiteProtectionPurpose {
     weak var store:BrowserStore?,web:WKWebView?
     let profileID:UUID,document:NSUUID
     private let dataStore:WKWebsiteDataStore
-    private let previousURL:URL?,previousTitle:String?
+    private let previousURL:URL?,previousInitialURL:URL?,previousTitle:String?
     init(store:BrowserStore,web:WKWebView,profileID:UUID) {
         self.store=store;self.web=web;self.profileID=profileID
         document=store.documentIdentity(for:web);dataStore=web.configuration.websiteDataStore
-        previousURL=web.backForwardList.currentItem?.url;previousTitle=web.title.flatMap{$0.isEmpty ? nil:$0}
+        previousURL=web.backForwardList.currentItem?.url;previousInitialURL=web.backForwardList.currentItem?.initialURL
+        previousTitle=web.title.flatMap{$0.isEmpty ? nil:$0}
     }
     var currentWeb:WKWebView? {
         guard let store,let web,!store.isShuttingDown,web.navigationDelegate === store,
@@ -27,6 +28,15 @@ enum WebsiteProtectionPurpose {
     func restoreAddress() {
         guard let store,let web,let id=store.views.first(where:{$0.value === web})?.key else {return}
         store.update(id){$0.url=previousURL?.absoluteString ?? "";$0.title=previousTitle ?? previousURL?.host ?? "New Tab"}
+        if let profile=store.quickProfileID(id) {
+            // Only a committed page can identify an existing Quick Browse route.
+            // Preserve its original address when that page arrived via redirects.
+            store.mutateLibrary(for:profile) {records in
+                guard let index=records.quickPages?.firstIndex(where:{$0.id==id}) else {return}
+                records.quickPages?[index].requestedURL=(previousInitialURL ?? previousURL)?.absoluteString
+            }
+            store.save()
+        }
     }
 }
 
@@ -69,7 +79,10 @@ enum WebsiteProtectionPurpose {
             store.objectWillChange.send()
         }
     }
-    func presented(in view:NSView) {presentation=view}
+    func presented(in view:NSView) {
+        guard let parent=view.superview,parent === source.web?.superview,view.window != nil else {return}
+        presentation=view
+    }
     func approve(expectedRevision:UUID) {
         guard isPending,revision==expectedRevision,let web=source.currentWeb,
               let presentation,let window=presentation.window,window.isVisible,

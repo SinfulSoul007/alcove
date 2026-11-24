@@ -33,6 +33,8 @@ import BrowserCore
         safe.nextKeyView=proceed;proceed.nextKeyView=safe
     }
     required init?(coder:NSCoder) {fatalError("init(coder:) is unavailable")}
+    override func viewDidMoveToWindow() {super.viewDidMoveToWindow();refresh()}
+    override func viewDidMoveToSuperview() {super.viewDidMoveToSuperview();refresh()}
     func bind(store:BrowserStore,web:WKWebView) {
         if self.store !== store || self.web !== web {
             self.store=store;self.web=web;subscription?.cancel()
@@ -41,7 +43,8 @@ import BrowserCore
         refresh()
     }
     private func refresh() {
-        guard let store,let web,let next=store.websiteProtectionTicket(for:web) else {ticket=nil;isHidden=true;return}
+        guard let store,let web,let parent=superview,parent === web.superview,
+              let next=store.websiteProtectionTicket(for:web) else {ticket=nil;isHidden=true;return}
         let changed=ticket !== next || boundRevision != next.revision || isHidden
         ticket=next;boundRevision=next.revision;isHidden=false;next.presented(in:self)
         hostname.stringValue=WebOrigin(next.url)?.host ?? "This website"

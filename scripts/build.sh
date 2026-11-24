@@ -133,6 +133,21 @@ run_website_protection_navigation_checks() {
     trap - EXIT
 }
 if [[ "${1:-}" == "website-protection-navigation-test" ]]; then run_website_protection_navigation_checks; exit; fi
+run_website_protection_surface_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/WebsiteProtectionSurfaceChecks.swift scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker scripts/WebsiteProtectionFixture.plist -o "$MANUAL/website-protection-surface-checks"
+    local protection_port protection_pid
+    protection_port="$(mktemp "$MANUAL/protection-surface-port.XXXXXX")"
+    python3 scripts/WebsiteThreatFixture.py "$protection_port" > "$MANUAL/protection-surface-fixture.log" 2>&1 &
+    protection_pid=$!
+    trap 'kill "$protection_pid" 2>/dev/null || true; wait "$protection_pid" 2>/dev/null || true; rm -f "$protection_port"' EXIT
+    for attempt in {1..500}; do [[ -s "$protection_port" ]] && break; kill -0 "$protection_pid" 2>/dev/null || break; sleep 0.02; done
+    [[ -s "$protection_port" ]] || { cat "$MANUAL/protection-surface-fixture.log"; return 1; }
+    ALCOVE_OWNED_PROXY_PORT="$(cat "$protection_port")" "$MANUAL/website-protection-surface-checks"
+    kill "$protection_pid" 2>/dev/null || true; wait "$protection_pid" 2>/dev/null || true
+    rm -f "$protection_port"
+    trap - EXIT
+}
+if [[ "${1:-}" == "website-protection-surface-test" ]]; then run_website_protection_surface_checks; exit; fi
 run_extension_download_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/ExtensionStoreDownload.swift scripts/ExtensionDownloadChecks.swift scripts/ExtensionZIPChecks.swift scripts/ExtensionCRXChecks.swift -o "$MANUAL/extension-download-checks"
     "$MANUAL/extension-download-checks"
@@ -400,6 +415,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_website_protection_service_checks
     run_website_protection_ticket_checks
     run_website_protection_navigation_checks
+    run_website_protection_surface_checks
     run_extension_core_checks
     run_extension_download_checks
     run_extension_store_checks

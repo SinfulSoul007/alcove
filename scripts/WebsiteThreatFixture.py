@@ -30,6 +30,8 @@ class Handler(BaseHTTPRequestHandler):
         with lock:requests.append(event)
         print('OWNED_NAVIGATION_REQUEST '+json.dumps(event),flush=True)
         case=query.get('case',[''])[0]
+        if parsed.path=='/redirect-safe':
+            self.respond(302,b'','text/plain',{'Location':'http://safe.alcove.example/form?case='+case});return
         if parsed.path.startswith('/redirect'):
             status=307 if parsed.path=='/redirect307' else 302
             target='file' if parsed.path=='/redirect-download' else 'target'
