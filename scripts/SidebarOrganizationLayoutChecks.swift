@@ -9,7 +9,7 @@ import BrowserCore
 }
 
 @main struct SidebarOrganizationLayoutChecks {
-    @MainActor static func main() async throws {
+    @MainActor static func run() async throws {
         NSApplication.shared.setActivationPolicy(.prohibited);setbuf(stdout,nil)
         var failures = 0
         func check(_ value:Bool,_ name:String) {print("\(value ? "PASS" : "FAIL"): \(name)");if !value {failures += 1}}
@@ -573,4 +573,13 @@ import BrowserCore
         check(!emptyShelfOverflow, "An empty pinned shelf has no overflowing scroll view")
         print("Sidebar organization layout checks: \(failures) failures");exit(failures == 0 ? 0 : 1)
     }
+    @MainActor static func main() {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        Task { @MainActor in
+            do { try await run(); exit(0) }
+            catch { print("SIDEBAR_APPKIT_FIXTURE_ERROR", error); exit(1) }
+        }
+        NSApp.run()
+    }
+
 }
