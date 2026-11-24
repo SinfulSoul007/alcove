@@ -131,13 +131,36 @@ jobs:
           xcrun lipo -archs "$framework"
           df -h "$RUNNER_TEMP"
 
+      - name: Preserve diagnostic runtime if native verification fails
+        if: failure()
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess,tarfile
+          temporary=pathlib.Path(os.environ['RUNNER_TEMP'])
+          source=temporary/'WebKit'
+          product=source/'WebKitBuild/Release'
+          if (product/'JavaScriptCore.framework/JavaScriptCore').is_file():
+              contract=json.load(open('diagnostics/jsc-runtime-baseline.json'))
+              receipt=temporary/'DIAGNOSTIC-ONLY.json'
+              receipt.write_text(json.dumps({'diagnosticOnly':True,'qualified':False,'workflowCommit':os.environ['GITHUB_SHA'],'webkitRevision':os.environ['WEBKIT_REVISION'],'sourceDiff':subprocess.check_output(['git','-C',str(source),'diff'],text=True)},indent=2)+'\n')
+              with tarfile.open(temporary/'jsc-realms-failed-runtime.tar.gz','w:gz') as archive:
+                  archive.add(receipt,arcname=receipt.name)
+                  for name in contract['retainedRoots']+['JavaScriptCore.framework']:
+                      archive.add(product/name,arcname=name)
+              print('Saved unqualified diagnostic runtime; not a release artifact.')
+          PY
+
       - name: Preserve compiler diagnostics if the build fails
         if: failure()
         timeout-minutes: 2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: jsc-realms-build-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/jsc-realms-build.log
+          path: |
+            ${{ runner.temp }}/jsc-realms-build.log
+            ${{ runner.temp }}/jsc-realms-failed-runtime.tar.gz
           if-no-files-found: ignore
           retention-days: 5
 

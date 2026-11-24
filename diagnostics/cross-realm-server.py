@@ -11,14 +11,17 @@ window.registerDetached=callback=>{
     document.querySelector('iframe').remove();resolve('owned');
     setTimeout(()=>{window.ownedDetachedFinished=true;},50);
 };
-window.registerPassThrough=foreignThen=>{
+window.makePassThrough=()=>{
     let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j;});
     Object.defineProperty(promise,'constructor',{value:Promise});
-    const next=Reflect.apply(foreignThen,promise,[]);
+    window.settlePassThrough=()=>{if(mode==='empty-error')reject('owned');else resolve('owned');};
+    return promise;
+};
+window.observePassThrough=next=>{
     window.ownedPassThroughParentPromise=Object.getPrototypeOf(next)===Promise.prototype;
     next.then(value=>{window.ownedPassThroughObserved=value;},error=>{window.ownedPassThroughObserved=error;});
     document.querySelector('iframe').remove();
-    setTimeout(()=>{if(mode==='empty-error')reject('owned');else resolve('owned');},10);
+    setTimeout(settlePassThrough,10);
     setTimeout(()=>{window.ownedPassThroughFinished=true;},100);
 };
 window.consume=async promise=>{
@@ -35,7 +38,11 @@ if(location.hash===''){
     const mode=parent.mode;
     if(mode==='sync')parent.move(mode);
     else if(mode==='detached'){const owner=parent;owner.registerDetached(()=>{owner.ownedDetachedRan=true;});}
-    else if(mode.startsWith('empty-'))parent.registerPassThrough(Promise.prototype.then);
+    else if(mode.startsWith('empty-')){
+        const owner=parent,promise=owner.makePassThrough();
+        const next=Reflect.apply(Promise.prototype.then,promise,[]);
+        owner.observePassThrough(next);
+    }
     else {
         const settled=mode==='settled'||mode==='revoked-settled';
         const promise=settled?Promise.resolve('owned'):new Promise((resolve,reject)=>setTimeout(()=>mode==='reject'?reject('owned'):resolve('owned'),10));
