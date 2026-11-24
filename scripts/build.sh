@@ -28,6 +28,11 @@ run_bookmark_export_core_checks() {
 if [[ "${1:-}" == "bookmark-export-core-test" ]]; then run_bookmark_export_core_checks; exit; fi
 STORE_SOURCES=()
 for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
+run_bookmark_export_store_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/BookmarkExportStoreChecks.swift -o "$MANUAL/bookmark-export-store-checks"
+    "$MANUAL/bookmark-export-store-checks"
+}
+if [[ "${1:-}" == "bookmark-export-store-test" ]]; then run_bookmark_export_store_checks; exit; fi
 SIDEBAR_SOURCES=()
 for source in Sources/Browser/SidebarInteraction.swift Sources/Browser/SidebarRevealController.swift Sources/Browser/SidebarTracking.swift; do
     [[ ! -f "$source" ]] || SIDEBAR_SOURCES+=("$source")
@@ -416,6 +421,7 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
 fi
 if [[ "${1:-}" == "test" ]]; then
     run_bookmark_export_core_checks
+    run_bookmark_export_store_checks
     run_website_threat_core_checks
     python3 scripts/WebsiteThreatResourceChecks.py
     run_website_protection_service_checks

@@ -3,6 +3,9 @@ import BrowserCore
 
 @main struct BookmarkHTMLExportChecks {
     static func main() throws {
+        exit(try run())
+    }
+    static func run() throws -> Int32 {
         var failures = 0, checks = 0
         func check(_ result: Bool, _ name: String) {
             checks += 1
@@ -94,6 +97,6 @@ import BrowserCore
         let emptyLinks = try document(empty).nodes(forXPath: "//a")
         check(empty.bookmarkCount == 0 && emptyLinks.isEmpty && !empty.data.isEmpty, "An empty profile exports an ordinary empty bookmarks document")
         print("Bookmark HTML export checks: \(checks), \(failures) failures")
-        exit(failures == 0 ? 0 : 1)
+        return failures == 0 ? 0 : 1
     }
 }

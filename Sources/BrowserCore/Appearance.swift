@@ -5,7 +5,7 @@ public enum SidebarDensity: String, Codable, CaseIterable, Identifiable {
     public var id: String { rawValue }
     public var rowHeight: Double { self == .compact ? 30 : (self == .spacious ? 40 : 34) }
 }
-public struct ThemeColor: Codable, Equatable, Hashable {
+public struct ThemeColor: Codable, Equatable, Hashable, Sendable {
     public var red: Double
     public var green: Double
     public var blue: Double
@@ -40,7 +40,7 @@ public struct ThemeColor: Codable, Equatable, Hashable {
         return whiteContrast >= blackContrast ? .white : .black
     }
 }
-public struct CustomTheme: Codable, Equatable {
+public struct CustomTheme: Codable, Equatable, Sendable {
     public var background: ThemeColor
     public var secondary: ThemeColor
     public var accent: ThemeColor

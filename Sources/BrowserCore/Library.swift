@@ -1,6 +1,6 @@
 import Foundation
 
-public struct PageRecord: Codable, Identifiable, Equatable {
+public struct PageRecord: Codable, Identifiable, Equatable, Sendable {
     public var id: UUID
     public var title: String
     public var url: String

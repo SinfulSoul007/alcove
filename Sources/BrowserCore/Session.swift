@@ -20,7 +20,7 @@ public enum Address {
         return parts.url
     }
 }
-public struct Tab: Codable, Identifiable, Equatable {
+public struct Tab: Codable, Identifiable, Equatable, Sendable {
     public var id = UUID()
     public var title: String
     public var url: String
@@ -38,7 +38,7 @@ public struct Tab: Codable, Identifiable, Equatable {
         self.title = title; self.url = url; self.pinned = pinned; self.lastAccessed = Date()
     }
 }
-public struct Space: Codable, Identifiable, Equatable {
+public struct Space: Codable, Identifiable, Equatable, Sendable {
     public var id = UUID()
     public var name: String
     public var theme: String?

@@ -64,6 +64,7 @@ enum PageOutputFormat: Equatable, Sendable {
     private var jobs: [ObjectIdentifier: Job] = [:]
     private var notices: [ObjectIdentifier: Notice] = [:]
     private var writes: [UUID: Job] = [:]
+    private var acceptedFiles: Set<UUID> = []
     private var prints: [UUID: Job] = [:]
     private struct Waiter { let completion: (Bool) -> Void; var failed = false }
     private var waiters: [Waiter] = []
@@ -72,8 +73,23 @@ enum PageOutputFormat: Equatable, Sendable {
         self.environment = environment ?? .live; self.preparationTimeout = preparationTimeout
     }
     func isBusy(in window: NSWindow) -> Bool { jobs[ObjectIdentifier(window)] != nil }
-    var pendingWriteCount: Int { writes.count }
-    var pendingOutputCount: Int { writes.count + prints.count }
+    var pendingWriteCount: Int { writes.count + acceptedFiles.count }
+    var pendingOutputCount: Int { pendingWriteCount + prints.count }
+    /// Accepted immutable non-page exports share the same writer and Quit drain.
+    @discardableResult
+    func writeAcceptedFile(_ data: Data, to destination: URL, failureMessage: String) -> Bool {
+        guard destination.isFileURL, !data.isEmpty else { return false }
+        let id = UUID(); acceptedFiles.insert(id)
+        environment.write(data, destination) { [weak self] result in
+            guard let self, self.acceptedFiles.remove(id) != nil else { return }
+            if case .failure = result {
+                for index in self.waiters.indices { self.waiters[index].failed = true }
+                self.environment.reportOrphanedError(failureMessage)
+            }
+            self.settleWaiters()
+        }
+        return true
+    }
     func waitForPendingOutput(_ completion: @escaping (Bool) -> Void) {
         guard pendingOutputCount > 0 else { completion(true); return }
         waiters.append(Waiter(completion: completion))

@@ -139,6 +139,8 @@ If a legacy `session.json` already exists inside Alcove’s own storage director
 
 The earlier sidebar checkpoint has [historical verification notes](docs/releases/0.9.0-sidebar-preview-verification.md). The combined 0.9 source has [verification notes](docs/releases/0.9.0-preview-verification.md).
 
+Developing source adds **File → Export Bookmarks HTML…** for the selected normal profile. It includes Favorites, pinned Space folders and remaining bookmarks, using saved pin addresses. Today and history are excluded. Choose the destination in the save dialog; the resulting HTML is readable outside Alcove's metadata encryption. This feature is not in the public 0.20 download. See its [verification and remaining checks](docs/bookmark-export-verification.md).
+
 ## Build from source
 
 The 0.9 preview upgrades metadata to format 5 for extension identities and permissions. Public 0.8 downloads use format 4 and cannot read format 5. Keep a backup and quit Alcove before replacing its bundle. This source also adds a skippable opening greeting before setup; turning interface animations off or using Reduce Motion bypasses it.

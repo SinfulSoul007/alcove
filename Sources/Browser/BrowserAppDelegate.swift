@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var pendingStartupQuickRequests:[UUID:Int] = [:]
     var quickWindows: [QuickWindowKey: QuickBrowseWindowController] = [:]
     let pageOutput: PageOutputCoordinator
+    lazy var bookmarkExports = BookmarkExportController(output: pageOutput)
     let outputTermination: PageOutputTermination
     let updates = UpdateController(installedTag: Bundle.main.object(forInfoDictionaryKey: "AlcoveReleaseTag") as? String ?? "unknown")
     var normalWindow: NSWindow?
@@ -446,6 +447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(file, "New Space…", #selector(newSpace), "n", [.command, .control]); add(file, "Open Location…", #selector(location), "l")
         add(file, "New Folder…", #selector(newFolder), "")
         add(file, "Import Bookmarks HTML…", #selector(importBookmarks), "")
+        add(file, "Export Bookmarks HTML…", #selector(exportBookmarks), "")
         add(file, "Import Preview Session…", #selector(importSession), "")
         file.addItem(.separator())
         add(file, "Save Page As…", #selector(savePage), "s", [.command, .shift])
@@ -507,7 +509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let available = !store.profileUnavailable(profile)
         if quick != nil {
             switch menuItem.action {
-            case #selector(sidebar), #selector(split), #selector(pin), #selector(reopen), #selector(nextTab), #selector(previousTab), #selector(nextSpace), #selector(previousSpace), #selector(newSpace), #selector(newFolder), #selector(importSession), #selector(importBookmarks): return false
+            case #selector(sidebar), #selector(split), #selector(pin), #selector(reopen), #selector(nextTab), #selector(previousTab), #selector(nextSpace), #selector(previousSpace), #selector(newSpace), #selector(newFolder), #selector(importSession), #selector(importBookmarks), #selector(exportBookmarks): return false
             default: break
             }
         }
@@ -517,6 +519,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case #selector(duplicateTab): return quick == nil && (store.focusedID.map(store.canDuplicateSidebarTab) ?? false)
         case #selector(bookmark): return !store.isPrivate && store.savingEnabled && available && activeWebView?.url != nil
         case #selector(importBookmarks): return store.canImportBookmarkHTML
+        case #selector(exportBookmarks): return activeBrowserWindow.map { bookmarkExports.canBegin(store: store, window: $0) } ?? false
         case #selector(importSession): return !store.isPrivate && store.savingEnabled && available
         case #selector(welcome): return !store.isPrivate && store.savingEnabled
         case #selector(back): return activeWebView?.canGoBack == true && available

@@ -72,7 +72,7 @@ import WebKit
         return operation
     }
     static func errorAlert(message: String) -> NSAlert {
-        let alert = NSAlert(); alert.messageText = "Unable to save page"
+        let alert = NSAlert(); alert.messageText = "Unable to save file"
         alert.informativeText = String(message.prefix(1000)); alert.addButton(withTitle: "OK")
         return alert
     }

@@ -33,19 +33,19 @@
 
 **Interface:** `BookmarkHTMLExport.init(spaces: [Space], favorites: [Tab], bookmarks: [PageRecord]) throws`; exposes `data: Data`, `bookmarkCount: Int`, `skippedLinkCount: Int`.
 
-- [ ] Add actual serializer/import round-trip checks for grouping/order, saved addresses/names, nested/collapsed/empty folders, duplicate policy, unsafe links/escaping, malformed folder cycles, dates, empty output and resource bounds. Missing serializer is the initial RED.
-- [ ] Run and retain RED; implement the smallest bounded serializer using the existing repaired `SidebarFolderTree`.
-- [ ] Run the focused check via `./scripts/build.sh bookmark-export-core-test`; integrate it into the complete test command.
-- [ ] Commit passing serializer and checks.
+- [x] Add actual serializer/import round-trip checks for grouping/order, saved addresses/names, nested/collapsed/empty folders, duplicate policy, unsafe links/escaping, malformed folder cycles, dates, empty output and resource bounds. Missing serializer is the initial RED.
+- [x] Run and retain RED; implement the smallest bounded serializer using the existing repaired `SidebarFolderTree`.
+- [x] Run the focused check via `./scripts/build.sh bookmark-export-core-test`; integrate it into the complete test command.
+- [x] Commit passing serializer and checks.
 
 ### Task 2: Native export and accepted output
 
 **Files:** Create `Sources/Browser/BookmarkExportActions.swift`, `scripts/BookmarkExportStoreChecks.swift`; modify `Sources/Browser/BrowserAppDelegate.swift`, `Sources/Browser/PageOutput.swift`, `Sources/Browser/PageOutputNative.swift`, `scripts/build.sh`.
 
-**Interfaces:** `BrowserStore.bookmarkHTMLExport(profileID:) throws -> BookmarkHTMLExport`; `canExportBookmarkHTML`; `AppDelegate.exportBookmarks()`; coordinator `writeAcceptedFile(_:to:failureMessage:)` tracks immutable accepted data without requiring a website.
+**Interfaces:** `BrowserStore.bookmarkExportSource(profileID:) throws -> BookmarkExportSource`, whose `render()` runs off the main thread; `canExportBookmarkHTML`; `AppDelegate.exportBookmarks()`; coordinator `writeAcceptedFile(_:to:failureMessage:)` tracks immutable accepted data without requiring a website. This rendering-interface adjustment is recorded in the execution ledger.
 
-- [ ] Add owned profile-isolation/locked/private/pending/closed-source checks and accepted generic-write lifetime/failure/duplicate-callback tests. Observe expected failures before implementation.
-- [ ] Implement one-profile snapshot, menu validation and explicit save sheet; accept only a current, eligible originating window/profile.
-- [ ] Implement generic accepted-write tracking through the existing writer/waiter environment without changing page capture semantics.
+- [x] Add owned profile-isolation/locked/private/pending/closed-source checks and accepted generic-write lifetime/failure/duplicate-callback tests. Observe expected failures before implementation.
+- [x] Implement one-profile snapshot, menu validation and explicit save sheet; accept only a current, eligible originating window/profile.
+- [x] Implement generic accepted-write tracking through the existing writer/waiter environment without changing page capture semantics.
 - [ ] Run focused native gates in the VM, compile both architectures, run the complete suite once on the final reviewed candidate; keep unavailable live dialog gates explicitly open.
 - [ ] Record actual evidence, request one bounded review, fix material issues with failing/passing checks, commit. Update user-facing docs only to claim verified behavior; do not publish an unqualified build.
