@@ -1,0 +1,35 @@
+diff --git a/Source/WebCore/dom/Microtasks.cpp b/Source/WebCore/dom/Microtasks.cpp
+--- a/Source/WebCore/dom/Microtasks.cpp
++++ b/Source/WebCore/dom/Microtasks.cpp
+@@ -33,9 +33,11 @@
+ #include <JavaScriptCore/CatchScope.h>
+ #include <JavaScriptCore/MicrotaskQueueInlines.h>
+ #include <JavaScriptCore/ScriptProfilingScope.h>
++#include <JavaScriptCore/Strong.h>
+ #include <JavaScriptCore/VMEntryScopeInlines.h>
+ #include <wtf/MainThread.h>
+ #include <wtf/NeverDestroyed.h>
++#include <wtf/Scope.h>
+ #include <wtf/SetForScope.h>
+ #include <wtf/TZoneMallocInlines.h>
+ 
+@@ -96,6 +98,19 @@
+ void MicrotaskQueue::runJSMicrotask(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::QueuedTask& task)
+ {
+     auto scope = DECLARE_CATCH_SCOPE(vm);
++    // A native event listener can retain its entry scope at this checkpoint.
++    // Bind direct and wrapped script jobs to their own entry settings, while
++    // keeping the caller global alive and restoring it before native dispatch.
++    auto* activeEntryScope = vm.entryScope;
++    std::optional<JSC::Strong<JSC::JSGlobalObject>> previousEntryGlobalObject;
++    auto restoreEntryGlobalObject = makeScopeExit([&] {
++        if (previousEntryGlobalObject)
++            activeEntryScope->setGlobalObject(previousEntryGlobalObject->get());
++    });
++    if (activeEntryScope && activeEntryScope->globalObject() != globalObject) {
++        previousEntryGlobalObject.emplace(vm, activeEntryScope->globalObject());
++        activeEntryScope->setGlobalObject(globalObject);
++    }
+     JSC::runInternalMicrotask(globalObject, task.job(), task.payload(), task.arguments());
+     if (scope.exception()) [[unlikely]] {
+         auto* exception = scope.exception();

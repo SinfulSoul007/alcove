@@ -1,0 +1,12 @@
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
+--- a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
++++ b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
+@@ -3567,6 +3567,8 @@
+     auto* jobGlobalObject = this;
+     JSValue handler = jsUndefined();
+     switch (job) {
++    case InternalMicrotask::PromiseResolveThenableJob:
++    case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotask:
+     case InternalMicrotask::PromiseReactionJob:
+         handler = argument1;
+         break;
