@@ -1,0 +1,305 @@
+name: Build and test Promise continuation realms
+
+on:
+  push:
+    branches: [research/promise-job-realms]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 360
+    env:
+      WEBKIT_REVISION: 26695efdefc6076049ec50713a2c4e54b90b4d47
+    steps:
+      - name: Check out the owned loopback fixture
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Verify the Apple toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcode-select -p
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          test "$(xcrun --sdk macosx --show-sdk-version)" = 26.5
+          df -h "$RUNNER_TEMP"
+
+
+      - name: Verify JavaScriptCore callable ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun clang++ -fobjc-arc -std=c++20 -Wall -Wextra -Werror -framework Foundation -framework JavaScriptCore \
+            diagnostics/webkit-runtime-ownership-check.mm -o "$RUNNER_TEMP/owned-runtime-check"
+          "$RUNNER_TEMP/owned-runtime-check"
+
+      - name: Check out pinned upstream WebKit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/WebKit"
+          git -C "$RUNNER_TEMP/WebKit" remote add origin https://github.com/WebKit/WebKit.git
+          git -C "$RUNNER_TEMP/WebKit" fetch --depth=1 origin "$WEBKIT_REVISION"
+          git -C "$RUNNER_TEMP/WebKit" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/WebKit" rev-parse HEAD)" = "$WEBKIT_REVISION"
+          df -h "$RUNNER_TEMP"
+
+      - name: Verify native probe and dependency inputs
+        run: |
+          python3 diagnostics/verify-probe-environment.py --workflow .github/workflows/build-jsc-realms.yml
+          python3 diagnostics/JavaScriptCoreRuntimeChecks.py
+          python3 diagnostics/WebKitDependencyChecks.py
+
+      - name: Prepare the verified retained runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact="$(python3 -c 'import json; c=json.load(open("diagnostics/jsc-runtime-baseline.json")); assert type(c["artifactID"]) is int; print(c["artifactID"])')"
+          metadata="$RUNNER_TEMP/jsc-runtime-artifact.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact" > "$metadata"
+          python3 - "$metadata" <<'PY'
+          import json,sys
+          c=json.load(open("diagnostics/jsc-runtime-baseline.json")); m=json.load(open(sys.argv[1]))
+          assert m["expired"] is False and m["id"] == c["artifactID"]
+          assert m["digest"] == "sha256:"+c["archiveSHA256"]
+          PY
+          archive="$RUNNER_TEMP/alcove-jsc-runtime-baseline.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$archive"
+          python3 diagnostics/prepare-jsc-runtime.py prepare \
+            --archive "$archive" --destination "$RUNNER_TEMP/WebKit/WebKitBuild/Release" \
+            --patch-directory diagnostics
+
+      - name: Rebuild JavaScriptCore and its implicit dependencies
+        id: compile
+        working-directory: ${{ runner.temp }}/WebKit
+        shell: bash
+        timeout-minutes: 330
+        run: |
+          set -euo pipefail
+          for name in webkit-before-send-cancellation webkit-runtime-owner webkit-navigation-target webkit-webrequest-cache webkit-hyperlink-auditing webkit-network-prediction webkit-rtc-policy webkit-runtime-update-event webkit-privacy-overlay webkit-privacy-api webkit-native-allocators webkit-menu-targets webkit-privacy-result-string webkit-privacy-page-construction webkit-runtime-last-error jsc-promise-job-realms; do
+            patch="$GITHUB_WORKSPACE/diagnostics/$name.patch"
+            git apply --check "$patch"
+            git apply "$patch"
+          done
+          git diff --check
+          # Keep the working O1 configuration. The probe needs neither IDE indices nor debug symbols.
+          Tools/Scripts/set-webkit-configuration --release --force-optimization-level=O1 --lto-mode=none
+          log="$RUNNER_TEMP/jsc-realms-build.log"
+          trap 'status=$?; if [[ "$status" != 0 && -f "$log" ]]; then tail -n 180 "$log"; fi' EXIT
+          # Supported upstream scheme: Everything up to JavaScriptCore.
+          Tools/Scripts/build-jsc --release GCC_GENERATE_DEBUGGING_SYMBOLS=NO COMPILER_INDEX_STORE_ENABLE=NO 2>&1 |
+            tee "$log" |
+            awk '/^The following build commands failed/ { failureSummary = 32 }
+              NR <= 80 || NR % 4000 == 0 || failureSummary > 0 ||
+              /(^|[[:space:]])(fatal error|error|warning|Error):|BUILD (SUCCEEDED|FAILED)|No space left/ {
+                print substr($0, 1, 700)
+                fflush()
+              }
+              failureSummary > 0 { failureSummary-- }'
+          python3 "$GITHUB_WORKSPACE/diagnostics/prepare-jsc-runtime.py" verify --destination WebKitBuild/Release
+          framework=WebKitBuild/Release/JavaScriptCore.framework/JavaScriptCore
+          test -s "$framework"
+          file "$framework"
+          xcrun lipo -archs "$framework"
+          df -h "$RUNNER_TEMP"
+
+      - name: Preserve compiler diagnostics if the build fails
+        if: failure()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: jsc-realms-build-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/jsc-realms-build.log
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - name: Verify Promise continuation realms
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          product="$RUNNER_TEMP/WebKit/WebKitBuild/Release"
+          scratch=$(mktemp -d "$RUNNER_TEMP/alcove-promise-realms.XXXXXX")
+          server=''
+          trap 'if [[ -n "$server" ]]; then kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true; fi; rm -rf "$scratch"' EXIT
+          xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/CrossRealmPromiseChecks.swift -o "$scratch/probe"
+          python3 diagnostics/cross-realm-server.py "$scratch/port" > "$scratch/server.log" 2>&1 &
+          server=$!
+          for attempt in {1..200}; do [[ -s "$scratch/port" ]] && break; kill -0 "$server"; sleep 0.05; done
+          test -s "$scratch/port"
+          ALCOVE_REALM_LOOPBACK="http://127.0.0.1:$(cat "$scratch/port")/" \
+            ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/probe"
+
+      - name: Verify the extension APIs in the built framework
+        shell: bash
+        run: |
+          set -euo pipefail
+          product="$RUNNER_TEMP/WebKit/WebKitBuild/Release"
+          scratch=$(mktemp -d "$RUNNER_TEMP/alcove-webkit-probe.XXXXXX")
+          server=''
+          prediction_server=''
+          rtc_server=''
+          cleanup() {
+            local result=$?
+            if (( result != 0 )); then
+              printf 'NATIVE_PROBE_FAILURE %s\n' "$result"
+              for log in "$scratch/requests.log" "$scratch/prediction.log" "$scratch/rtc.log" "$scratch/http-startup-sample.txt" "$scratch/https-startup-sample.txt" "$scratch/rtc-startup-sample.txt"; do
+                if [[ -f "$log" ]]; then printf 'NATIVE_FIXTURE_LOG %s\n' "$log"; cat "$log"; fi
+              done
+            fi
+            if [[ -n "$server" ]]; then kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true; fi
+            if [[ -n "$prediction_server" ]]; then kill "$prediction_server" 2>/dev/null || true; wait "$prediction_server" 2>/dev/null || true; fi
+            if [[ -n "$rtc_server" ]]; then kill "$rtc_server" 2>/dev/null || true; wait "$rtc_server" 2>/dev/null || true; fi
+            rm -rf "$scratch"
+            return "$result"
+          }
+          trap cleanup EXIT
+          # Observe live fixture initialization separately from native API outcomes.
+          # A missing port after the deadline remains a failed gate.
+          # ALCOVE_FIXTURE_READINESS_BEGIN
+          wait_for_fixture_port() {
+            local port_file="$1" fixture_pid="$2" fixture_name="$3"
+            local fixture_deadline=$((SECONDS + 60))
+            while [[ ! -s "$port_file" ]]; do
+              if ! kill -0 "$fixture_pid" 2>/dev/null; then
+                printf 'NATIVE_FIXTURE_EXITED %s\n' "$fixture_name"
+                wait "$fixture_pid" || true
+                return 1
+              fi
+              if (( SECONDS >= fixture_deadline )); then
+                printf 'NATIVE_FIXTURE_READINESS_TIMEOUT %s\n' "$fixture_name"
+                /bin/ps -p "$fixture_pid" -o pid,ppid,etime,stat,comm || true
+                /usr/bin/sample "$fixture_pid" 2 -file "$scratch/$fixture_name-startup-sample.txt" || true
+                return 1
+              fi
+              sleep 0.1
+            done
+          }
+          # ALCOVE_FIXTURE_READINESS_END
+          printf 'NATIVE_PROBE_STAGE compile-base\n'
+          xcrun swiftc -parse-as-library diagnostics/webkit-extension-probe.swift diagnostics/webkit-request-cache-probe.swift \
+            diagnostics/webkit-hyperlink-auditing-probe.swift diagnostics/webkit-network-prediction-probe.swift \
+            diagnostics/webkit-rtc-policy-probe.swift diagnostics/webkit-privacy-overlay-probe.swift -o "$scratch/probe"
+          printf 'NATIVE_PROBE_STAGE compile-update\n'
+          xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-update-event-probe.swift -o "$scratch/update-probe"
+          printf 'NATIVE_PROBE_STAGE compile-privacy\n'
+          xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-privacy-api-probe.swift -o "$scratch/privacy-probe"
+          printf 'NATIVE_PROBE_STAGE compile-menu\n'
+          xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-menu-targets-probe.swift -o "$scratch/menu-probe"
+          printf 'NATIVE_PROBE_STAGE compile-construction\n'
+          xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-privacy-construction-probe.swift -o "$scratch/construction-probe"
+          printf 'NATIVE_PROBE_STAGE compile-runtime-error\n'
+          xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/webkit-runtime-error-probe.swift -o "$scratch/runtime-error-probe"
+          printf 'NATIVE_PROBE_STAGE start-http\n'
+          python3 diagnostics/webkit-probe-server.py "$scratch/port" > "$scratch/requests.log" 2>&1 &
+          server=$!
+          wait_for_fixture_port "$scratch/port" "$server" http
+          printf 'NATIVE_PROBE_STAGE generate-tls\n'
+          bash diagnostics/webkit-prediction-tls.sh "$scratch"
+          printf 'NATIVE_PROBE_STAGE start-https\n'
+          python3 diagnostics/webkit-probe-server.py "$scratch/prediction-port" "$scratch/loopback.pem" "$scratch/loopback.key" > "$scratch/prediction.log" 2>&1 &
+          prediction_server=$!
+          wait_for_fixture_port "$scratch/prediction-port" "$prediction_server" https
+          printf 'NATIVE_PROBE_STAGE start-rtc\n'
+          python3 diagnostics/webkit-stun-fixture.py "$scratch/rtc-port" > "$scratch/rtc.log" 2>&1 &
+          rtc_server=$!
+          wait_for_fixture_port "$scratch/rtc-port" "$rtc_server" rtc
+          navigation_status=0
+          cache_status=0
+          auditing_status=0
+          prediction_status=0
+          rtc_status=0
+          construction_status=0
+          runtime_error_status=0
+          update_status=0
+          overlay_status=0
+          privacy_status=0
+          menu_status=0
+          status=0
+          printf 'NATIVE_PROBE_STAGE run-construction\n'
+          run_construction() {
+            ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+              perl -e '$ENV{DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; $ENV{__XPC_DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; alarm 90; exec @ARGV or die "construction probe failed to launch: $!"' \
+              "$scratch/construction-probe" "$@" || construction_status=$?
+          }
+          run_construction
+          run_construction --clipboard-expiry
+          printf 'NATIVE_PROBE_STAGE run-runtime-error\n'
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            perl -e '$ENV{DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; $ENV{__XPC_DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; alarm 90; exec @ARGV or die "runtime-error probe failed to launch: $!"' \
+            "$scratch/runtime-error-probe" || runtime_error_status=$?
+          printf 'NATIVE_PROBE_STAGE run-api-witnesses\n'
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/update-probe" || update_status=$?
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            ALCOVE_MENU_FIXTURE_URL="http://127.0.0.1:$(cat "$scratch/port")/" \
+            perl -e '$ENV{DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; $ENV{__XPC_DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; alarm 100; exec @ARGV or die "menu probe failed to launch: $!"' \
+            "$scratch/menu-probe" || menu_status=$?
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            perl -e '$ENV{DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; $ENV{__XPC_DYLD_FRAMEWORK_PATH} = $ENV{ALCOVE_EXPECT_WEBKIT_ROOT}; alarm 180; exec @ARGV or die "privacy probe failed to launch: $!"' \
+            "$scratch/privacy-probe" "http://127.0.0.1:$(cat "$scratch/port")/" "http://127.0.0.1:$(cat "$scratch/rtc-port")/" || privacy_status=$?
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/rtc-port")/" --rtc-policy-only --require-privacy-overlay || rtc_status=$?
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            ALCOVE_PREDICTION_TLS_CERT_DER="$scratch/loopback.der" \
+            "$scratch/probe" "https://127.0.0.1:$(cat "$scratch/prediction-port")/" --network-prediction-only --require-privacy-overlay || prediction_status=$?
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --privacy-overlay-only || overlay_status=$?
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --hyperlink-auditing-only || auditing_status=$?
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --request-cache-only || cache_status=$?
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --navigation-target-only || navigation_status=$?
+          ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
+            "$scratch/probe" "http://127.0.0.1:$(cat "$scratch/port")/" --require-runtime-url --require-blocking || status=$?
+          cat "$scratch/requests.log"
+          cat "$scratch/prediction.log"
+          cat "$scratch/rtc.log"
+          if (( construction_status != 0 )); then exit "$construction_status"; fi
+          if (( runtime_error_status != 0 )); then exit "$runtime_error_status"; fi
+          if (( update_status != 0 )); then exit "$update_status"; fi
+          if (( menu_status != 0 )); then exit "$menu_status"; fi
+          if (( overlay_status != 0 )); then exit "$overlay_status"; fi
+          if (( privacy_status != 0 )); then exit "$privacy_status"; fi
+          if (( rtc_status != 0 )); then exit "$rtc_status"; fi
+          if (( prediction_status != 0 )); then exit "$prediction_status"; fi
+          if (( auditing_status != 0 )); then exit "$auditing_status"; fi
+          if (( cache_status != 0 )); then exit "$cache_status"; fi
+          if (( navigation_status != 0 )); then exit "$navigation_status"; fi
+          exit "$status"
+
+      - name: Keep the compiled engine for native integration
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          product="$RUNNER_TEMP/WebKit/WebKitBuild/Release"
+          destination="$RUNNER_TEMP/alcove-webkit-runtime"
+          mkdir "$destination"
+          tar --exclude='*.dSYM' --exclude='*.a' --exclude='*.o' --exclude='./DerivedSources' \
+            -czf "$destination/Alcove-WebKitRuntime.tar.gz" -C "$product" .
+          printf '%s\n' "$GITHUB_SHA" > "$destination/AlcoveSource.txt"
+          printf '%s\n' "$WEBKIT_REVISION" > "$destination/WebKitSource.txt"
+          shasum -a 256 diagnostics/*.patch > "$destination/PatchChecksums.txt"
+          (cd "$destination" && shasum -a 256 Alcove-WebKitRuntime.tar.gz > SHA256SUMS.txt)
+
+      - name: Upload the compiled native runtime
+        if: ${{ success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Alcove-WebKit-JSC-realms-runtime
+          path: ${{ runner.temp }}/alcove-webkit-runtime/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

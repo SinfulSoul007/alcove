@@ -106,7 +106,7 @@ def verify_patches(directory, contract):
     require({a for a, _ in pairs} == set(additional["paths"]), "Additional patch touches an unreviewed path")
 
 
-def validate_members(archive):
+def validate_members(archive, exclude_member=excluded, validate_link=None):
     members = {}
     spellings = set()
     total = 0
@@ -123,12 +123,15 @@ def validate_members(archive):
         require(spelling not in spellings, "Duplicate archive path")
         spellings.add(spelling)
         # Derived sources contain stale absolute build-machine pointers. None are imported.
-        if excluded(name):
+        if exclude_member(name):
             continue
         require(member.type in {tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE, tarfile.SYMTYPE} and member.sparse is None, "Unsupported archive entry")
         if member.issym():
-            target = relative_name(member.linkname)
-            require(target != ".", "Invalid framework link")
+            if validate_link is not None:
+                validate_link(name, member.linkname)
+            else:
+                target = relative_name(member.linkname)
+                require(target != ".", "Invalid framework link")
         members[name] = member
     for name in members:
         for parent in PurePosixPath(name).parents:

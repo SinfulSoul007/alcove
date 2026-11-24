@@ -1,0 +1,51 @@
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
+index 6748da1..eabe943 100644
+--- a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
++++ b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
+@@ -104,6 +104,7 @@
+ #include "IntlNumberFormat.h"
+ #include "IntlNumberFormatConstructor.h"
+ #include "IntlNumberFormatPrototype.h"
++#include "InternalFunction.h"
+ #include "IntlObject.h"
+ #include "IntlPluralRules.h"
+ #include "IntlPluralRulesPrototype.h"
+@@ -3563,8 +3564,36 @@ void JSGlobalObject::queueMicrotaskToEventLoop(JSC::JSGlobalObject& globalObject
+ 
+ void JSGlobalObject::queueMicrotask(InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2)
+ {
+-    QueuedTask task { nullptr, job, payload, this, argument0, argument1, argument2 };
+-    globalObjectMethodTable()->queueMicrotaskToEventLoop(*this, WTF::move(task));
++    auto* jobGlobalObject = this;
++    JSValue handler = jsUndefined();
++    switch (job) {
++    case InternalMicrotask::PromiseReactionJob:
++        handler = argument1;
++        break;
++    case InternalMicrotask::PromiseFinallyReactionJob:
++        handler = jsCast<JSPromiseCombinatorsGlobalContext*>(argument2)->values();
++        break;
++    case InternalMicrotask::AsyncFunctionResume:
++        jobGlobalObject = jsCast<JSGenerator*>(argument2)->globalObject();
++        break;
++    default:
++        break;
++    }
++
++    // Promise reaction jobs run with their handler's realm as entry settings,
++    // even when a promise in another realm settles them.
++    if (handler.isCallable()) {
++        auto& vm = this->vm();
++        auto catchScope = DECLARE_CATCH_SCOPE(vm);
++        if (auto* handlerGlobalObject = getFunctionRealm(this, asObject(handler)))
++            jobGlobalObject = handlerGlobalObject;
++        else if (!catchScope.clearExceptionExceptTermination())
++            return;
++        // A revoked proxy uses the current realm; invoking it still rejects.
++    }
++
++    QueuedTask task { nullptr, job, payload, jobGlobalObject, argument0, argument1, argument2 };
++    jobGlobalObject->globalObjectMethodTable()->queueMicrotaskToEventLoop(*jobGlobalObject, WTF::move(task));
+ }
+ 
+ void JSGlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)

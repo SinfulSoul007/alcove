@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the real workflow watchdogs through SIP-protected system Perl."""
+import argparse
 from pathlib import Path
 import os
 import platform
@@ -10,7 +11,9 @@ import tempfile
 if platform.system() != "Darwin":
     raise SystemExit("This check requires macOS system Perl")
 
-workflow = Path(__file__).resolve().parents[1] / ".github/workflows/build-webkit.yml"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--workflow", type=Path, default=Path(__file__).resolve().parents[1] / ".github/workflows/build-webkit.yml")
+workflow = parser.parse_args().workflow
 compatible_sdk = Path("/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk")
 sdk = os.environ.get("ALCOVE_PROBE_SDK") or (
     str(compatible_sdk) if compatible_sdk.is_dir() else
