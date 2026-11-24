@@ -177,6 +177,7 @@ extension BrowserStore {
         try presenter.commitQuickDocument(candidate, discarding: discard, beforePublish: {
             if !crossing,let web=self.views[id] {
                 // The durable candidate already carries the committed address.
+                self.cancelReader(for: web)
                 self.cancelWebsiteProtectionTickets(for:web,restoringAddress:false)
                 web.removeFromSuperview()
             }

@@ -11,6 +11,8 @@ MANUAL="$PWD/.build/manual/$ARCH"
 FLAGS=(-sdk "$SDK" -module-cache-path "$PWD/.build/cache" -target "$ARCH-apple-macosx14.0")
 mkdir -p "$MANUAL" "$OUT/Contents/MacOS"
 python3 scripts/refresh-website-protection.py --verify Resources/WebsiteProtection
+mkdir -p "$MANUAL/ReaderAssets"
+cp Sources/Browser/ReaderAssets/* "$MANUAL/ReaderAssets/"
 mkdir -p "$MANUAL/WebsiteProtection"
 for resource in domains.txt source.json LICENSE.PhishDestroy.txt; do
     cp "Resources/WebsiteProtection/$resource" "$MANUAL/WebsiteProtection/$resource"
@@ -27,6 +29,29 @@ SIDEBAR_SOURCES=()
 for source in Sources/Browser/SidebarInteraction.swift Sources/Browser/SidebarRevealController.swift Sources/Browser/SidebarTracking.swift; do
     [[ ! -f "$source" ]] || SIDEBAR_SOURCES+=("$source")
 done
+run_reader_checks() {
+    local mode="$1"
+    if [[ "$mode" == "extraction" ]]; then
+        xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors Sources/Browser/ReaderResources.swift scripts/ReaderExtractionChecks.swift -o "$MANUAL/reader-extraction-checks"
+    else
+        xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ReaderModeChecks.swift scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$MANUAL/reader-mode-checks"
+    fi
+    if [[ "$mode" == "extraction" ]]; then "$MANUAL/reader-$mode-checks"; return; fi
+    local reader_port reader_pid reader_result
+    reader_port="$(mktemp "$MANUAL/reader-port.XXXXXX")"
+    python3 scripts/ReaderFixture.py "$reader_port" > "$MANUAL/reader-fixture.log" 2>&1 &
+    reader_pid=$!
+    trap 'kill "$reader_pid" 2>/dev/null || true; wait "$reader_pid" 2>/dev/null || true; rm -f "$reader_port"' EXIT
+    for attempt in {1..500}; do [[ -s "$reader_port" ]] && break; kill -0 "$reader_pid" 2>/dev/null || break; sleep 0.02; done
+    [[ -s "$reader_port" ]] || { cat "$MANUAL/reader-fixture.log"; return 1; }
+    reader_result=0
+    ALCOVE_READER_FIXTURE_URL="http://127.0.0.1:$(cat "$reader_port")/" "$MANUAL/reader-mode-checks" || reader_result=$?
+    kill "$reader_pid" 2>/dev/null || true; wait "$reader_pid" 2>/dev/null || true
+    rm -f "$reader_port"; trap - EXIT
+    return "$reader_result"
+}
+if [[ "${1:-}" == "reader-extraction-test" ]]; then run_reader_checks extraction; exit; fi
+if [[ "${1:-}" == "reader-mode-test" ]]; then run_reader_checks mode; exit; fi
 run_website_checks() {
     if [[ "${1:-}" != "quick-website-test" ]]; then
         xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileWebsiteChecks.swift -o "$MANUAL/profile-website-checks"
@@ -410,6 +435,8 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    run_reader_checks extraction
+    run_reader_checks mode
     run_website_threat_core_checks
     python3 scripts/WebsiteThreatResourceChecks.py
     run_website_protection_service_checks
@@ -516,6 +543,8 @@ if [[ ! -f .build/resources/Alcove.icns || scripts/Icon.swift -nt .build/resourc
 fi
 cp .build/resources/Alcove.icns "$OUT/Contents/Resources/Alcove.icns"
 cp LICENSE "$OUT/Contents/Resources/LICENSE.txt"
+mkdir -p "$OUT/Contents/Resources/ReaderAssets"
+cp Sources/Browser/ReaderAssets/* "$OUT/Contents/Resources/ReaderAssets/"
 mkdir -p "$OUT/Contents/Resources/WebsiteProtection"
 for resource in domains.txt source.json LICENSE.PhishDestroy.txt; do
     cp "Resources/WebsiteProtection/$resource" "$OUT/Contents/Resources/WebsiteProtection/$resource"

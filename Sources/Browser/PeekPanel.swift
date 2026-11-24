@@ -91,6 +91,7 @@ extension BrowserStore {
     func adoptQuickPeek(_ id: UUID, into spaceID: UUID, in destination: BrowserStore) {
         destination.closePrimaryPeek()
         guard let page = peekPages.removeValue(forKey: .quick(id)) else { return }
+        cancelReader(for: page.web)
         cancelWebsiteProtectionTickets(for:page.web)
         page.spaceID = spaceID
         if destination === self { page.web.removeFromSuperview() }
@@ -149,6 +150,7 @@ struct PeekPanel: View {
                 Spacer()
                 Text(store.primaryPeekView?.url?.host ?? "Loading…").font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Spacer()
+                ReaderControl(store: store, web: store.primaryPeekView)
                 Button(store.peekOpenTitle(in: .primary)) { store.expandPeek(in: .primary) }
             }.buttonStyle(.plain).padding(14).background(.regularMaterial)
             if let web = store.primaryPeekView { WebPane(webView: web,store:store) }

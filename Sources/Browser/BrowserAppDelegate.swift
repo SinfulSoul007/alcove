@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .webArchive: pageOutput.save(web: target.web, store: target.store, window: target.window, format: .webArchive)
         }
     }
+    @objc func toggleReader() { if let target = outputTarget(in: activeBrowserWindow) { target.store.toggleReader(target.web) } }
     @objc func printPage() { performPageOutput(.printPage, in: activeBrowserWindow) }
     @objc func exportPDF() { performPageOutput(.pdf, in: activeBrowserWindow) }
     @objc func savePage() { performPageOutput(.webArchive, in: activeBrowserWindow) }
@@ -100,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let manager=ExtensionManagerWindowController.active {manager.escape();return true}
         if SidebarResizeHandle.cancelActiveResize(in: window) { return true }
         if let pickerStore = browserStore(in: window), pickerStore.boostPicker?.source.window === window { pickerStore.cancelBoostPicker(); return true }
+        if let target = outputTarget(in: window), let reader = target.store.readerSession(for: target.web) { if reader.searchVisible { reader.dismissFind() } else { reader.dismiss(restoringFocus: true) }; return true }
         if let quick = quickWindows.values.first(where: { $0.window === window }),
            quick.state.findVisible || quick.state.isEditingAddress || quick.store.quickPeekView(quick.pageID) != nil { quick.escape(); return true }
         guard let store = windows[window] else { return false }
@@ -459,6 +461,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let view = submenu("View")
         add(view, "Reload", #selector(reload), "r"); add(view, "Toggle Sidebar", #selector(sidebar), "s")
         add(view, "Toggle Split View", #selector(split), "d", [.command, .shift]); add(view, "Pin / Unpin Tab", #selector(pin), "p", [.command, .shift])
+        add(view, "Show Reader", #selector(toggleReader), "")
         add(view, "Close Peek", #selector(closePeek), "\u{1b}", [])
         add(view, "Next Recent Tab", #selector(nextTab), "\t", .control); add(view, "Previous Recent Tab", #selector(previousTab), "\t", [.control, .shift])
         add(view, "Next Space", #selector(nextSpace), "\u{f703}", [.command, .option]); add(view, "Previous Space", #selector(previousSpace), "\u{f702}", [.command, .option])
@@ -481,9 +484,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         if menuItem.action == #selector(manageExtensions) {return activeStore != nil}
         if menuItem.action == #selector(closePeek), hasMarkedText(in: NSApp.keyWindow) { return false }
+        if menuItem.action == #selector(toggleReader) {
+            guard let target = outputTarget(in: activeBrowserWindow) else { return false }
+            menuItem.title = target.store.readerSession(for: target.web) == nil ? "Show Reader" : "Exit Reader"
+            return target.window.attachedSheet == nil && target.store.canToggleReader(for: target.web)
+        }
         let outputActions: Set<Selector> = [#selector(printPage), #selector(exportPDF), #selector(savePage)]
         if let action = menuItem.action, outputActions.contains(action) {
             guard let target = outputTarget(in: activeBrowserWindow) else { return false }
+            let reading = target.store.readerSession(for: target.web) != nil
+            if action == #selector(printPage) { menuItem.title = reading ? "Print Original Page…" : "Print…" }
+            else if action == #selector(exportPDF) { menuItem.title = reading ? "Export Original Page as PDF…" : "Export as PDF…" }
+            else { menuItem.title = reading ? "Save Original Page As…" : "Save Page As…" }
             return pageOutput.canBegin(web: target.web, store: target.store, window: target.window)
         }
         if activeStore?.awaitingInitialMetadata == true {
@@ -632,11 +644,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func pin() { if activeQuick == nil, let store = activeStore, store.canModifyLocalMetadata, !store.profileUnavailable(store.activeProfileID), let id = store.focusedID { store.togglePin(id) } }
     @objc func back() { activeWebView?.goBack() }
     @objc func forward() { activeWebView?.goForward() }
-    @objc func find() { if let quick = activeQuick { quick.state.showFind() } else { activeStore?.findVisible = true } }
-    func zoom(_ amount: Double) { if let web = activeWebView { web.pageZoom = min(3, max(0.5, web.pageZoom + amount)) } }
+    @objc func find() {
+        if let source = activeWebView, let reader = activeStore?.readerSession(for: source) { reader.requestFind(); return }
+        if let quick = activeQuick { quick.state.showFind() } else { activeStore?.findVisible = true }
+    }
+    func zoom(_ amount: Double) { if let source = activeWebView { let web = activeStore?.readerSession(for: source)?.reader ?? source; web.pageZoom = min(3, max(0.5, web.pageZoom + amount)) } }
     @objc func zoomIn() { zoom(0.1) }
     @objc func zoomOut() { zoom(-0.1) }
-    @objc func resetZoom() { activeWebView?.pageZoom = 1 }
+    @objc func resetZoom() { if let source = activeWebView { (activeStore?.readerSession(for: source)?.reader ?? source).pageZoom = 1 } }
     func primaryForActive() -> BrowserStore {
         let owner = activeQuick?.windowOwner ?? activeBrowserWindow.flatMap { primaryOwners[$0] } ?? ensureNormalOwner()
         openPrimary(owner)
