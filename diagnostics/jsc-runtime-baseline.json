@@ -24,9 +24,10 @@
   },
   "additionalPatch": {
     "name": "jsc-promise-job-realms.patch",
-    "sha256": "53ed1f10f758e4a0a1a2e294e535f2c4c78485feb997350e08ba2d6e5e82d6c9",
+    "sha256": "4487d1e4123277f41b04f03f44fe1ca626e45d16ed32148b23dbd6ce2bbb0333",
     "paths": [
-      "Source/JavaScriptCore/runtime/JSGlobalObject.cpp"
+      "Source/JavaScriptCore/runtime/JSGlobalObject.cpp",
+      "Source/JavaScriptCore/runtime/JSPromisePrototype.cpp"
     ]
   },
   "retainedRoots": [

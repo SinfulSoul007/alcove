@@ -23,12 +23,12 @@
 
 ### Task 1: Correct queued continuation context
 
-**Files:** Native Source/JavaScriptCore/runtime/JSGlobalObject.cpp. Wrapper diagnostics/jsc-promise-job-realms.patch, diagnostics/CrossRealmPromiseChecks.swift, diagnostics/cross-realm-server.py and scope documentation.
+**Files:** Native Source/JavaScriptCore/runtime/JSGlobalObject.cpp and JSPromisePrototype.cpp. Wrapper diagnostics/jsc-promise-job-realms.patch, diagnostics/CrossRealmPromiseChecks.swift, diagnostics/cross-realm-server.py and scope documentation.
 **Interfaces:** Existing JSGlobalObject::queueMicrotask signature and task argument order remain unchanged; only the queued global and its event-loop dispatch target change for the scoped jobs.
 
 - [x] Reproduce with two real same-origin pages. VM867: 5checks/3failures on both stock and15-patch runtime, with both controls passing. Preserve exact source/logs.
 - [x] Extend owned fixture for fulfilled/rejected, settled/pending, bound/proxy/finally handlers and revoked-proxy rejection. Expected old-engine failures retain wrong background URL; no setup or compiler failures qualify as RED.
-- [x] Implement handler realm selection through getFunctionRealm and generator realm selection for AsyncFunctionResume. Preserve revoked-proxy fallback and termination; regenerate only patch16 and verify it applies to the exact pin.
+- [x] Implement handler realm selection through getFunctionRealm and generator realm selection for AsyncFunctionResume. Preserve empty-handler pass-through and revoked-proxy fallback/termination; retain optimized finally wrapper realm in its existing context slot; regenerate only patch16 and verify it applies to the exact pin.
 - [ ] Run warning-clean fixture compilation, exact patch/previous15 digest checks and scoped source validation. One fresh whole-branch review occurs after Task2 integration; do not claim native GREEN before its rebuilt runtime runs.
 
 ### Task 2: Build and qualify the changed JavaScriptCore
@@ -38,5 +38,5 @@
 
 - [x] Inspect pinned build-jsc and project graph to choose its supported JSC-only invocation. Write real importer/composition fixtures before implementation; expected RED for absent helper and stale/mismatched products.
 - [x] Implement atomic bounded preparation/composition and source/patch/binary receipts. Omit old JSC/DerivedSources; reject corrupt, unsafe or expired inputs. Verify safe actual baseline import and before-build refusal.
-- [ ] Add the cross-realm witness plus all existing native gates to the actual workflow. Parse every shell block and verify actual child loader paths. One fresh source review and one material fix pass before committing/pushing the exact changed candidate.
-- [ ] Observe the actual build/native/artifact results, independently verify the downloaded runtime, and run both original uBO packages with the strict dashboard-ready BrowserStore witness. Preserve failures; no completion or public release claim from component-only GREEN.
+- [ ] Add the cross-realm witness plus all existing native gates to the actual workflow. Parse every shell block and verify actual child loader paths. One fresh source review and one material fix pass before pushing the exact changed candidate.
+- [ ] Build the reviewed negative variant and require3/3 native failures, restore final source and rebuild incrementally, require18/0 and the existing native suite; observe actual artifact results, independently verify the downloaded runtime, and run both original uBO packages with the strict dashboard-ready BrowserStore witness. Preserve failures; no completion or public release claim from component-only GREEN.

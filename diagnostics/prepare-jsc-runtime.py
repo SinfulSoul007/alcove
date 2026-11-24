@@ -30,11 +30,15 @@ def validate_runtime_link(name,target):
     combined=posixpath.normpath(str(PurePosixPath(name).parent/target))
     require(archive_utils.relative_name(combined)==combined and combined!='.','Runtime link escapes root')
 
-def verify_links(root,members):
+def verify_links(root,members,allowed_roots=None):
     resolved=root.resolve(strict=True)
     for name,member in members.items():
         if member.issym():
-            require((root/name).resolve(strict=False).is_relative_to(resolved),'Runtime link chain escapes root')
+            target=(root/name).resolve(strict=False)
+            require(target.is_relative_to(resolved),'Runtime link chain escapes root')
+            if allowed_roots is not None:
+                relative=target.relative_to(resolved)
+                require(relative.parts and relative.parts[0] in allowed_roots,'Runtime link targets an omitted product')
 
 def load_contract(path):
     c=archive_utils.load_json(path)
@@ -53,7 +57,7 @@ def load_contract(path):
         require(isinstance(digest,str) and re.fullmatch('[0-9a-f]{64}',digest),'Invalid binary digest')
     additional=c['additionalPatch'];patches=c['patches']
     require(isinstance(additional,dict) and set(additional)=={'name','sha256','paths'},'Invalid new patch')
-    require(additional['paths']==['Source/JavaScriptCore/runtime/JSGlobalObject.cpp'],'New patch must stay in the reviewed scheduler source')
+    require(additional['paths']==['Source/JavaScriptCore/runtime/JSGlobalObject.cpp','Source/JavaScriptCore/runtime/JSPromisePrototype.cpp'],'New patch must stay in the reviewed scheduler source')
     require(isinstance(patches,dict) and 0<len(patches)<=100 and additional['name'] not in patches,'Invalid baseline patches')
     for name,digest in list(patches.items())+[(additional['name'],additional['sha256'])]:
         require(isinstance(name,str) and re.fullmatch('[A-Za-z0-9_.-]+\\.patch',name),'Invalid patch name')
@@ -120,16 +124,43 @@ def verify(destination,c):
     (destination/VERIFIED).write_text(json.dumps({'formatVersion':1,'baselineWrapper':c['wrapperCommit'],'newJavaScriptCoreSHA256':current,'unchangedRetainedBinaries':len(c['retainedBinaries']),'additionalPatch':c['additionalPatch']},indent=2,sort_keys=True)+'\n')
     print('REBUILT_JSC_AND_UNCHANGED_RUNTIME_VERIFIED',current,len(c['retainedBinaries']))
 
+def package_runtime(destination,output,c):
+    require(not output.exists() and not output.is_symlink(),'Archive output already exists')
+    require(not output.resolve().is_relative_to(destination.resolve()),'Archive output must be outside the runtime')
+    verify(destination,c)
+    roots=sorted(set(c['retainedRoots'])|{'JavaScriptCore.framework',RECEIPT,VERIFIED})
+    output.parent.mkdir(parents=True,exist_ok=True)
+    descriptor,raw=tempfile.mkstemp(prefix='.alcove-jsc-package-',suffix='.tar.gz',dir=output.parent)
+    os.close(descriptor);stage=Path(raw)
+    try:
+        def runtime_member(member):
+            parts=Path(member.name).parts
+            if any(p.endswith(('.dSYM','.a','.o')) for p in parts):return None
+            return member
+        with tarfile.open(stage,mode='w:gz') as archive:
+            for name in roots:archive.add(destination/name,arcname=name,filter=runtime_member)
+        with tarfile.open(stage,mode='r:gz') as archive:
+            members=archive_utils.validate_members(archive,exclude_member=lambda name:False,validate_link=validate_runtime_link)
+        require({name.split('/',1)[0] for name in members}==set(roots),'Packaged root inventory differs')
+        verify_links(destination,members,allowed_roots=set(roots))
+        require(not output.exists() and not output.is_symlink(),'Archive output already exists')
+        os.rename(stage,output)
+    finally:
+        if stage.exists():stage.unlink()
+    print('PACKAGED_JSC_RUNTIME_ROOTS',len(roots))
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__);commands=parser.add_subparsers(dest='command',required=True)
-    for name in ['prepare','verify']:
+    for name in ['prepare','verify','package']:
         command=commands.add_parser(name);command.add_argument('--destination',type=Path,required=True)
         command.add_argument('--contract',type=Path,default=Path(__file__).with_name('jsc-runtime-baseline.json'))
         if name=='prepare':command.add_argument('--archive',type=Path,required=True);command.add_argument('--patch-directory',type=Path,required=True)
+        if name=='package':command.add_argument('--output',type=Path,required=True)
     args=parser.parse_args()
     try:
         c=load_contract(args.contract)
         if args.command=='prepare':prepare(args.archive,args.destination,args.patch_directory,c)
+        elif args.command=='package':package_runtime(args.destination,args.output,c)
         else:verify(args.destination,c)
     except (ValueError,OSError,RuntimeError,tarfile.TarError,zipfile.BadZipFile) as error:parser.exit(1,'JSC runtime verification failed: '+str(error)+'\n')
 if __name__=='__main__':main()

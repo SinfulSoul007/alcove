@@ -55,6 +55,7 @@ jobs:
         run: |
           python3 diagnostics/verify-probe-environment.py --workflow .github/workflows/build-jsc-realms.yml
           python3 diagnostics/JavaScriptCoreRuntimeChecks.py
+          python3 diagnostics/JSCWorkflowChecks.py
           python3 diagnostics/WebKitDependencyChecks.py
 
       - name: Prepare the verified retained runtime
@@ -67,8 +68,9 @@ jobs:
           metadata="$RUNNER_TEMP/jsc-runtime-artifact.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact" > "$metadata"
           python3 - "$metadata" <<'PY'
-          import json,sys
+          import json,sys,os
           c=json.load(open("diagnostics/jsc-runtime-baseline.json")); m=json.load(open(sys.argv[1]))
+          assert c["webkitRevision"] == os.environ["WEBKIT_REVISION"]
           assert m["expired"] is False and m["id"] == c["artifactID"]
           assert m["digest"] == "sha256:"+c["archiveSHA256"]
           PY
@@ -95,9 +97,26 @@ jobs:
           Tools/Scripts/set-webkit-configuration --release --force-optimization-level=O1 --lto-mode=none
           log="$RUNNER_TEMP/jsc-realms-build.log"
           trap 'status=$?; if [[ "$status" != 0 && -f "$log" ]]; then tail -n 180 "$log"; fi' EXIT
+          # Compile the reviewed negative variant first, then restore the final
+          # source and rebuild incrementally with exactly the same settings.
+          git apply --check "$GITHUB_WORKSPACE/diagnostics/jsc-review-regressions.diff"
+          git apply "$GITHUB_WORKSPACE/diagnostics/jsc-review-regressions.diff"
           # Supported upstream scheme: Everything up to JavaScriptCore.
-          Tools/Scripts/build-jsc --release GCC_GENERATE_DEBUGGING_SYMBOLS=NO COMPILER_INDEX_STORE_ENABLE=NO 2>&1 |
+          Tools/Scripts/build-jsc --release 'ARGS=GCC_GENERATE_DEBUGGING_SYMBOLS=NO COMPILER_INDEX_STORE_ENABLE=NO' 2>&1 |
             tee "$log" |
+            awk '/^The following build commands failed/ { failureSummary = 32 }
+              NR <= 80 || NR % 4000 == 0 || failureSummary > 0 ||
+              /(^|[[:space:]])(fatal error|error|warning|Error):|BUILD (SUCCEEDED|FAILED)|No space left/ {
+                print substr($0, 1, 700)
+                fflush()
+              }
+              failureSummary > 0 { failureSummary-- }'
+          bash "$GITHUB_WORKSPACE/diagnostics/run-promise-realm-checks.sh" "$PWD/WebKitBuild/Release" --expect-review-regressions
+          git apply --reverse --check "$GITHUB_WORKSPACE/diagnostics/jsc-review-regressions.diff"
+          git apply --reverse "$GITHUB_WORKSPACE/diagnostics/jsc-review-regressions.diff"
+          git diff --check
+          Tools/Scripts/build-jsc --release 'ARGS=GCC_GENERATE_DEBUGGING_SYMBOLS=NO COMPILER_INDEX_STORE_ENABLE=NO' 2>&1 |
+            tee -a "$log" |
             awk '/^The following build commands failed/ { failureSummary = 32 }
               NR <= 80 || NR % 4000 == 0 || failureSummary > 0 ||
               /(^|[[:space:]])(fatal error|error|warning|Error):|BUILD (SUCCEEDED|FAILED)|No space left/ {
@@ -123,22 +142,11 @@ jobs:
           retention-days: 5
 
       - name: Verify Promise continuation realms
-        timeout-minutes: 4
+        timeout-minutes: 6
         shell: bash
         run: |
           set -euo pipefail
-          product="$RUNNER_TEMP/WebKit/WebKitBuild/Release"
-          scratch=$(mktemp -d "$RUNNER_TEMP/alcove-promise-realms.XXXXXX")
-          server=''
-          trap 'if [[ -n "$server" ]]; then kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true; fi; rm -rf "$scratch"' EXIT
-          xcrun swiftc -parse-as-library -warnings-as-errors diagnostics/CrossRealmPromiseChecks.swift -o "$scratch/probe"
-          python3 diagnostics/cross-realm-server.py "$scratch/port" > "$scratch/server.log" 2>&1 &
-          server=$!
-          for attempt in {1..200}; do [[ -s "$scratch/port" ]] && break; kill -0 "$server"; sleep 0.05; done
-          test -s "$scratch/port"
-          ALCOVE_REALM_LOOPBACK="http://127.0.0.1:$(cat "$scratch/port")/" \
-            ALCOVE_EXPECT_WEBKIT_ROOT="$product" DYLD_FRAMEWORK_PATH="$product" __XPC_DYLD_FRAMEWORK_PATH="$product" \
-            "$scratch/probe"
+          bash diagnostics/run-promise-realm-checks.sh "$RUNNER_TEMP/WebKit/WebKitBuild/Release"
 
       - name: Verify the extension APIs in the built framework
         shell: bash
@@ -287,8 +295,8 @@ jobs:
           product="$RUNNER_TEMP/WebKit/WebKitBuild/Release"
           destination="$RUNNER_TEMP/alcove-webkit-runtime"
           mkdir "$destination"
-          tar --exclude='*.dSYM' --exclude='*.a' --exclude='*.o' --exclude='./DerivedSources' \
-            -czf "$destination/Alcove-WebKitRuntime.tar.gz" -C "$product" .
+          python3 diagnostics/prepare-jsc-runtime.py package --destination "$product" \
+            --output "$destination/Alcove-WebKitRuntime.tar.gz"
           printf '%s\n' "$GITHUB_SHA" > "$destination/AlcoveSource.txt"
           printf '%s\n' "$WEBKIT_REVISION" > "$destination/WebKitSource.txt"
           shasum -a 256 diagnostics/*.patch > "$destination/PatchChecksums.txt"

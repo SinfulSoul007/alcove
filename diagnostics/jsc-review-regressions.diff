@@ -1,0 +1,28 @@
+diff --git a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
+--- a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
++++ b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
+@@ -3571,9 +3571,7 @@
+         handler = argument1;
+         break;
+     case InternalMicrotask::PromiseFinallyReactionJob:
+-        // This slot retains the realm of the optimized finally wrappers until
+-        // their reaction runs; the job later reuses it for fulfillment state.
+-        jobGlobalObject = jsCast<JSGlobalObject*>(jsCast<JSPromiseCombinatorsGlobalContext*>(argument2)->remainingElementsCount());
++        handler = jsCast<JSPromiseCombinatorsGlobalContext*>(argument2)->values();
+         break;
+     case InternalMicrotask::AsyncFunctionResume:
+         jobGlobalObject = jsCast<JSGenerator*>(argument2)->globalObject();
+@@ -3588,12 +3586,7 @@
+         auto& vm = this->vm();
+         auto catchScope = DECLARE_CATCH_SCOPE(vm);
+         if (auto* handlerGlobalObject = getFunctionRealm(this, asObject(handler))) {
+-            // Private identity/thrower stand-ins represent absent author code.
+-            // Keep the settling realm so a closed registration page cannot
+-            // discard a live promise's value or rejection propagation.
+-            if (handler != handlerGlobalObject->promiseEmptyOnFulfilledFunction()
+-                && handler != handlerGlobalObject->promiseEmptyOnRejectedFunction())
+-                jobGlobalObject = handlerGlobalObject;
++            jobGlobalObject = handlerGlobalObject;
+         } else if (!catchScope.clearExceptionExceptTermination())
+             return;
+         // A revoked proxy uses the current realm; invoking it still rejects.

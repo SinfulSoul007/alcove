@@ -17,6 +17,7 @@ JSC='JavaScriptCore.framework/Versions/A/JavaScriptCore'
 WEBKIT='WebKit.framework/Versions/A/WebKit'
 CORE='WebCore.framework/Versions/A/WebCore'
 PATCH=b'diff --git a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp\n--- a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp\n+++ b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp\n@@ -1 +1 @@\n-old\n+new\n'
+PATCH += b'diff --git a/Source/JavaScriptCore/runtime/JSPromisePrototype.cpp b/Source/JavaScriptCore/runtime/JSPromisePrototype.cpp\n--- a/Source/JavaScriptCore/runtime/JSPromisePrototype.cpp\n+++ b/Source/JavaScriptCore/runtime/JSPromisePrototype.cpp\n@@ -1 +1 @@\n-old\n+new\n'
 def sha(data):return hashlib.sha256(data).hexdigest()
 
 class RuntimeChecks(unittest.TestCase):
@@ -30,7 +31,7 @@ class RuntimeChecks(unittest.TestCase):
                       ('DerivedSources/JavaScriptCore/build-host','/outside','symlink')]
         self.contract={'formatVersion':1,'artifactID':17,'wrapperCommit':'1'*40,'webkitRevision':'2'*40,
                        'patches':{'prior.patch':sha(b'prior\n')},
-                       'additionalPatch':{'name':'jsc.patch','sha256':sha(PATCH),'paths':['Source/JavaScriptCore/runtime/JSGlobalObject.cpp']},
+                       'additionalPatch':{'name':'jsc.patch','sha256':sha(PATCH),'paths':['Source/JavaScriptCore/runtime/JSGlobalObject.cpp','Source/JavaScriptCore/runtime/JSPromisePrototype.cpp']},
                        'retainedRoots':['WebKit.framework','WebCore.framework'],
                        'retainedBinaries':{WEBKIT:sha(b'unchanged-webkit'),CORE:sha(b'unchanged-core')},
                        'oldJavaScriptCoreSHA256':sha(b'old-jsc')}
@@ -79,6 +80,15 @@ class RuntimeChecks(unittest.TestCase):
         self.entries += [('WebCore.framework/Versions/A/deep','../../../WebKit.framework','symlink'),('WebCore.framework/escape','Versions/A/deep/../../outside','symlink')]
         self.write_archive();destination=self.root/'chain'
         self.assertNotEqual(self.prepare(destination).returncode,0);self.assertFalse(destination.exists())
+    def test_package_excludes_build_tools(self):
+        path=self.control/JSC;path.parent.mkdir(parents=True);path.write_bytes(b'new-jsc')
+        for name in ['jsc','testb3','LLIntOffsetsExtractor']:(self.control/name).write_bytes(b'owned-build-tool')
+        output=self.root/'runtime.tar.gz'
+        result=subprocess.run([sys.executable,str(HELPER),'package','--contract',str(self.contract_path),'--destination',str(self.control),'--output',str(output)],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        with tarfile.open(output) as archive:
+            roots={m.name.split('/',1)[0] for m in archive}
+        self.assertEqual(roots,set(self.contract['retainedRoots'])|{'JavaScriptCore.framework','AlcoveJavaScriptCoreBaseline.json','AlcoveJavaScriptCoreVerification.json'})
     def test_rejects_reused_jsc_binary(self):
         path=self.control/JSC;path.parent.mkdir(parents=True);path.write_bytes(b'old-jsc')
         self.assertNotEqual(self.command('verify',self.control).returncode,0)

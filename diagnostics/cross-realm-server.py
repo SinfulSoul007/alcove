@@ -11,6 +11,16 @@ window.registerDetached=callback=>{
     document.querySelector('iframe').remove();resolve('owned');
     setTimeout(()=>{window.ownedDetachedFinished=true;},50);
 };
+window.registerPassThrough=foreignThen=>{
+    let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j;});
+    Object.defineProperty(promise,'constructor',{value:Promise});
+    const next=Reflect.apply(foreignThen,promise,[]);
+    window.ownedPassThroughParentPromise=Object.getPrototypeOf(next)===Promise.prototype;
+    next.then(value=>{window.ownedPassThroughObserved=value;},error=>{window.ownedPassThroughObserved=error;});
+    document.querySelector('iframe').remove();
+    setTimeout(()=>{if(mode==='empty-error')reject('owned');else resolve('owned');},10);
+    setTimeout(()=>{window.ownedPassThroughFinished=true;},100);
+};
 window.consume=async promise=>{
     if(mode==='all')await Promise.all([promise]);else await promise;
     move(mode);
@@ -25,14 +35,19 @@ if(location.hash===''){
     const mode=parent.mode;
     if(mode==='sync')parent.move(mode);
     else if(mode==='detached'){const owner=parent;owner.registerDetached(()=>{owner.ownedDetachedRan=true;});}
+    else if(mode.startsWith('empty-'))parent.registerPassThrough(Promise.prototype.then);
     else {
-        const promise=mode==='settled'?Promise.resolve('owned'):new Promise((resolve,reject)=>setTimeout(()=>mode==='reject'?reject('owned'):resolve('owned'),10));
+        const settled=mode==='settled'||mode==='revoked-settled';
+        const promise=settled?Promise.resolve('owned'):new Promise((resolve,reject)=>setTimeout(()=>mode==='reject'?reject('owned'):resolve('owned'),10));
         if(mode==='then'||mode==='settled')promise.then(parent.resumeThen);
         else if(mode==='bound')promise.then(parent.resumeThen.bind(null));
         else if(mode==='proxy')promise.then(new Proxy(parent.resumeThen,{}));
-        else if(mode==='finally')promise.finally(parent.resumeThen);
-        else if(mode==='reject')promise.catch(parent.resumeThen);
-        else if(mode==='revoked'){
+        else if(mode.startsWith('finally-')){
+            if(mode.endsWith('-generic'))Object.defineProperty(promise,'then',{value:function(a,b){return Reflect.apply(Promise.prototype.then,this,[a,b]);}});
+            if(mode.startsWith('finally-parent-'))Reflect.apply(parent.Promise.prototype.finally,promise,[parent.resumeThen]);
+            else promise.finally(parent.resumeThen);
+        }else if(mode==='reject')promise.catch(parent.resumeThen);
+        else if(mode.startsWith('revoked')){
             const record=Proxy.revocable(parent.resumeThen,{});record.revoke();
             try {
                 const next=promise.then(record.proxy);parent.ownedRegistrationReturned=true;

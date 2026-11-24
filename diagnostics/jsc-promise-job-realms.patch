@@ -1,5 +1,4 @@
 diff --git a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
-index 6748da1..eabe943 100644
 --- a/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
 +++ b/Source/JavaScriptCore/runtime/JSGlobalObject.cpp
 @@ -104,6 +104,7 @@
@@ -10,7 +9,7 @@ index 6748da1..eabe943 100644
  #include "IntlObject.h"
  #include "IntlPluralRules.h"
  #include "IntlPluralRulesPrototype.h"
-@@ -3563,8 +3564,36 @@ void JSGlobalObject::queueMicrotaskToEventLoop(JSC::JSGlobalObject& globalObject
+@@ -3563,8 +3564,43 @@
  
  void JSGlobalObject::queueMicrotask(InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2)
  {
@@ -23,7 +22,9 @@ index 6748da1..eabe943 100644
 +        handler = argument1;
 +        break;
 +    case InternalMicrotask::PromiseFinallyReactionJob:
-+        handler = jsCast<JSPromiseCombinatorsGlobalContext*>(argument2)->values();
++        // This slot retains the realm of the optimized finally wrappers until
++        // their reaction runs; the job later reuses it for fulfillment state.
++        jobGlobalObject = jsCast<JSGlobalObject*>(jsCast<JSPromiseCombinatorsGlobalContext*>(argument2)->remainingElementsCount());
 +        break;
 +    case InternalMicrotask::AsyncFunctionResume:
 +        jobGlobalObject = jsCast<JSGenerator*>(argument2)->globalObject();
@@ -37,9 +38,14 @@ index 6748da1..eabe943 100644
 +    if (handler.isCallable()) {
 +        auto& vm = this->vm();
 +        auto catchScope = DECLARE_CATCH_SCOPE(vm);
-+        if (auto* handlerGlobalObject = getFunctionRealm(this, asObject(handler)))
-+            jobGlobalObject = handlerGlobalObject;
-+        else if (!catchScope.clearExceptionExceptTermination())
++        if (auto* handlerGlobalObject = getFunctionRealm(this, asObject(handler))) {
++            // Private identity/thrower stand-ins represent absent author code.
++            // Keep the settling realm so a closed registration page cannot
++            // discard a live promise's value or rejection propagation.
++            if (handler != handlerGlobalObject->promiseEmptyOnFulfilledFunction()
++                && handler != handlerGlobalObject->promiseEmptyOnRejectedFunction())
++                jobGlobalObject = handlerGlobalObject;
++        } else if (!catchScope.clearExceptionExceptTermination())
 +            return;
 +        // A revoked proxy uses the current realm; invoking it still rejects.
 +    }
@@ -49,3 +55,15 @@ index 6748da1..eabe943 100644
  }
  
  void JSGlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)
+diff --git a/Source/JavaScriptCore/runtime/JSPromisePrototype.cpp b/Source/JavaScriptCore/runtime/JSPromisePrototype.cpp
+--- a/Source/JavaScriptCore/runtime/JSPromisePrototype.cpp
++++ b/Source/JavaScriptCore/runtime/JSPromisePrototype.cpp
+@@ -270,7 +270,7 @@
+     auto* promise = jsDynamicCast<JSPromise*>(thisValue);
+     if (promise && promise->isThenFastAndNonObservable() && promiseSpeciesWatchpointIsValid(vm, promise)) [[likely]] {
+         JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
+-        auto* context = JSPromiseCombinatorsGlobalContext::create(vm, resultPromise, onFinally, jsUndefined());
++        auto* context = JSPromiseCombinatorsGlobalContext::create(vm, resultPromise, onFinally, JSValue(globalObject));
+         promise->performPromiseThenWithInternalMicrotask(vm, globalObject, InternalMicrotask::PromiseFinallyReactionJob, resultPromise, context);
+         return JSValue::encode(resultPromise);
+     }

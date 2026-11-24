@@ -20,32 +20,43 @@ import Darwin
         window.isReleasedWhenClosed=false;window.title="Alcove owned cross-realm promise checks";window.contentView=page
         window.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)
         defer {page.stopLoading();window.contentView=nil;window.close()}
+        let regressionOnly=CommandLine.arguments.contains("--review-regressions-only")
+        let modes=regressionOnly ? ["empty-value","empty-error","finally-child-fast"]:
+            ["same","sync","then","await","all","reject","settled","bound","proxy","finally-child-fast","finally-parent-fast","finally-child-generic","finally-parent-generic","revoked","revoked-settled","detached","empty-value","empty-error"]
         var failures=0
-        for mode in ["same","sync","then","await","all","reject","settled","bound","proxy","finally","revoked","detached"] {
+        for mode in modes {
             var parts=URLComponents(url:base.appendingPathComponent("options.html"),resolvingAgainstBaseURL:false)!
             parts.queryItems=[URLQueryItem(name:"mode",value:mode)]
             page.load(URLRequest(url:parts.url!))
-            let completionScript=mode=="detached" ? "window.ownedDetachedFinished===true":"window.ownedRegistrationReturned===true&&window.ownedRejection==='TypeError'&&window.ownedSyncError!==true"
+            let stateCheck:String?
+            let completionCheck:String?
+            if mode=="detached" {
+                completionCheck="window.ownedDetachedFinished===true"
+                stateCheck="window.ownedDetachedFinished===true&&window.ownedDetachedRan!==true"
+            } else if mode.hasPrefix("empty-") {
+                completionCheck="window.ownedPassThroughFinished===true"
+                stateCheck="window.ownedPassThroughParentPromise===true&&window.ownedPassThroughObserved==='owned'"
+            } else if mode.hasPrefix("revoked") {
+                let check="window.ownedRegistrationReturned===true&&window.ownedRejection==='TypeError'&&window.ownedSyncError!==true"
+                completionCheck=check;stateCheck=check
+            } else {completionCheck=nil;stateCheck=nil}
             let deadline=ContinuousClock.now + .seconds(12)
             while ContinuousClock.now<deadline {
-                if mode=="revoked" || mode=="detached" {
-                    if (try? await page.evaluateJavaScript(completionScript)) as? Bool==true {break}
+                if let completionCheck {
+                    if (try? await page.evaluateJavaScript(completionCheck)) as? Bool==true {break}
                 } else if page.url?.fragment==mode,!page.isLoading {break}
                 try await Task.sleep(for:.milliseconds(20))
             }
-            let expected=mode=="sync" ? "/background.html":"/options.html"
+            let expected=mode=="sync" || mode.hasPrefix("finally-child-") ? "/background.html":"/options.html"
             let good:Bool
-            if mode=="detached" {
-                let stopped=(try? await page.evaluateJavaScript("window.ownedDetachedFinished===true&&window.ownedDetachedRan!==true")) as? Bool==true
-                good=page.url?.path=="/options.html" && stopped
-            } else if mode=="revoked" {
-                let rejection=(try? await page.evaluateJavaScript("window.ownedRegistrationReturned===true&&window.ownedRejection==='TypeError'&&window.ownedSyncError!==true")) as? Bool==true
-                good=page.url?.path=="/options.html" && rejection
+            if let stateCheck {
+                let state=(try? await page.evaluateJavaScript(stateCheck)) as? Bool==true
+                good=page.url?.path==expected && state
             } else {good=page.url?.path==expected && page.url?.fragment==mode}
             print(good ? "PASS:":"FAIL:",mode,"expected",expected,"actual",page.url?.absoluteString ?? "nil")
             if !good {failures+=1}
         }
-        print("CROSS_REALM_PROMISE_CHECKS 12 FAILURES",failures)
+        print("CROSS_REALM_PROMISE_CHECKS",modes.count,"FAILURES",failures)
         if failures>0 {throw Failure.checks(failures)}
     }
     @MainActor static func main() {
