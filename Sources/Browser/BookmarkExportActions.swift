@@ -33,21 +33,28 @@ extension BrowserStore {
 typealias BookmarkExportChooser = (NSWindow, String, BookmarkHTMLExport, @escaping (URL?) -> Void) -> (() -> Void)
 
 private struct BookmarkExportRetention {
+    private struct SpaceHeading: Hashable { let id: UUID; let name: String }
+    private struct FolderHeading: Hashable { let spaceID: UUID; let name: String; let parent: String? }
     private struct Link: Hashable {
         let id: UUID, title: String, address: String
         init(_ tab: BrowserCore.Tab) { id = tab.id; title = tab.sidebarTitle; address = tab.homeURL ?? tab.url }
         init(_ record: PageRecord) { id = record.id; title = record.title; address = record.url }
     }
-    private let spaces: Set<UUID>, favorites: Set<Link>, pins: Set<Link>, bookmarks: Set<Link>
+    private let spaces: Set<SpaceHeading>, folders: Set<FolderHeading>
+    private let favorites: Set<Link>, pins: Set<Link>, bookmarks: Set<Link>
     init(_ source: BookmarkExportSource) {
-        spaces = Set(source.spaces.map(\.id))
+        spaces = Set(source.spaces.map { SpaceHeading(id: $0.id, name: $0.name) })
+        folders = Set(source.spaces.flatMap { space in
+            let tree = SidebarFolderTree(space: space)
+            return tree.names.map { FolderHeading(spaceID: space.id, name: $0, parent: tree.parents[$0]) }
+        })
         favorites = Set(source.favorites.map(Link.init))
         pins = Set(source.spaces.flatMap(\.tabs).filter { $0.pinned && $0.favorite != true }.map(Link.init))
         bookmarks = Set(source.bookmarks.map(Link.init))
     }
     func isRetained(by source: BookmarkExportSource) -> Bool {
         let current = Self(source)
-        return spaces.isSubset(of: current.spaces) && favorites.isSubset(of: current.favorites) &&
+        return spaces.isSubset(of: current.spaces) && folders.isSubset(of: current.folders) && favorites.isSubset(of: current.favorites) &&
             pins.isSubset(of: current.pins) && bookmarks.isSubset(of: current.bookmarks)
     }
 }

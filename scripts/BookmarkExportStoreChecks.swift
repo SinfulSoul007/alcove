@@ -117,6 +117,30 @@ import BrowserCore
         store.mutateLibrary(for: BrowserProfile.defaultID) { $0.bookmarks.removeAll() }
         choices[erasureIndex].2(root.appendingPathComponent("removed.html"))
         check(boundary.writes == 2, "Removing source saved pages revokes an unaccepted export instead of saving deleted records")
+        let emptyFolder = try store.createTabFolder(name: "Removed empty folder", in: defaultSpace)
+        let emptyFolderIndex = choices.count, beforeEmpty = boundary.writes
+        check(exports.start(store: store, window: window, stillOwned: { owned }), "An empty-folder removal witness begins")
+        check(await wait { choices.count > emptyFolderIndex }, "The empty-folder witness reaches its save boundary")
+        try store.removeTabFolder(emptyFolder, in: defaultSpace)
+        choices[emptyFolderIndex].2(root.appendingPathComponent("removed-empty-folder.html"))
+        check(boundary.writes == beforeEmpty, "Removing an empty folder revokes prepared HTML with its deleted name")
+        let filledFolder = try store.createTabFolder(name: "Removed saved folder", in: defaultSpace)
+        var savedPin = BrowserCore.Tab(title: "Retained pin", url: "https://retained.example/saved", pinned: true)
+        savedPin.folder = filledFolder
+        store.session.spaces[store.spaceIndex].tabs.append(savedPin)
+        let filledFolderIndex = choices.count, beforeFilled = boundary.writes
+        check(exports.start(store: store, window: window, stillOwned: { owned }), "A populated-folder removal witness begins")
+        check(await wait { choices.count > filledFolderIndex }, "The populated-folder witness reaches its save boundary")
+        try store.removeTabFolder(filledFolder, in: defaultSpace)
+        choices[filledFolderIndex].2(root.appendingPathComponent("removed-saved-folder.html"))
+        check(boundary.writes == beforeFilled && store.tab(savedPin.id)?.pinned == true && store.tab(savedPin.id)?.folder == nil,
+              "Removing a folder revokes its old export while its live pin remains saved at the root")
+        let renameIndex = choices.count, beforeRename = boundary.writes
+        check(exports.start(store: store, window: window, stillOwned: { owned }), "A source-group rename witness begins")
+        check(await wait { choices.count > renameIndex }, "The source-group rename witness reaches its save boundary")
+        try store.renameSpace(defaultSpace, name: "Updated saved group")
+        choices[renameIndex].2(root.appendingPathComponent("old-group-name.html"))
+        check(boundary.writes == beforeRename, "Renaming an exported Space revokes prepared HTML with its old group name")
         print("Bookmark export store/output checks: \(checks), \(failures) failures; panel cancellations \(cancelled)")
         return failures == 0 ? 0 : 1
     }

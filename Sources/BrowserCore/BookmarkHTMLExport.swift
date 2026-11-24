@@ -79,7 +79,7 @@ private struct BookmarkHTMLWriter {
     mutating func link(title: String, address: String, date: Date?) throws {
         guard let url = Self.address(address) else { skippedLinkCount += 1; return }
         let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let text = try escape(name.isEmpty ? url.host! : name)
+        let text = try escape(name.isEmpty ? (url.host ?? "Saved page") : name)
         let href = try escape(url.absoluteString)
         var added = ""
         if let seconds = date?.timeIntervalSince1970, seconds.isFinite, (0...253_402_300_799).contains(seconds) {
@@ -90,7 +90,7 @@ private struct BookmarkHTMLWriter {
     }
     static func address(_ text: String) -> URL? {
         guard !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
-              let url = URL(string: text), QuickBrowseRouting.host(for: url) != nil,
+              let url = URL(string: text), WebOrigin(url) != nil,
               url.user == nil, url.password == nil else { return nil }
         return url
     }

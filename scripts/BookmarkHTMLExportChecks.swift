@@ -64,6 +64,12 @@ import BrowserCore
         let filteredXML = try document(filtered)
         check(filtered.bookmarkCount == 1 && filtered.skippedLinkCount == 6, "Unsupported and credential-bearing addresses are skipped with an exact count")
         check(try values(filteredXML, "//a/@href") == [safe.url] && filteredXML.nodes(forXPath: "//@onmouseover").isEmpty, "Quoted title and escaped URL remain a single inert bookmark")
+        let ports = try BookmarkHTMLExport(spaces: [], favorites: [], bookmarks: [
+            PageRecord(title: "Last usable port", url: "https://example.org:65535/saved"),
+            PageRecord(title: "Invalid port", url: "https://example.org:65536/saved")
+        ])
+        check(ports.bookmarkCount == 1 && ports.skippedLinkCount == 1, "Out-of-range ports are skipped while port 65535 remains exportable")
+        check(try values(document(ports), "//a/@href") == ["https://example.org:65535/saved"], "The portable output contains no unusable out-of-range port link")
 
         var repeated = parentPin; repeated.folder = "Second"
         let repeatSpace = Space(name: "Two places", tabs: [parentPin, repeated])
