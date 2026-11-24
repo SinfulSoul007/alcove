@@ -36,10 +36,15 @@ fi
 cat "$scratch/native.log"
 if [[ "$mode" == --expect-review-regressions ]]; then
     [[ "$status" == 1 ]]
-    /usr/bin/grep -Fxq 'CROSS_REALM_PROMISE_CHECKS 3 FAILURES 3' "$scratch/native.log"
-    printf 'REVIEWED_NATIVE_REGRESSIONS_REPRODUCED true\n'
+    /usr/bin/grep -Fxq 'CROSS_REALM_PROMISE_CHECKS 3 FAILURES 1' "$scratch/native.log"
+    /usr/bin/grep -Eq '^PASS: closed-value ' "$scratch/native.log"
+    /usr/bin/grep -Eq '^PASS: closed-error ' "$scratch/native.log"
+    /usr/bin/grep -Eq '^FAIL: finally-child-fast ' "$scratch/native.log"
+    /usr/bin/grep -Eq '^CLOSED_PAGE_STATE closed-value 1 true ' "$scratch/native.log"
+    /usr/bin/grep -Eq '^CLOSED_PAGE_STATE closed-error 1 true ' "$scratch/native.log"
+    printf 'REVIEWED_NATIVE_REGRESSION_REPRODUCED true\n'
 else
     [[ "$status" == 0 ]]
-    /usr/bin/grep -Fxq 'CROSS_REALM_PROMISE_CHECKS 18 FAILURES 0' "$scratch/native.log"
+    /usr/bin/grep -Fxq 'CROSS_REALM_PROMISE_CHECKS 20 FAILURES 0' "$scratch/native.log"
     printf 'PROMISE_REALM_NATIVE_QUALIFICATION_PASSED true\n'
 fi

@@ -99,6 +99,8 @@ jobs:
           trap 'status=$?; if [[ "$status" != 0 && -f "$log" ]]; then tail -n 180 "$log"; fi' EXIT
           # Compile the reviewed negative variant first, then restore the final
           # source and rebuild incrementally with exactly the same settings.
+          # Only the finally fault has a demonstrated native negative result;
+          # closed-page value/error forwarding remain required positive controls.
           git apply --check "$GITHUB_WORKSPACE/diagnostics/jsc-review-regressions.diff"
           git apply "$GITHUB_WORKSPACE/diagnostics/jsc-review-regressions.diff"
           # Supported upstream scheme: Everything up to JavaScriptCore.

@@ -9,20 +9,19 @@ window.resumeThen=()=>move(mode);
 window.registerDetached=callback=>{
     let resolve;const promise=new Promise(r=>{resolve=r;});promise.then(callback);
     document.querySelector('iframe').remove();resolve('owned');
-    setTimeout(()=>{window.ownedDetachedFinished=true;},50);
 };
 window.makePassThrough=()=>{
     let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j;});
     Object.defineProperty(promise,'constructor',{value:Promise});
-    window.settlePassThrough=()=>{if(mode==='empty-error')reject('owned');else resolve('owned');};
+    window.settlePassThrough=()=>{if(mode.endsWith('-error'))reject('owned');else resolve('owned');};
     return promise;
 };
 window.observePassThrough=next=>{
     window.ownedPassThroughParentPromise=Object.getPrototypeOf(next)===Promise.prototype;
     next.then(value=>{window.ownedPassThroughObserved=value;},error=>{window.ownedPassThroughObserved=error;});
-    document.querySelector('iframe').remove();
-    setTimeout(settlePassThrough,10);
-    setTimeout(()=>{window.ownedPassThroughFinished=true;},100);
+    document.querySelector('iframe')?.remove();
+    setTimeout(settlePassThrough,100);
+    setTimeout(()=>{window.ownedPassThroughFinished=true;},250);
 };
 window.consume=async promise=>{
     if(mode==='all')await Promise.all([promise]);else await promise;
@@ -30,18 +29,22 @@ window.consume=async promise=>{
 };
 if(mode==='same')new Promise(resolve=>setTimeout(resolve,10)).then(()=>move(mode));
 else document.addEventListener('DOMContentLoaded',()=>{
-    const frame=document.createElement('iframe');frame.src='background.html';document.body.append(frame);
+    if(mode==='detached')setTimeout(()=>{window.ownedDetachedFinished=true;},250);
+    if(mode.startsWith('closed-'))window.open('background.html','owned-closing-realm');
+    else {const frame=document.createElement('iframe');frame.src='background.html';document.body.append(frame);}
 });
 </script><body>Owned options page</body>'''
 BACKGROUND = b'''<!doctype html><title>Owned background realm</title><script>
 if(location.hash===''){
-    const mode=parent.mode;
+    const ownerWindow=opener||parent;
+    const mode=ownerWindow.mode;
     if(mode==='sync')parent.move(mode);
-    else if(mode==='detached'){const owner=parent;owner.registerDetached(()=>{owner.ownedDetachedRan=true;});}
-    else if(mode.startsWith('empty-')){
-        const owner=parent,promise=owner.makePassThrough();
+    else if(mode==='detached'){const owner=parent;owner.registerDetached(()=>{owner.ownedDetachedRan=true;try{owner.move(owner.document.querySelector('iframe')===null ? mode:'detached-not-removed');}catch(error){owner.ownedDetachedError=error.name;}});}
+    else if(mode.startsWith('empty-')||mode.startsWith('closed-')){
+        const owner=ownerWindow,promise=owner.makePassThrough();
         const next=Reflect.apply(Promise.prototype.then,promise,[]);
         owner.observePassThrough(next);
+        if(mode.startsWith('closed-'))window.close();
     }
     else {
         const settled=mode==='settled'||mode==='revoked-settled';
