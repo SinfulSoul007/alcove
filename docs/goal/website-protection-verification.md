@@ -1,6 +1,6 @@
 # Website protection candidate verification
 
-This records the local website-protection increment for the 0.20.0 preview candidate. It does not complete the full browser goal. Public 0.19.2 downloads remain unchanged until a new tagged package is verified and published.
+This records the website-protection increment published in the 0.20.0 preview. It does not complete the full browser goal. The [final release record](../releases/0.20.0-preview-verification.md) covers exact-source CI, the public downloads and signed update verification.
 
 ## Native evidence
 
@@ -21,9 +21,9 @@ Sidebar mouse resizing and keyboard focus-ring restoration were checked live in 
 
 ## Distribution and open gates
 
-The app remains a macOS 14+ universal, ad hoc signed system-WebKit preview. New candidate metadata is version 0.20.0, build 31, tag `v0.20.0-preview.1`. Full exact-candidate hosted tests, both architecture builds, ZIP verification and mounted-DMG verification must pass before tagging it. Existing published tags and assets must stay intact.
+The app remains a macOS 14+ universal, ad hoc signed system-WebKit preview. Published metadata is version 0.20.0, build 31, tag `v0.20.0-preview.1`, source `1ae53e659cf9be38470b6a6968a197b1d9113821`. Full exact-source hosted tests, both architecture builds, ZIP verification and mounted-DMG verification passed before tagging. The downloaded public installers then passed independent package checks. Existing published tags and assets remain intact.
 
-The candidate pins a public update-verification key. The actual publisher script and production verifier passed local owned-file tests for both DMG and ZIP metadata and rejected a different key and modified payload. The GitHub signing environment permits preview tags only. The owner explicitly authorized storing the publisher key in the tag-restricted GitHub environment secret, and its metadata was verified on 2026-11-24. The key is absent from Git and the VM; the local original is retained in an owner-only host directory. An owner-managed offline backup is recommended and has not been established. An actual signed public update transition must still be verified. These signatures do not provide Apple signing or notarization.
+The release pins a public update-verification key. The actual publisher script and production verifier passed local owned-file tests for both DMG and ZIP metadata and rejected a different key and modified payload. The GitHub signing environment permits preview tags only. The owner explicitly authorized storing the publisher key in the tag-restricted GitHub environment secret, and its metadata was verified on 2026-11-24. The private key is absent from Git and the VM; the local original is retained in an owner-only host directory. An owner-managed offline backup is recommended and has not been established. The actual public manifest and both installers authenticated with the pinned key. The production client also passed public offer discovery, installer verification, modified-byte rejection and current-version checks. These signatures do not provide Apple signing or notarization.
 
 The separate experimental JSC build passed its 20 Promise-realm checks and extension API component gates. Its final artifact and all nineteen retained binary hashes were verified on the host and in the VM. However, the unchanged full uBlock Origin ZIP still redirected its dashboard to the background document before test messages; the CRX case was not reached. That engine is not qualified for this release and is not bundled.
 

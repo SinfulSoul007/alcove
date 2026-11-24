@@ -13,7 +13,7 @@ The build never includes source-user sessions, browsing history or Keychain mate
 
 ## Ongoing updates
 
-Every push and pull request runs `.github/workflows/ci.yml` and retains verified preview artifacts. In-app checks query public releases, compare semantic versions, filter stable and preview channels, and prefer the universal DMG. Automatic checks are opt-in and throttled to one attempt per day. Use **Verify Download** to compare a chosen file with the offered installer’s checksum. Download and install updates manually.
+Every code push and pull request runs `.github/workflows/ci.yml` and retains verified preview artifacts; a documentation-only commit may use GitHub's CI-skip marker after its documentation checks. In-app checks query public releases, compare semantic versions, filter stable and preview channels, and prefer the universal DMG. Automatic checks are opt-in and throttled to one attempt per day. Starting with 0.20, the pinned publisher key authenticates the offered installer's length and checksum. Use **Verify Download** to check a chosen file against that signed metadata. Download and install updates manually.
 
 The manual `package-dmg.yml` workflow remains available to add a DMG to an older ZIP-only preview. New releases use the tag workflow so publication follows mounted-image verification.
 
@@ -23,9 +23,11 @@ To enable authenticated update offers, set `AlcoveUpdateSigningPublicKey` in `sc
 
 With a public key pinned, publishing requires the corresponding private key and adds `Alcove-update-manifest-v1.json` and `Alcove-update-manifest-v1.sig` to the release. Alcove uses the pinned key to verify the manifest before showing the update. The manifest signature covers the commit, tag, installer lengths and checksums. Apple Gatekeeper still evaluates each app bundle.
 
-The next release candidate pins `2LeSS0NhVxzm0E6xTeqEcFpdL1PyZ9LgLd1APsA71rg=`. Its decoded public-key SHA-256 fingerprint is `c842ff0b949f3697929580eee1ea6f7465103a19750f2cf5ab727efc408e1cbe`. The publisher's raw private key is kept outside Git and the test VM in an owner-only host directory; preserve an offline backup before distributing this trust anchor. This key authenticates update metadata and does not sign or notarize the application bundle.
+The published 0.20 preview pins `2LeSS0NhVxzm0E6xTeqEcFpdL1PyZ9LgLd1APsA71rg=`. Its decoded public-key SHA-256 fingerprint is `c842ff0b949f3697929580eee1ea6f7465103a19750f2cf5ab727efc408e1cbe`. The publisher's raw private key is kept outside Git and the test VM in an owner-only host directory. An owner-managed offline backup remains to be established. This key authenticates update metadata and does not sign or notarize the application bundle.
 
 The `alcove-release-signing` environment accepts only tag refs matching `v*-preview.*`; branches cannot deploy to it. Repository write access also permits creating matching tags, so review access before adding collaborators. Store the private key only as the environment secret, using `gh secret set ALCOVE_UPDATE_SIGNING_KEY --env alcove-release-signing --repo SinfulSoul007/alcove` with its base64 value supplied through stdin. Never put the value in a command argument, repository file or build artifact. Setting up the environment and pin does not establish a working public release transition: the secret, tagged publication, downloaded manifest signature and installer bytes must all be verified before claiming that transition works.
+
+The first public signed-metadata release, `v0.20.0-preview.1`, passed that transition on 2026-11-24. The downloaded manifest authenticated both actual installers with the pinned key; altered payloads and a different publisher key were rejected. The production update client discovered the public offer, verified its installer, rejected a same-size modified file and reported the current version up to date. See the [release verification record](docs/releases/0.20.0-preview-verification.md). Older previews without the pinned key do not gain publisher authentication until upgraded.
 
 ## Future trusted releases
 

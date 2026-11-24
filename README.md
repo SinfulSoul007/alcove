@@ -6,7 +6,9 @@ A native, open-source WebKit browser for Mac, inspired by Arc’s sidebar, Space
 
 ## Download
 
-Download the current universal DMG or ZIP from [GitHub Releases](https://github.com/SinfulSoul007/alcove/releases). Open the DMG and drag **Alcove.app** to Applications, or unzip it and move the app there. The download includes everything the app needs.
+Download **0.20.0 preview**: [DMG](https://github.com/SinfulSoul007/alcove/releases/download/v0.20.0-preview.1/Alcove-0.20.0-universal-unsigned-preview.dmg) · [ZIP](https://github.com/SinfulSoul007/alcove/releases/download/v0.20.0-preview.1/Alcove-0.20.0-universal-unsigned-preview.zip) · [Release notes and verification](docs/releases/0.20.0-preview-verification.md).
+
+Open the DMG and drag **Alcove.app** to Applications, or unzip it and move the app there. Quit an existing Alcove before replacing it. Both downloads contain the same universal app. [GitHub Releases](https://github.com/SinfulSoul007/alcove/releases) retains earlier previews.
 
 **The preview is ad hoc signed, not Developer ID signed or notarized by Apple.** Gatekeeper may warn or block it. Do not disable Gatekeeper or other system protections to run it. If macOS blocks this preview, build from source or wait for a notarized release. Published SHA-256 checksums identify the release files; they are not an independent security certification.
 
@@ -20,7 +22,8 @@ Download the current universal DMG or ZIP from [GitHub Releases](https://github.
 - Responsive startup while Keychain approval waits, with private browsing available immediately.
 - Original skippable opening animation before first-launch setup, plus a replayable welcome tour. Existing sessions and private windows skip setup.
 - Experimental native extension manager for reviewed Chrome Web Store packages, CRX3, ZIPs and folders. Native APIs require macOS 15.4+; compatibility varies. Full uBlock Origin is unsupported.
-- GitHub update checks with stable and preview channels, optional daily checks, and a local checksum verifier for downloaded installers.
+- GitHub update checks with stable and preview channels, optional daily checks, publisher-signed update offers and a local verifier for downloaded installers. Installation is manual.
+- Local phishing-domain checks before navigation, with page-specific Go Back/Continue controls and visible catalog status in Settings. The bundled list updates with app releases; coverage is limited.
 - Favorites, Pinned and Today scroll separately, keeping saved pages visible while you browse daily tabs. Bookmarking also pins the original page without reloading it.
 - Create folders from the Pinned header, File menu or command bar. Create a subfolder from a folder’s menu or drag a folder into its new parent. Moving or removing a folder keeps its contents pinned.
 - Use **Copy All Links** or **Copy All Links as Markdown** from a folder’s menu to include its saved links and subfolders.
@@ -114,7 +117,9 @@ Normal metadata is saved to the app’s sandbox Application Support directory, u
 
 Private windows do not read/save normal sessions or history. Private windows inherit cosmetic appearance only, and changes inside them are temporary. Per-Space colors and appearance preferences are encrypted with normal metadata. Sidebar width and the last automatic update attempt are ordinary local UI defaults, outside metadata encryption. Downloads you explicitly save remain on disk. Private browsing does not make you anonymous to websites, your network or your provider. OS-level artifacts and website fingerprinting are outside this feature’s guarantees.
 
-Automatic update checks are off until you enable them. Manual checks and opted-in automatic checks request public release metadata from GitHub; GitHub receives the normal connection information, including your IP address. No account token, browsing history, cookies or website credentials are included. There is no automatic replacement or execution of downloaded apps. Use **Alcove → Check for Updates…** to see release notes and the installer link.
+Automatic update checks are off until you enable them. Manual checks and opted-in automatic checks request public release metadata from GitHub; GitHub receives the normal connection information, including your IP address. No account token, browsing history, cookies or website credentials are included. Starting with 0.20, Alcove authenticates update offers using its pinned publisher key. **Verify Download** checks a selected installer's length and SHA-256 against the signed manifest. There is no automatic replacement or execution of downloaded apps. Use **Alcove → Check for Updates…** to see release notes and the installer link. Publisher authentication is separate from Apple signing and notarization.
+
+Website protection compares navigation hostnames with a bundled PhishDestroy Primary catalog on your Mac. It does not send browsing addresses to a lookup service. A match holds the request until you choose Go Back or Continue. Settings shows the provider, catalog date and loading/unavailable/stale status. The list is an additional layer with limited coverage: it does not inspect page contents, downloaded files or arbitrary subresource requests. An address absent from the list is not a safety guarantee.
 
 Settings includes profile-specific history deletion and website-data clearing. Clearing website data signs you out and closes that profile’s tabs, pins, Favorites and Quick Browse pages across its windows; other profiles, bookmarks and downloaded files remain. Deleted data may still exist in backups or filesystem snapshots; Alcove does not promise secure erasure.
 
@@ -193,7 +198,7 @@ This runs core/store/profile/window-lifecycle/real-website/appearance/update che
 
 ## Still needed before a stable release
 
-Broader website/login/media/download compatibility testing, accessibility and keyboard polish, permission revocation UI, authenticated update signing, password-manager integration, independent security review, performance and energy benchmarks, phishing and malware protection, full bookmark import/export, and broader Chrome extension and profile lifecycle testing.
+Broader website/login/media/download compatibility testing, accessibility and keyboard polish, full site-permission management, password-manager integration, independent security review, performance and energy benchmarks, expanded phishing/malware coverage, bookmark export, Reader mode, and broader Chrome extension and profile lifecycle testing. Publisher-signed updates, bookmark HTML import, Downloads and Playing Tabs are implemented; their broader compatibility and native QA remain part of the release work.
 
 Arc-inspired next steps include more gesture/animation fidelity, automatic site-search discovery, live routing/gesture fidelity, Boosts and Easels/capture. Quick Browse supplies the Little Arc-style external-link workflow. Favorites, drag organization and Shift-click Peek are implemented; full Arc parity is not claimed. Encrypted sync and assisted workflows remain unimplemented parts of the broader browser goal. No Safari-equivalent speed or complete-security claim is made.
 
