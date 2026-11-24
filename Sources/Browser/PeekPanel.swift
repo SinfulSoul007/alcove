@@ -91,6 +91,7 @@ extension BrowserStore {
     func adoptQuickPeek(_ id: UUID, into spaceID: UUID, in destination: BrowserStore) {
         destination.closePrimaryPeek()
         guard let page = peekPages.removeValue(forKey: .quick(id)) else { return }
+        cancelWebsiteProtectionTickets(for:page.web)
         page.spaceID = spaceID
         if destination === self { page.web.removeFromSuperview() }
         else {

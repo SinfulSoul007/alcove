@@ -5,13 +5,22 @@ import BrowserCore
 
 @MainActor final class WebsiteProtectionOverlay:NSView {
     private final class Content:NSView {override var isFlipped:Bool {true}}
+    @MainActor private final class Actions:NSObject {
+        weak var ticket:WebsiteProtectionTicket?
+        let revision:UUID
+        init(ticket:WebsiteProtectionTicket) {self.ticket=ticket;revision=ticket.revision}
+        @objc func goBack() {guard let ticket,ticket.revision==revision else {return};ticket.cancel()}
+        @objc func openAnyway() {ticket?.approve(expectedRevision:revision)}
+    }
+    private var actions:Actions?
+
     private weak var store:BrowserStore?,web:WKWebView?,ticket:WebsiteProtectionTicket?
     private var subscription:AnyCancellable?,boundRevision=UUID()
     private let scroll=NSScrollView(),content=Content()
     private let heading=NSTextField(wrappingLabelWithString:""),body=NSTextField(wrappingLabelWithString:"")
     private let hostname=NSTextField(wrappingLabelWithString:""),provenance=NSTextField(wrappingLabelWithString:"")
-    private let safe=NSButton(title:"Go back",target:nil,action:nil)
-    private let proceed=NSButton(title:"Open anyway",target:nil,action:nil)
+    private var safe=NSButton(title:"Go back",target:nil,action:nil)
+    private var proceed=NSButton(title:"Open anyway",target:nil,action:nil)
     override var isFlipped:Bool {true}
     override var isOpaque:Bool {true}
     override var acceptsFirstResponder:Bool {true}
@@ -27,10 +36,6 @@ import BrowserCore
         for label in [heading,body,hostname,provenance] {label.isSelectable=true;content.addSubview(label)}
         scroll.documentView=content;scroll.drawsBackground=false;scroll.hasVerticalScroller=true;scroll.autohidesScrollers=true
         addSubview(scroll)
-        for button in [safe,proceed] {button.bezelStyle = .rounded;button.font = .preferredFont(forTextStyle:.body);button.target=self;addSubview(button)}
-        safe.action=#selector(goBack);safe.keyEquivalent="\r";safe.identifier=NSUserInterfaceItemIdentifier("AlcoveWebsiteProtectionSafe")
-        proceed.action=#selector(openAnyway);proceed.identifier=NSUserInterfaceItemIdentifier("AlcoveWebsiteProtectionContinue")
-        safe.nextKeyView=proceed;proceed.nextKeyView=safe
     }
     required init?(coder:NSCoder) {fatalError("init(coder:) is unavailable")}
     override func viewDidMoveToWindow() {super.viewDidMoveToWindow();refresh()}
@@ -42,10 +47,26 @@ import BrowserCore
         }
         refresh()
     }
+    private func invalidateControls() {
+        for button in [safe,proceed] {button.target=nil;button.action=nil;button.isEnabled=false}
+        actions=nil
+    }
+    private func replaceControls(for ticket:WebsiteProtectionTicket) {
+        invalidateControls()
+        safe.removeFromSuperview();proceed.removeFromSuperview()
+        safe=NSButton(title:"Go back",target:nil,action:nil)
+        proceed=NSButton(title:"Open anyway",target:nil,action:nil)
+        let binding=Actions(ticket:ticket);actions=binding
+        for button in [safe,proceed] {button.bezelStyle = .rounded;button.font = .preferredFont(forTextStyle:.body);button.target=binding;addSubview(button)}
+        safe.action=#selector(Actions.goBack);safe.keyEquivalent="\r";safe.identifier=NSUserInterfaceItemIdentifier("AlcoveWebsiteProtectionSafe")
+        proceed.action=#selector(Actions.openAnyway);proceed.identifier=NSUserInterfaceItemIdentifier("AlcoveWebsiteProtectionContinue")
+        safe.nextKeyView=proceed;proceed.nextKeyView=safe
+    }
     private func refresh() {
         guard let store,let web,let parent=superview,parent === web.superview,
-              let next=store.websiteProtectionTicket(for:web) else {ticket=nil;isHidden=true;return}
+              let next=store.websiteProtectionTicket(for:web) else {ticket=nil;invalidateControls();isHidden=true;return}
         let changed=ticket !== next || boundRevision != next.revision || isHidden
+        if changed {replaceControls(for:next)}
         ticket=next;boundRevision=next.revision;isHidden=false;next.presented(in:self)
         hostname.stringValue=WebOrigin(next.url)?.host ?? "This website"
         safe.title="Go back";proceed.title="Open anyway";proceed.isHidden=false
@@ -102,8 +123,6 @@ import BrowserCore
         }
         content.frame=NSRect(x:0,y:0,width:scroll.contentSize.width,height:max(y,scroll.contentSize.height))
     }
-    @objc private func goBack() {ticket?.cancel()}
-    @objc private func openAnyway() {ticket?.approve(expectedRevision:boundRevision)}
     override func cancelOperation(_ sender:Any?) {ticket?.cancel()}
     override func keyDown(with event:NSEvent) {
         if [36,53,76].contains(event.keyCode) {ticket?.cancel()} else {super.keyDown(with:event)}

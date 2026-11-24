@@ -175,61 +175,22 @@ jobs:
           cat > release-notes.txt <<'NOTE'
           Universal macOS 14+ preview for Apple Silicon and Intel.
 
-          Command-Q now works while a clean Library, Settings, Profiles, Updates, Site Search, Link Routing or Appearance panel is open. Unsaved route, search shortcut and Space-name drafts keep their protection until saved or discarded. Native confirmation panels and pending save/print operations retain their normal Quit choices.
+          Alcove now checks navigation destinations against a bundled local phishing-domain list. A warning holds the original request and offers Go Back or a separate explicit continuation. Checks stay on your Mac; browsing addresses are not sent to the list provider. The warning identifies the actual hostname, provider and list date. Settings reports loading, unavailable and stale data honestly.
 
-          If the active tab scrolls out of view, click the arrow in its sidebar section to bring it back. A dot marks the collapsed folder or Pinned heading that contains the active tab. The arrow can reveal an offscreen folder while keeping it closed.
+          Warnings follow the actual page in normal tabs, Split View, Peek, Quick Browse and extension-created website windows. Cancel keeps the current document and form. Continue preserves the original request, including form submissions and navigation downloads. Closing or transferring a page revokes its old warning controls. Closing a blocked tab remembers the committed page behind the warning for Reopen Closed Tab.
 
-          Open an official Chrome Web Store listing in a regular Alcove tab or in the extension manager and choose Add to Alcove. Review the signed package and its permissions for the current profile. For an installed Store extension, the same button checks for an update.
+          Sidebar resizing now keeps the mouse interaction free of a lingering keyboard focus ring. Using the keyboard restores its visible focus indicator. All welcome-theme choices fit the minimum setup window height.
 
-          Open Playing Tabs from the sidebar to find pages playing audio or video in the current window and profile. Pause playback from there or jump to its tab. Use the website's player to resume playback.
+          Future update offers are checked against Alcove's publisher signature. Download and install updates manually; Alcove never silently replaces or executes a downloaded app.
 
-          Clear Today, day-based archiving and optional tab suspension keep tabs with active playback or camera and microphone capture open. Suspension unloads idle pages and keeps their tabs and addresses. Unsaved forms in unloaded pages can be lost.
+          Download the DMG and drag Alcove.app to Applications. The ZIP contains the same app as an alternative. This preview is ad hoc signed, without Apple Developer ID signing or notarization. macOS may block it. Keep system security enabled; build from source or wait for a notarized release if needed.
 
-          When the sidebar is narrow, Extensions moves beside the address field so the traffic lights, navigation buttons and resize handle stay accessible.
+          The local list is an additional layer with limited coverage. An address absent from it is not a safety guarantee. It does not inspect downloaded files, page contents or arbitrary subresource requests. List updates currently arrive with app releases; data older than 30 days is marked stale.
 
-          Alcove reuses its tab and folder lists while you drag the sidebar edge or resize the window. Use Copy All Links or Copy All Links as Markdown from a pinned folder’s menu to include links inside its subfolders.
+          This release uses system WebKit. Full uBlock Origin remains unsupported in this preview, and Chrome extension compatibility is incomplete. The separate experimental engine has not passed full-uBlock qualification and is not included. Extensions require macOS 15.4 or later and their supported APIs and permissions must be reviewed before installation.
 
-          Use File → Import Bookmarks HTML to bring a browser export into a new Space with its nested folders. In Site Search Settings, Use This Site’s Search fills in an editable shortcut when the current page advertises an OpenSearch description that Alcove supports.
+          Browser metadata is encrypted locally; WebKit's cookies, caches and website data are managed separately. Private browsing does not make you anonymous. Independent security review, broader site compatibility, accessibility, Intel hardware and minimum-OS testing remain ongoing. This is a preview with unfinished features.
 
-          Downloads opens from the sidebar or with Option-Command-L. Follow progress, cancel an active transfer, and open or reveal a completed file in Finder. Alcove adds the file to the selected folder after the transfer finishes.
-
-          Download the DMG, drag Alcove.app to Applications, and review these release notes before opening it. The ZIP contains the same app as an alternative.
-
-          This preview is ad hoc signed. It is NOT Developer ID signed or notarized by Apple. macOS may block it. Keep system security enabled. If blocked, build from source or wait for a notarized release. Early builds may contain bugs and unfinished features.
-
-          Command-N opens another normal window. Window position, selected tabs, sidebar width and collapsed state restore after Quit. Same-profile tab, Split View and Peek transfers keep the live page. Command-W closes the last local tab and its window while keeping pages presented in other windows.
-
-          File uploads, device permissions and extension actions stay tied to their original page and window. A moved tab can open a fresh request from its new window.
-
-          Pinned folders can contain subfolders. Create one from a folder’s menu, or move a folder by dropping it onto its destination. Removing a folder keeps its tabs and subfolders. Pinned and Favorites receive more room when Today has few or no tabs.
-
-          Double-click a sidebar tab name to edit it. Return saves the name and Escape cancels. Tab and Favorites menus also offer Rename Tab and Restore Tab Name.
-
-          Use Duplicate Tab from a tab menu, the File menu or command search. The copy opens in Today and carries the live tab’s back and forward history. If only the saved address is available, the copy opens that address.
-
-          When a pinned tab or Favorite navigates away from its saved address, click the return arrow to go back. Command-click keeps the current live page in Today with its draft and history. The Pinned URL menu can edit the address or save the current page without reloading it.
-
-          In Alcove → Check for Updates, choose Verify Download to check a downloaded installer. The chooser starts in Downloads. The update panel retains the verification controls and release notes link at short window heights.
-
-          Click Pinned to collapse or expand that Space’s saved tabs. You can still drop tabs onto the collapsed heading. Each Space remembers this setting. Use Customize to adjust theme intensity and grain. A two-finger horizontal swipe over the sidebar switches Spaces.
-
-          Hold Control and press Tab to browse up to five recent tabs in the active window and profile. Release Control to switch, press Escape to cancel, or press Control-W to close the highlighted tab.
-
-          Open Alcove → Extensions → Browse Chrome Web Store to find extensions. Compatible extensions can open regular and compact popup windows, including background windows.
-
-          Add Extension File accepts ZIP releases that place the manifest inside one top-level folder, plus signed Chrome packages produced with compatible ZIP64 headers. Packages go through the same review before installation. Runtime compatibility varies by extension.
-
-          Use Update → Check for Store Update on an installed Chrome Web Store extension. Newer versions open a review. Installed extensions retain their enabled or disabled state, and saved permission exclusions carry forward.
-
-          On a fresh install, the opening artwork appears while Alcove prepares local data. The handwritten greeting follows and fades into setup. You can skip it, replay it from the app menu, or use Reduce Motion to go directly to setup. The data recovery controls appear if startup needs attention.
-
-          Split View can show up to four pages side by side or stacked. Drag a tab onto a row edge or the edge of a page in the same Space. Split groups and their divider proportions restore with normal windows after Quit.
-
-          The native extension manager has limited tested compatibility with uBlock Origin Lite. Full uBlock Origin support is still in development. Native extension APIs need macOS 15.4+. Private request-blocking extensions need a fixed system WebKit (624.1.16 or later).
-
-          Alcove 0.19.2 keeps encrypted metadata format 8. Existing saved tabs, nested folders and window layouts carry forward. Quit Alcove and keep a backup before replacing its app. Changed unsigned builds can trigger a macOS Keychain approval prompt.
-
-          SHA256SUMS.txt contains checksums for both installers. Checksums detect changed bytes; they do not establish developer identity.
           NOTE
           # Existing releases are never silently overwritten, including on workflow re-runs.
           gh release create "$RELEASE_TAG" --verify-tag --prerelease --latest=false \

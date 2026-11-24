@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>AlcoveReleaseTag</key>
-	<string>v0.19.2-preview.1</string>
+	<string>v0.20.0-preview.1</string>
 	<key>AlcoveUpdateSigningPublicKey</key>
 	<string>2LeSS0NhVxzm0E6xTeqEcFpdL1PyZ9LgLd1APsA71rg=</string>
 	<key>CFBundleDisplayName</key>
@@ -19,7 +19,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.19.2</string>
+	<string>0.20.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -35,7 +35,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>30</string>
+	<string>31</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSAppTransportSecurity</key>

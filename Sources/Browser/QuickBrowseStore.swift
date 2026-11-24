@@ -165,7 +165,9 @@ extension BrowserStore {
         let crossing = owner != targetProfile
         guard !crossing || allowProfileChange else { throw QuickBrowseError.consentRequired }
         var records = candidate.library(for: owner); records.quickPages?.removeAll { $0.id == id }; candidate.setLibrary(records, for: owner)
-        var tab = page.tab; tab.pinned = false; tab.favorite = nil; tab.folder = nil; tab.homeURL = nil; tab.pinnedTitle = nil; tab.archiveSource = nil; tab.lastAccessed = Date()
+        var tab = page.tab
+        if let web=views[id],let ticket=websiteProtectionTicket(for:web) {tab=ticket.source.restoredTab(tab)}
+        tab.pinned = false; tab.favorite = nil; tab.folder = nil; tab.homeURL = nil; tab.pinnedTitle = nil; tab.archiveSource = nil; tab.lastAccessed = Date()
         var discard = crossing ? [id] : []
         if candidate.session.spaces[index].tabs.count == 1, let blank = candidate.session.spaces[index].tabs.first, blank.url.isEmpty && !blank.pinned {
             discard.append(blank.id); candidate.session.spaces[index].tabs = []
@@ -173,7 +175,11 @@ extension BrowserStore {
         candidate.session.spaces[index].tabs.append(tab); candidate.session.spaces[index].selected = id
         let spaceID = candidate.session.spaces[index].id; candidate.session.activateSpace(spaceID)
         try presenter.commitQuickDocument(candidate, discarding: discard, beforePublish: {
-            if !crossing { self.views[id]?.removeFromSuperview() }
+            if !crossing,let web=self.views[id] {
+                // The durable candidate already carries the committed address.
+                self.cancelWebsiteProtectionTickets(for:web,restoringAddress:false)
+                web.removeFromSuperview()
+            }
             if crossing { presenter.closePrimaryPeek(); self.closeQuickPeek(id) }
             else { self.adoptQuickPeek(id, into: spaceID, in: presenter) }
         })

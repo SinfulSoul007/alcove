@@ -47,9 +47,10 @@ import Darwin
         defer {try? FileManager.default.removeItem(at:root)}
         let key=SymmetricKey(data:Data(repeating:37,count:32))
         let store=BrowserStore(dataRoot:root,keyProvider:{_ in key},websiteProtection:service)
-        let owner=BrowserWindowOwner(store:store),lease=try owner.acquirePrimary()
+        let owner=BrowserWindowOwner(store:store),lease=try owner.acquirePrimaryStore().lease
         defer {owner.release(lease);store.shutdown()}
         let profile=try store.createProfile(name:"Owned warning surfaces")
+        store.finishOnboarding()
         try owned.register(profile)
         func recordController() throws {
             if let id=store.profiles.first(where:{$0.id==profile})?.extensionControllerID {try controllers.register(id)}
@@ -74,7 +75,7 @@ import Darwin
         store.navigate(held.absoluteString)
         let normalWarning=try await warning(web,store:store,url:held)
         check(try await requests(port:raw,name:"normal-surface-cancel").isEmpty,"Normal-profile warning holds the actual target request")
-        let oldNormalSafe=try button(normalWarning,continueRequest:false)
+        let oldNormalSafe=try button(normalWarning,continueRequest:false),oldNormalContinue=try button(normalWarning,continueRequest:true)
         oldNormalSafe.performClick(nil)
         check(try await requests(port:raw,name:"normal-surface-cancel").isEmpty,"Normal-profile cancellation never contacts the target")
         check((try? await web.evaluateJavaScript("document.getElementById('token').value==='owned-normal'")) as? Bool==true && store.tab(first)?.url==initial.absoluteString,"Normal cancellation preserves the typed form and displayed address")
@@ -82,7 +83,10 @@ import Darwin
         let allowed=URL(string:"http://listed.alcove.example/target?case=normal-surface-continue")!
         store.navigate(allowed.absoluteString)
         let allowedWarning=try await warning(web,store:store,url:allowed)
-        try button(allowedWarning,continueRequest:true).performClick(nil)
+        oldNormalContinue.performClick(nil)
+        let staleNormalRows=try await requests(port:raw,name:"normal-surface-continue")
+        check(store.websiteProtectionTicket(for:web)?.isPending==true && staleNormalRows.isEmpty,"A retained Continue control cannot approve a different warning in the same mounted pane")
+        if store.websiteProtectionTicket(for:web)?.isPending==true {try button(allowedWarning,continueRequest:true).performClick(nil)}
         try await ready(web,host:"listed.alcove.example")
         let allowedRows=try await requests(port:raw,name:"normal-surface-continue")
         check(allowedRows.count==1 && allowedRows.first?["method"] as? String=="GET","Normal native continuation sends exactly its captured GET")
@@ -154,6 +158,100 @@ import Darwin
         check(!store.library(for:profile).archive.contains(where:{$0.id==neverOpened}),"Closing a Quick Browse page at its first warning does not archive an unvisited destination")
         check(try await requests(port:raw,name:"quick-surface-initial-close").isEmpty && store.quickPage(neverOpened)==nil,"Closing an initial Quick Browse warning cancels its request without contacting the target")
         window.makeKeyAndOrderFront(nil)
+        let closingInitial=URL(string:"http://safe.alcove.example/form?case=normal-close-committed")!
+        let closingID=store.newTab(url:closingInitial),closingWeb=store.view(for:closingID)
+        let closingHost=EdgeToEdgeWebHost(frame:NSRect(x:0,y:0,width:1000,height:680))
+        WebPane(webView:closingWeb,store:store).mount(in:closingHost);window.contentView=closingHost
+        try await ready(closingWeb,host:"safe.alcove.example")
+        let closingBlocked=URL(string:"http://listed.alcove.example/target?case=normal-close-blocked")!
+        store.navigate(closingBlocked.absoluteString)
+        _=try await warning(closingWeb,store:store,url:closingBlocked)
+        store.close(closingID)
+        check(store.library(for:profile).closedTabs.first(where:{$0.id==closingID})?.url==closingInitial.absoluteString,"Closing a normal warning saves the committed page for Reopen Closed Tab")
+        window.contentView=splitHost;store.select(first)
+        let movingInitial=URL(string:"http://safe.alcove.example/form?case=quick-moving-committed")!
+        let movingID=try store.openQuickPage(url:movingInitial,profileID:profile,intendedSpaceID:store.space.id)
+        let movingController=try QuickBrowseWindowController(owner:owner,pageID:movingID,requestPrimary:{},requestProfiles:{},didClose:{})
+        movingController.surface();defer {movingController.window?.close()}
+        guard let movingWeb=movingController.activeWebView else {throw Failure.fixture}
+        try await ready(movingWeb,host:"safe.alcove.example")
+        let peekInitial=URL(string:"http://safe.alcove.example/form?case=quick-moving-peek-committed")!
+        store.openPeek(peekInitial,from:movingWeb)
+        guard let movingPeek=store.quickPeekView(movingID) else {throw Failure.fixture}
+        try await ready(movingPeek,host:"safe.alcove.example")
+        let movingBlocked=URL(string:"http://listed.alcove.example/target?case=quick-moving-blocked")!,peekBlocked=URL(string:"http://listed.alcove.example/target?case=quick-moving-peek-blocked")!
+        try store.navigateQuickPage(movingID,input:movingBlocked.absoluteString)
+        _=try await warning(movingWeb,store:store,url:movingBlocked)
+        movingPeek.load(URLRequest(url:peekBlocked))
+        _=try await warning(movingPeek,store:store,url:peekBlocked)
+        let heldMoving=store.websiteProtectionTicket(for:movingWeb),heldPeek=store.websiteProtectionTicket(for:movingPeek)
+        let beforePromotion=try Data(contentsOf:store.sessionURL),promotionVault=store.vault
+        store.vault=MetadataStore(url:root,key:key)
+        var refusedPromotion=false
+        do {_=try store.promoteQuickPage(movingID)}catch{refusedPromotion=true}
+        let afterFailedPromotion=try Data(contentsOf:store.sessionURL)
+        store.vault=promotionVault
+        _=store.unlockLocalData(keyProvider:{key})
+        for _ in 0..<500 where store.unlocking {try await Task.sleep(for:.milliseconds(10))}
+        guard store.savingEnabled else {throw Failure.fixture}
+        check(refusedPromotion && store.quickPage(movingID) != nil && heldMoving?.isPending==true && heldPeek?.isPending==true && store.websiteProtectionTicket(for:movingWeb) === heldMoving && store.websiteProtectionTicket(for:movingPeek) === heldPeek && beforePromotion==afterFailedPromotion,"A failed Quick promotion preserves both pending warnings and the prior ciphertext")
+        _=try store.promoteQuickPage(movingID)
+        check(heldMoving?.isPending==false && store.websiteProtectionTicket(for:movingWeb)==nil && store.tab(movingID)?.url==movingInitial.absoluteString,"Same-store Quick promotion cancels its original warning and carries the committed page")
+        check(heldPeek?.isPending==false && store.websiteProtectionTicket(for:movingPeek)==nil && store.primaryPeekView === movingPeek,"Same-store Quick promotion cancels the adopted Peek warning while retaining its native page")
+        store.closePrimaryPeek();store.close(movingID);store.select(first)
+        window.contentView=splitHost
+        let extensionSource=root.appendingPathComponent("extension-source")
+        try FileManager.default.createDirectory(at:extensionSource,withIntermediateDirectories:true)
+        try Data(#"{"manifest_version":3,"name":"Owned warning windows","version":"1","permissions":["tabs"],"host_permissions":["http://*.alcove.example/*"],"options_page":"options.html"}"#.utf8).write(to:extensionSource.appendingPathComponent("manifest.json"))
+        try Data("<!doctype html><title>Owned warning options</title><body>Owned extension options</body>".utf8).write(to:extensionSource.appendingPathComponent("options.html"))
+        let package=try ExtensionPackage.prepare(at:extensionSource,stagingRoot:root.appendingPathComponent("extension-staging"))
+        let approval=try store.extensionInstallApproval(for:package,profileID:profile,permissions:["tabs"],hostPatterns:["http://*.alcove.example/*"],enable:true)
+        let extensionID=try await store.installExtension(package,approval:approval)
+        try recordController()
+        let optionsID=try await store.openExtensionOptions(extensionID,profileID:profile)
+        var retainedOptions:WKWebView?=store.view(for:optionsID)
+        for _ in 0..<400 {
+            if !retainedOptions!.isLoading,(try? await retainedOptions!.evaluateJavaScript("typeof browser.windows.create==='function'")) as? Bool==true {break}
+            try await Task.sleep(for:.milliseconds(20))
+        }
+        let app=AppDelegate(),previousDelegate=NSApp.delegate
+        NSApp.delegate=app;app.normalOwner=owner
+        defer {for ownedWindow in Array(app.windows.keys) {ownedWindow.close()};NSApp.delegate=previousDelegate}
+        for kind in ["normal","popup"] {
+            let before=Set(app.windows.keys)
+            let starting=URL(string:"http://safe.alcove.example/form?case=extension-\(kind)-baseline")!
+            let answer=try await retainedOptions!.callAsyncJavaScript("try{return JSON.stringify(await browser.windows.create(settings))}catch(e){return JSON.stringify({error:String(e)})}",arguments:["settings":["type":kind,"url":starting.absoluteString,"focused":false]],in:nil,contentWorld:.page)
+            print("OWNED_EXTENSION_WINDOW_CREATE",kind,String(describing:answer))
+            guard let createdWindow=app.windows.keys.first(where:{!before.contains($0)}),let createdStore=app.windows[createdWindow] else {throw Failure.fixture}
+            var createdWeb:WKWebView?
+            for _ in 0..<400 {
+                createdWeb=createdStore.views.values.first(where:{$0.url?.host=="safe.alcove.example"})
+                if createdWeb != nil {break};try await Task.sleep(for:.milliseconds(20))
+            }
+            guard let createdWeb else {throw Failure.fixture}
+            try await ready(createdWeb,host:"safe.alcove.example")
+            check(createdStore.activeProfileID==profile && createdStore.websiteProtection === service && createdWindow.isVisible,"The real extension \(kind) window inherits its requesting profile and protection service")
+            _=try await createdWeb.evaluateJavaScript("document.getElementById('token').value='owned-extension-draft';true")
+            let canceled=URL(string:"http://listed.alcove.example/target?case=extension-\(kind)-cancel")!
+            createdWeb.load(URLRequest(url:canceled))
+            let heldWarning=try await warning(createdWeb,store:createdStore,url:canceled)
+            check(try await requests(port:raw,name:"extension-\(kind)-cancel").isEmpty,"The extension \(kind) warning holds its actual target request")
+            try button(heldWarning,continueRequest:false).performClick(nil)
+            check((try? await createdWeb.evaluateJavaScript("document.getElementById('token').value==='owned-extension-draft'")) as? Bool==true && createdWeb.url==starting,"Canceling the extension \(kind) warning preserves its actual form and document")
+            let continued=URL(string:"http://listed.alcove.example/target?case=extension-\(kind)-continue")!
+            createdWeb.load(URLRequest(url:continued))
+            let continuedWarning=try await warning(createdWeb,store:createdStore,url:continued)
+            try button(continuedWarning,continueRequest:true).performClick(nil)
+            try await ready(createdWeb,host:"listed.alcove.example")
+            check(try await requests(port:raw,name:"extension-\(kind)-continue").count==1,"Continuing the extension \(kind) warning sends its original request once")
+            let closing=URL(string:"http://listed.alcove.example/target?case=extension-\(kind)-close")!
+            createdWeb.load(URLRequest(url:closing))
+            let closingWarning=try await warning(createdWeb,store:createdStore,url:closing),staleContinue=try button(closingWarning,continueRequest:true)
+            createdWindow.close();staleContinue.performClick(nil)
+            check(try await requests(port:raw,name:"extension-\(kind)-close").isEmpty,"Closing an extension \(kind) window revokes its pending warning and retained control")
+        }
+        retainedOptions=nil // Release the fixture's privileged document before requesting actual extension-data erasure.
+        store.select(first)
         let clearA=URL(string:"http://listed.alcove.example/target?case=clear-surface-a")!,clearB=URL(string:"http://listed.alcove.example/target?case=clear-surface-b")!
         web.load(URLRequest(url:clearA));other.load(URLRequest(url:clearB))
         let clearWarningA=try await warning(web,store:store,url:clearA),clearWarningB=try await warning(other,store:store,url:clearB)

@@ -98,14 +98,14 @@ enum WebsiteProtectionPurpose {
         }
         finish(true)
     }
-    func cancel() {finish(false)}
-    private func finish(_ requested:Bool) {
+    func cancel(restoringAddress:Bool = true) {finish(false,restoringAddress:restoringAddress)}
+    private func finish(_ requested:Bool,restoringAddress:Bool = true) {
         guard let decision else {return}
         let approved=requested && source.currentWeb != nil
         self.decision=nil;work?.cancel();timeout?.cancel();work=nil;timeout=nil;presentation=nil
         let store=source.store
         store?.websiteProtectionTickets.removeValue(forKey:id)
-        if !approved && kind.restoresAddress {source.restoreAddress()}
+        if !approved && restoringAddress && kind.restoresAddress {source.restoreAddress()}
         store?.objectWillChange.send()
         decision(approved)
     }
@@ -130,8 +130,8 @@ extension BrowserStore {
         websiteProtectionTickets.values.first{$0.source.web === web && $0.isPending && $0.source.currentWeb != nil && $0.assessment != nil} ??
             websiteProtectionTickets.values.first{$0.source.web === web && $0.isPending && $0.source.currentWeb != nil}
     }
-    func cancelWebsiteProtectionTickets(for web:WKWebView) {
-        for ticket in Array(websiteProtectionTickets.values) where ticket.source.web === web {ticket.cancel()}
+    func cancelWebsiteProtectionTickets(for web:WKWebView,restoringAddress:Bool = true) {
+        for ticket in Array(websiteProtectionTickets.values) where ticket.source.web === web {ticket.cancel(restoringAddress:restoringAddress)}
     }
     func cancelInvalidWebsiteProtectionTickets() {
         for ticket in Array(websiteProtectionTickets.values) where ticket.source.currentWeb==nil {ticket.cancel()}

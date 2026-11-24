@@ -445,9 +445,13 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             }
             save(); return
         }
-        if let tab = tab(id), !tab.url.isEmpty {
-            let profile = session.spaces.first(where: { $0.id == owner })?.effectiveProfileID ?? BrowserProfile.defaultID
-            mutateLibrary(for: profile) { value in value.closedTabs.insert(tab, at: 0); value.closedTabs = Array(value.closedTabs.prefix(30)) }
+        if var closed = tab(id) {
+            let presenter=pageStores.first(where:{$0.views[id] != nil}) ?? self
+            if let web=presenter.views[id],let ticket=presenter.websiteProtectionTicket(for:web) {closed=ticket.source.restoredTab(closed)}
+            if !closed.url.isEmpty {
+                let profile = session.spaces.first(where: { $0.id == owner })?.effectiveProfileID ?? BrowserProfile.defaultID
+                mutateLibrary(for: profile) { value in value.closedTabs.insert(closed, at: 0); value.closedTabs = Array(value.closedTabs.prefix(30)) }
+            }
         }
         discardSharedView(id)
         session.close(id, in: owner)
