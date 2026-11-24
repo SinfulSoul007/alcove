@@ -23,6 +23,10 @@ To enable authenticated update offers, set `AlcoveUpdateSigningPublicKey` in `sc
 
 With a public key pinned, publishing requires the corresponding private key and adds `Alcove-update-manifest-v1.json` and `Alcove-update-manifest-v1.sig` to the release. Alcove uses the pinned key to verify the manifest before showing the update. The manifest signature covers the commit, tag, installer lengths and checksums. Apple Gatekeeper still evaluates each app bundle.
 
+The next release candidate pins `2LeSS0NhVxzm0E6xTeqEcFpdL1PyZ9LgLd1APsA71rg=`. Its decoded public-key SHA-256 fingerprint is `c842ff0b949f3697929580eee1ea6f7465103a19750f2cf5ab727efc408e1cbe`. The publisher's raw private key is kept outside Git and the test VM in an owner-only host directory; preserve an offline backup before distributing this trust anchor. This key authenticates update metadata and does not sign or notarize the application bundle.
+
+The `alcove-release-signing` environment accepts only tag refs matching `v*-preview.*`; branches cannot deploy to it. Repository write access also permits creating matching tags, so review access before adding collaborators. Store the private key only as the environment secret, using `gh secret set ALCOVE_UPDATE_SIGNING_KEY --env alcove-release-signing --repo SinfulSoul007/alcove` with its base64 value supplied through stdin. Never put the value in a command argument, repository file or build artifact. Setting up the environment and pin does not establish a working public release transition: the secret, tagged publication, downloaded manifest signature and installer bytes must all be verified before claiming that transition works.
+
 ## Future trusted releases
 
 A Developer ID Application certificate, supported signing environment and Apple notarization are needed for the normal trusted direct-distribution path. Then replace ad hoc signing with Developer ID signing, retain Hardened Runtime, notarize with `notarytool`, staple the ticket and verify Gatekeeper acceptance on the actual download. Keep Apple signing credentials in a secure, narrowly scoped environment outside the repository.

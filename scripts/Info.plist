@@ -4,6 +4,8 @@
 <dict>
 	<key>AlcoveReleaseTag</key>
 	<string>v0.19.2-preview.1</string>
+	<key>AlcoveUpdateSigningPublicKey</key>
+	<string>2LeSS0NhVxzm0E6xTeqEcFpdL1PyZ9LgLd1APsA71rg=</string>
 	<key>CFBundleDisplayName</key>
 	<string>Alcove</string>
 	<key>CFBundleExecutable</key>
