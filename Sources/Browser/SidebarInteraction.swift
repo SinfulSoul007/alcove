@@ -41,6 +41,7 @@ struct SidebarResizeHandle: View {
         private var dragging = false
         private var closed = false
         private var keyboardFocused = false
+        private var showsFocusRing = true
         private var observations: [NSObjectProtocol] = []
         override init(frame: NSRect) {
             super.init(frame: frame); configureAccessibility()
@@ -69,7 +70,7 @@ struct SidebarResizeHandle: View {
         override func isAccessibilityEnabled() -> Bool { available }
         override func isAccessibilityFocused() -> Bool { available && keyboardFocused && window?.firstResponder === self }
         override func setAccessibilityFocused(_ focused: Bool) {
-            if focused { if available { window?.makeFirstResponder(self) } }
+            if focused { if available { showFocusRing(true); window?.makeFirstResponder(self) } }
             else if window?.firstResponder === self { window?.makeFirstResponder(nil) }
         }
         override func setAccessibilityValue(_ value: Any?) {
@@ -89,8 +90,17 @@ struct SidebarResizeHandle: View {
             NSAccessibility.post(element: self, notification: .valueChanged)
             return true
         }
-        override var focusRingMaskBounds: NSRect { bounds }
-        override func drawFocusRingMask() { NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 2), xRadius: 2, yRadius: 2).fill() }
+        override var focusRingMaskBounds: NSRect { showsFocusRing ? bounds : .zero }
+        override func drawFocusRingMask() {
+            guard showsFocusRing else { return }
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 2), xRadius: 2, yRadius: 2).fill()
+        }
+        private func showFocusRing(_ visible: Bool) {
+            guard showsFocusRing != visible else { return }
+            let previousBounds = focusRingMaskBounds
+            showsFocusRing = visible; needsDisplay = true; noteFocusRingMaskChanged()
+            setKeyboardFocusRingNeedsDisplay(previousBounds.union(focusRingMaskBounds))
+        }
         private func reportFocus(_ focused: Bool) {
             guard keyboardFocused != focused else { return }
             keyboardFocused = focused; needsDisplay = true; noteFocusRingMaskChanged(); focusChanged(focused)
@@ -107,6 +117,7 @@ struct SidebarResizeHandle: View {
         override func mouseDown(with event: NSEvent) {
             guard available, event.windowNumber == window?.windowNumber else { return }
             cancelResize()
+            showFocusRing(false)
             window?.makeFirstResponder(self)
             if event.clickCount >= 2 { width = SidebarSizing.width(saved: 236, windowWidth: viewportWidth); reset(); return }
             origin = event.locationInWindow.x; originWidth = currentWidth; dragging = true; begin()
@@ -130,8 +141,9 @@ struct SidebarResizeHandle: View {
         }
         override func keyDown(with event: NSEvent) {
             guard let owner = window, event.windowNumber == owner.windowNumber else { return }
-            if event.keyCode == 53, cancelResize() { return }
+            if event.keyCode == 53, cancelResize() { showFocusRing(true); return }
             guard available else { return }
+            showFocusRing(true)
             if event.keyCode == 123 || event.keyCode == 124 {
                 guard !dragging else { return }
                 commitWidth(currentWidth + (event.keyCode == 123 ? -12 : 12))
@@ -146,7 +158,7 @@ struct SidebarResizeHandle: View {
         }
         override func resignFirstResponder() -> Bool {
             let resigned = super.resignFirstResponder()
-            if resigned { cancelResize(); reportFocus(false) }
+            if resigned { cancelResize(); reportFocus(false); showFocusRing(true) }
             return resigned
         }
         override func viewWillMove(toWindow newWindow: NSWindow?) {

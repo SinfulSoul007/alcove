@@ -76,14 +76,14 @@ struct OnboardingView: View {
                 Circle().fill(store.activeTheme.accent).frame(width: 7, height: 7).offset(x: 70, y: -55)
             }.frame(height: 180).accessibilityHidden(true)
             Text("A little more room\nfor the internet.").font(.system(size: 42, weight: .medium, design: .rounded)).multilineTextAlignment(.center)
-            Text("Your tabs, your Spaces, your way.\nA familiar sidebar with a native Mac foundation.").font(.system(size: 15)).multilineTextAlignment(.center).lineSpacing(5).opacity(0.6)
+            Text("Your tabs, your Spaces, your way.\nKeep your favorites close and your tabs in order.").font(.system(size: 15)).multilineTextAlignment(.center).lineSpacing(5).opacity(0.6)
         }.transition(.opacity.combined(with: .offset(x: animates ? 18 : 0)))
     }
     private var styleStep: some View {
         VStack(spacing: 20) {
             Text("Find your atmosphere.").font(.system(size: 30, weight: .medium, design: .rounded))
             Text("Start with a theme. Every color and detail can be changed later.").font(.system(size: 13)).opacity(0.6)
-            AppearancePreview(theme: store.activeTheme, settings: store.appearance).frame(width: 400, height: 210)
+            AppearancePreview(theme: store.activeTheme, settings: store.appearance).frame(width: 400, height: 180)
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(46), spacing: 12), count: 6), spacing: 12) {
                 ForEach(SidebarTheme.allCases) { preset in
                     Button { withAnimation(motion) { store.setTheme(preset) } } label: { RoundedRectangle(cornerRadius: 11).fill(AppearanceTheme(palette: preset.palette).gradient).frame(width: 46, height: 38).overlay { if store.space.theme == preset.rawValue { Image(systemName: "checkmark").foregroundStyle(preset.ink) } } }.buttonStyle(.plain).help(preset.name).accessibilityLabel(preset.name)
