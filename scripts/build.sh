@@ -21,6 +21,11 @@ run_window_model_checks() {
     "$MANUAL/window-workspace-checks"
 }
 if [[ "${1:-}" == "window-model-test" ]]; then run_window_model_checks; exit; fi
+run_bookmark_export_core_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/BookmarkHTMLExportChecks.swift -o "$MANUAL/bookmark-export-core-checks"
+    "$MANUAL/bookmark-export-core-checks"
+}
+if [[ "${1:-}" == "bookmark-export-core-test" ]]; then run_bookmark_export_core_checks; exit; fi
 STORE_SOURCES=()
 for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
 SIDEBAR_SOURCES=()
@@ -410,6 +415,7 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    run_bookmark_export_core_checks
     run_website_threat_core_checks
     python3 scripts/WebsiteThreatResourceChecks.py
     run_website_protection_service_checks
