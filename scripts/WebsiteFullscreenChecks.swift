@@ -50,6 +50,44 @@ import Darwin
         }
     }
 
+    /// Deliver mouse events only to this fixture's owned window. The document
+    /// must witness a trusted, activating click; JavaScript click() is not used.
+    @MainActor static func enterWithOwnedClick(_ web: WKWebView, window: NSWindow) async throws {
+        guard web.window === window, window.isKeyWindow, NSApp.isActive,
+              let point = try await web.evaluateJavaScript("""
+                (()=>{const r=document.getElementById('enter').getBoundingClientRect();
+                return {x:r.x+r.width/2,y:r.y+r.height/2};})()
+                """) as? [String: Double], let x = point["x"], let y = point["y"],
+              x > 0, y > 0, x < web.bounds.width, y < web.bounds.height else {
+            throw Failure.fixture("owned fullscreen button geometry/focus")
+        }
+        let local = NSPoint(x: web.bounds.minX + x, y: web.isFlipped ? web.bounds.minY + y : web.bounds.maxY - y)
+        let location = web.convert(local, to: nil), time = ProcessInfo.processInfo.systemUptime
+        guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: location, modifierFlags: [], timestamp: time,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1),
+              let up = NSEvent.mouseEvent(with: .leftMouseUp, location: location, modifierFlags: [], timestamp: time + 0.01,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0) else {
+            throw Failure.fixture("owned fullscreen mouse events")
+        }
+        window.sendEvent(down); window.sendEvent(up)
+        do {
+            try await wait("owned trusted fullscreen click") {
+                (try? await web.evaluateJavaScript("window.ownedClickTrace?.trusted===true&&window.ownedClickTrace?.active===true")) as? Bool == true
+            }
+        } catch {
+            print("FULLSCREEN_NO_MEDIA_INPUT_FAILURE", "point", location, "flipped", web.isFlipped,
+                  "page", (try? await web.evaluateJavaScript("JSON.stringify({click:window.ownedClickTrace,result:window.ownedFullscreenResult})")) ?? "unavailable")
+            throw error
+        }
+        check(true, "A page without media receives an actual trusted, activating click in its owned browser window")
+        do { try await wait("genuine no-media fullscreen") { web.fullscreenState == .inFullscreen } }
+        catch {
+            print("FULLSCREEN_NO_MEDIA_ENTRY_FAILURE", "state", web.fullscreenState.rawValue,
+                  "page", (try? await web.evaluateJavaScript("JSON.stringify({result:window.ownedFullscreenResult,click:window.ownedClickTrace,media:document.querySelectorAll('video,audio').length,enabled:document.fullscreenEnabled})")) ?? "unavailable")
+            throw error
+        }
+    }
+
     @MainActor static func leave(_ web: WKWebView) async throws {
         let presentationWindow = web.window
         // The independent stock control proves this normal document exit returns

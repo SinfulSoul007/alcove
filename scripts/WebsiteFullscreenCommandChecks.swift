@@ -92,7 +92,7 @@ extension WebsiteFullscreenChecks {
             _ = writer.newTab(url: base.appendingPathComponent("page"))
             writer.selectSpace(sourceSpace)
         }
-        let sourceURL = base.appendingPathComponent(kind == "reader" ? "article" : "page")
+        let sourceURL = base.appendingPathComponent(kind == "reader" ? "article" : (kind == "no-media" ? "page-no-media" : "page"))
         let primaryID = writer.newTab(url: sourceURL)
         if kind == "next-tab" || kind == "split" {
             _ = writer.newTab(url: sourceURL, activate: false)
@@ -166,11 +166,15 @@ extension WebsiteFullscreenChecks {
             guard let commandHost = web.superview as? EdgeToEdgeWebHost else { throw Failure.fixture("original command host") }
             try await wait("command source decoded") {
                 guard !web.isLoading else { return false }
+                if kind == "no-media" {
+                    return (try? await web.evaluateJavaScript("document.getElementById('enter')!==null&&document.querySelectorAll('video,audio').length===0")) as? Bool == true
+                }
                 return (try? await web.evaluateJavaScript("document.getElementById('video')?.readyState>=2")) as? Bool == true
             }
             _ = try await web.evaluateJavaScript("document.getElementById('draft').value='captured command draft';window.ownedCommandToken=41;true")
             let document = store.documentIdentity(for: web)
-            try await enter(web, target: "element")
+            if kind == "no-media" { try await enterWithOwnedClick(web, window: window) }
+            else { try await enter(web, target: "element") }
             guard let presentation = web.window, presentation !== window else { throw Failure.fixture("command presentation") }
             try await wait("command native window key") { presentation.isKeyWindow }
             let routed = app.browserStore(in: presentation) === store && app.activeStore === store && app.activeWebView === web
@@ -179,6 +183,16 @@ extension WebsiteFullscreenChecks {
             check(app.outputTarget(in: presentation)?.web === web,
                   "\(kind): page-output selection retains the fullscreen source")
             switch kind {
+            case "no-media":
+                check(app.handleEscape(in: presentation), "Escape handles an ordinary page's native fullscreen presentation")
+                let restored = await effect {
+                    web.window === window && !presentation.isVisible && web.fullscreenState == .notInFullscreen &&
+                        (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
+                }
+                check(restored, "A page without media returns from genuine fullscreen to its original browser window")
+                let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41&&document.querySelectorAll('video,audio').length===0") as? Bool
+                check(restored && store.profileID(for: web) == profile && store.documentIdentity(for: web) === document && draft == true,
+                      "Ordinary fullscreen preserves its exact profile, live document and unsaved form without adding media")
             case "escape", "peek-escape":
                 let first = app.handleEscape(in: presentation), second = app.handleEscape(in: presentation)
                 check(first && second, "\(kind): repeated Escape is handled while the same fullscreen exit is pending")
@@ -555,7 +569,7 @@ extension WebsiteFullscreenChecks {
         let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close"] + scriptDialogs).map { "quick-" + $0 }
-        let all = regular + (["escape", "location", "find", "reader", "close"] + scriptDialogs).map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
+        let all = regular + ["no-media"] + (["escape", "location", "find", "reader", "close"] + scriptDialogs).map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         // Characterization controls are opt-in and never counted as normal
         // production-path command coverage in the full default matrix.

@@ -24,6 +24,19 @@ ARTICLE = HTML + ('<article><h1>The owned fullscreen report</h1><p>' +
                   ('A patient reader follows the river through the mountains. '
                    'This report explains the landscape, its history, and the people who live here. ' * 60) +
                   '</p></article>').encode()
+NO_MEDIA = b'''<!doctype html><meta charset="utf-8"><title>Owned fullscreen without media</title>
+<style>body{margin:0;background:#dee7ed}#element{height:240px;padding:24px;box-sizing:border-box;background:#345;color:white}
+button{padding:16px;font:18px system-ui}:fullscreen{background:#345}#spacer{height:2400px}</style>
+<div id="element"><button id="enter">Enter fullscreen</button></div>
+<input id="draft" value="original"><div id="spacer"></div>
+<script>window.ownedFullscreenResult='not-requested';
+document.getElementById('enter').addEventListener('click',event=>{
+  window.ownedClickTrace={trusted:event.isTrusted,active:navigator.userActivation.isActive};
+  window.ownedFullscreenResult='requesting';
+  document.getElementById('element').requestFullscreen()
+    .then(()=>window.ownedFullscreenResult='entered')
+    .catch(error=>window.ownedFullscreenResult=error.name+': '+error.message);
+});</script>'''
 
 
 def command(args, *, timeout=300, env=None):
@@ -102,15 +115,20 @@ def main():
     if args.compile_only:
         return
     media = pinned_media()
+    media_requests = 0
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            nonlocal media_requests
             if self.path == '/video.mp4':
+                media_requests += 1
                 body, content_type = media, 'video/mp4'
             elif self.path == '/page':
                 body, content_type = HTML, 'text/html; charset=utf-8'
             elif self.path == '/article':
                 body, content_type = ARTICLE, 'text/html; charset=utf-8'
+            elif self.path == '/page-no-media':
+                body, content_type = NO_MEDIA, 'text/html; charset=utf-8'
             else:
                 self.send_error(404)
                 return
@@ -135,6 +153,7 @@ def main():
         server.shutdown()
         server.server_close()
         worker.join(timeout=5)
+        print('FULLSCREEN_SERVER_VIDEO_REQUESTS', media_requests, flush=True)
 
 
 if __name__ == '__main__':
