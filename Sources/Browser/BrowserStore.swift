@@ -704,13 +704,4 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         createPopup(from: webView, configuration: configuration,requestedURL:action.request.url)
     }
     func webViewDidClose(_ webView: WKWebView) { if let context = peekContext(for: webView) { closePeek(in: context); return }; if let id = views.first(where: { $0.value === webView })?.key { close(id) } }
-    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
-        let alert = NSAlert(); alert.messageText = frame.request.url?.host ?? "Website"; alert.informativeText = message
-        alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel"); completionHandler(alert.runModal() == .alertFirstButtonReturn)
-    }
-    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
-        let alert = NSAlert(); alert.messageText = prompt
-        let field = NSTextField(string: defaultText ?? ""); field.frame = NSRect(x: 0, y: 0, width: 280, height: 24); alert.accessoryView = field
-        alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel"); completionHandler(alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil)
-    }
 }

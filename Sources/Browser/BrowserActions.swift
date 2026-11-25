@@ -223,13 +223,33 @@ extension BrowserStore {
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         guard frame.webView === webView else { completionHandler(); return }
-        requestWebsitePrompt(from: webView, denied: (), present: { window, finish in
+        requestWebsitePrompt(from: webView, denied: (), scriptDialog: true, present: { window, finish in
             let alert = NSAlert(); alert.messageText = frame.request.url?.host ?? "Website"; alert.informativeText = message
             alert.addButton(withTitle: "OK")
             alert.beginSheetModal(for: window) { _ in finish(()) }
         }, completion: { _ in completionHandler() })
     }
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        guard frame.webView === webView else { completionHandler(false); return }
+        requestWebsitePrompt(from: webView, denied: false, scriptDialog: true, present: { window, finish in
+            let alert = NSAlert(); alert.messageText = frame.request.url?.host ?? "Website"; alert.informativeText = message
+            alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) { finish($0 == .alertFirstButtonReturn) }
+        }, completion: completionHandler)
+    }
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        guard frame.webView === webView else { completionHandler(nil); return }
+        requestWebsitePrompt(from: webView, denied: nil, scriptDialog: true, present: { window, finish in
+            let alert = NSAlert(); alert.messageText = frame.request.url?.host ?? "Website"; alert.informativeText = prompt
+            let field = NSTextField(string: defaultText ?? ""); field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+            alert.accessoryView = field; alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) { finish($0 == .alertFirstButtonReturn ? field.stringValue : nil) }
+        }, completion: completionHandler)
+    }
     private func requestWebsitePrompt<Value>(from web: WKWebView, denied: Value,
+                                              scriptDialog: Bool = false,
                                               present: @escaping (NSWindow, @escaping (Value) -> Void) -> Void,
                                               completion: @escaping (Value) -> Void) {
         let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen
@@ -246,16 +266,22 @@ extension BrowserStore {
         }
         let deliver = { [weak self, weak web, weak window] in
             guard !finished else { return }
-            guard let self, let web, let window, web.window === window, web.url == url,
-                  self.profileID(for: web) == profile, self.isFocusedWebsite(web), window.attachedSheet == nil,
+            guard let self, let web, let window, web.url == url,
+                  web.window === window || (scriptDialog && fullscreen?.scriptDialogWindow === window),
+                  self.profileID(for: web) == profile,
+                  self.isFocusedWebsite(web) || (scriptDialog && fullscreen?.scriptDialogWindow === window &&
+                      window.isKeyWindow && NSApp.isActive && self.isCurrentWebsite(web)),
+                  window.attachedSheet == nil,
                   self.documentIdentity(for: web) === document,
                   self.presentationIdentity(for: web) === presentation else { cancel(); return }
             present(window) { [weak self, weak web, weak window] result in
                 guard !finished else { return }
                 finished = true
                 // A sheet may finish before AppKit returns key status to its original window.
-                guard let self, let web, let window, web.window === window, web.url == url,
-                      self.profileID(for: web) == profile, self.isVisibleWebsite(web),
+                guard let self, let web, let window, web.url == url,
+                      (web.window === window && self.isVisibleWebsite(web)) ||
+                          (scriptDialog && fullscreen?.scriptDialogWindow === window && self.isCurrentWebsite(web)),
+                      self.profileID(for: web) == profile,
                       self.documentIdentity(for: web) === document,
                       self.presentationIdentity(for: web) === presentation else { completion(denied); return }
                 completion(result)
@@ -263,7 +289,11 @@ extension BrowserStore {
         }
         // Capture all ownership before exit. Recapturing here after restoration
         // could present an old file/device request for a replacement document.
-        if let fullscreen, fullscreen.isBorrowed || web.fullscreenState != .notInFullscreen {
+        if scriptDialog && fullscreen?.scriptDialogWindow === window {
+            // Answering this sheet lets WebKit finish the immediate exit. The
+            // coordinator preserves the borrowed view until real state0.
+            deliver()
+        } else if let fullscreen, fullscreen.isBorrowed || web.fullscreenState != .notInFullscreen {
             fullscreen.exit { restored in if restored { deliver() } else { cancel() } }
         } else { deliver() }
     }

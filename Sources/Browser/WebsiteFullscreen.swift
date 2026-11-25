@@ -115,6 +115,17 @@ import WebKit
 
     var currentSource: WKWebView? { isBorrowed && isCurrent ? web : nil }
 
+    /// WebKit hides its native window before delivering a script dialog, but
+    /// cannot finish the transition until the delegate replies to JavaScript.
+    /// The view remains borrowed throughout the source-bound sheet.
+    var scriptDialogWindow: NSWindow? {
+        guard isBorrowed, isCurrent, capturedPresentationWindow,
+              let web, let presentationWindow, !presentationWindow.isVisible,
+              web.window === presentationWindow,
+              let originWindow, originWindow.isVisible else { return nil }
+        return originWindow
+    }
+
     func matches(_ window: NSWindow) -> Bool {
         guard currentSource != nil else { return false }
         if presentationWindow === window { return true }
@@ -247,7 +258,8 @@ import WebKit
         // and leave the view in a detached container. Reclaim only after both
         // public fullscreen state and the captured native window have ended;
         // never take a view from another live window or an active presentation.
-        guard web.superview === restorationHost || (capturedPresentationWindow && web.window == nil) else { return }
+        guard web.superview === restorationHost ||
+            (capturedPresentationWindow && (web.window == nil || web.window === presentationWindow)) else { return }
         isBorrowed = false
         restorationHost.untrackFullscreenRestoration(self)
         self.restorationHost = nil
