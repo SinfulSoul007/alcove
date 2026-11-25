@@ -19,6 +19,10 @@ on:
         description: Run the existing website prompt lifetime and file-input regression group
         type: boolean
         default: false
+      website_protection:
+        description: Run existing warning ticket and actual navigation/surface regressions
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -80,6 +84,24 @@ jobs:
           set -o pipefail
           mkdir -p .build/fullscreen
           caffeinate -is scripts/build.sh website-prompt-test 2>&1 | tee .build/fullscreen/website-prompts.log
+      - name: Verify website warning ticket lifetime
+        if: ${{ always() && inputs.website_protection }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh website-protection-ticket-test 2>&1 | tee .build/fullscreen/website-protection-ticket.log
+      - name: Verify actual held website navigation
+        if: ${{ always() && inputs.website_protection }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh website-protection-navigation-test 2>&1 | tee .build/fullscreen/website-protection-navigation.log
+      - name: Verify source-bound website warning surfaces
+        if: ${{ always() && inputs.website_protection }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh website-protection-surface-test 2>&1 | tee .build/fullscreen/website-protection-surface.log
       - name: Preserve the bounded native result
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

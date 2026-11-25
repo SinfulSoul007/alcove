@@ -53,6 +53,8 @@ enum WebsiteProtectionPurpose {
     private weak var presentation:NSView?
     private var decision:(@MainActor (Bool)->Void)?
     private var work:Task<Void,Never>?,timeout:Task<Void,Never>?
+    private var restoringFullscreen=false
+    private var pendingAssessment:WebsiteProtectionAssessment?
     var isPending:Bool {decision != nil}
     init(source:WebsiteProtectionSource,url:URL,kind:WebsiteProtectionPurpose,decision:@escaping @MainActor (Bool)->Void) {
         self.source=source;self.url=url;self.kind=kind;self.decision=decision
@@ -75,9 +77,22 @@ enum WebsiteProtectionPurpose {
         }
     }
     private func consume(_ value:WebsiteProtectionAssessment) {
-        guard isPending,source.currentWeb != nil else {finish(false);return}
+        guard isPending,let web=source.currentWeb else {finish(false);return}
         if case .unlisted=value {finish(true);return}
         work?.cancel();timeout?.cancel();work=nil;timeout=nil
+        if restoringFullscreen {pendingAssessment=value;return}
+        if let fullscreen=(web as? SplitDropWebView)?.websiteFullscreen,
+           fullscreen.isBorrowed || web.fullscreenState != .notInFullscreen {
+            restoringFullscreen=true;pendingAssessment=value
+            fullscreen.exit { [weak self] restored in
+                guard let self,self.isPending else {return}
+                self.restoringFullscreen=false
+                let pending=self.pendingAssessment;self.pendingAssessment=nil
+                guard restored,let pending,self.source.currentWeb != nil else {self.finish(false);return}
+                self.consume(pending)
+            }
+            return
+        }
         assessment=value;revision=UUID()
         if let store=source.store,let web=source.web {
             for other in Array(store.websiteProtectionTickets.values) where other !== self && other.source.web === web {other.cancel()}
@@ -103,6 +118,7 @@ enum WebsiteProtectionPurpose {
         guard let decision else {return}
         let approved=requested && source.currentWeb != nil
         self.decision=nil;work?.cancel();timeout?.cancel();work=nil;timeout=nil;presentation=nil
+        restoringFullscreen=false;pendingAssessment=nil
         let store=source.store
         store?.websiteProtectionTickets.removeValue(forKey:id)
         if !approved && restoringAddress && kind.restoresAddress {source.restoreAddress()}
