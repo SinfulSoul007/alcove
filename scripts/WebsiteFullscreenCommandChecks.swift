@@ -302,8 +302,15 @@ extension WebsiteFullscreenChecks {
                 let controls = warning.map(descendants) ?? []
                 let safe = controls.first(where: { $0.identifier?.rawValue == "AlcoveWebsiteProtectionSafe" }) as? NSButton
                 let proceed = controls.first(where: { $0.identifier?.rawValue == "AlcoveWebsiteProtectionContinue" }) as? NSButton
+                print("FULLSCREEN_WARNING_CONTROLS", "assessment", ticket.assessment != nil,
+                      "safeFound", safe != nil, "safeEnabled", safe?.isEnabled ?? false,
+                      "safeTarget", safe?.target != nil, "continueFound", proceed != nil,
+                      "continueHidden", proceed?.isHidden ?? true)
                 if let safe { safe.performClick(nil) } else { ticket.cancel() }
+                print("FULLSCREEN_WARNING_AFTER_SAFE", "decisions", decisions, "pending", ticket.isPending,
+                      "safeEnabled", safe?.isEnabled ?? false, "safeTarget", safe?.target != nil)
                 proceed?.performClick(nil)
+                print("FULLSCREEN_WARNING_AFTER_CONTINUE", "decisions", decisions, "pending", ticket.isPending)
                 check(visible && safe != nil && decisions == [false] && !ticket.isPending,
                       "The visible warning cancels once and a retained Continue control cannot revive it")
                 let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
