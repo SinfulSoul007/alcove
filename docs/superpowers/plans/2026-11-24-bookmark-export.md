@@ -47,5 +47,5 @@
 - [x] Add owned profile-isolation/locked/private/pending/closed-source checks and accepted generic-write lifetime/failure/duplicate-callback tests. Observe expected failures before implementation.
 - [x] Implement one-profile snapshot, menu validation and explicit save sheet; accept only a current, eligible originating window/profile.
 - [x] Implement generic accepted-write tracking through the existing writer/waiter environment without changing page capture semantics.
-- [ ] Run focused native gates in the VM, compile both architectures, run the complete suite once on the final reviewed candidate; keep unavailable live dialog gates explicitly open.
-- [ ] Record actual evidence, request one bounded review, fix material issues with failing/passing checks, commit. Update user-facing docs only to claim verified behavior; do not publish an unqualified build.
+- [x] Run focused native gates in the VM, compile both architectures, run the complete suite once on the final reviewed candidate; keep unavailable live dialog gates explicitly open.
+- [x] Record actual evidence, request one bounded review, fix material issues with failing/passing checks, commit. Update user-facing docs only to claim verified behavior; do not publish an unqualified build.

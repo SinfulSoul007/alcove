@@ -16,7 +16,9 @@ Preparation uses immutable value snapshots on a background task. The native HTML
 
 ## Open gates
 
-The focused review and material fix pass are complete. The complete hosted source suite, both optimized architecture builds, bundle/package checks and live native save-dialog/keyboard/accessibility testing remain pending. The CI timeout is 105 minutes because the previous complete suite took 88 minutes 6 seconds under its 90-minute cap and this increment adds an app-linked native check; no existing gate is removed.
+The focused review and material fix pass are complete. [Full hosted CI 45480733319](https://github.com/SinfulSoul007/alcove/actions/runs/45480733319) passed at product/test commit `efeedfd8bf7e64284762bbcaa3bc8ed4a6134ea9`, including the complete source suite, both optimized architectures and universal packaging. Artifact `14967871689` was downloaded and its outer SHA-256 `0a6d60bfe222622f084b78ffd87d31bfcaced92abda3afdc8769348bcba99678` verified. Independent VM readback checked the actual ZIP and mounted DMG, both architecture signatures, exact six entitlements, minimum macOS 14 and matching version/build/public-key metadata. The image detached and the staging directory cleaned up. This candidate remains unmerged and unpublished.
+
+Live native save-dialog/keyboard/accessibility testing, minimum-OS and real Intel hardware behavior remain open. The CI timeout is 105 minutes because the previous complete suite took 88 minutes 6 seconds under its 90-minute cap and this increment adds an app-linked native check; no existing gate is removed.
 
 The automated fixture does not establish desktop visual fidelity, actual Save/Cancel button input, filesystem permission behavior across every destination, broad compatibility with other browsers' importers, minimum-OS or real Intel hardware behavior. Prepared snapshots intentionally omit saved pages added after preparation; retry export to include later additions. Live tab navigation does not replace saved pin home addresses in the file.
 
