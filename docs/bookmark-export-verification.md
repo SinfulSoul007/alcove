@@ -1,6 +1,6 @@
 # Bookmark export candidate verification
 
-The developing source adds **File → Export Bookmarks HTML…**. The public 0.20 tag and downloads are unchanged. This increment does not complete the full browser goal.
+**File → Export Bookmarks HTML…** is included in the [public 0.21 preview](releases/0.21.0-preview-verification.md), exact source `57a11f4462204eb380e28a9ab37ea1e7638313c9`. Combined CI passed export core 21/0 and native store/output 42/0, the complete source suite, both architectures and universal ZIP/DMG checks. Public bytes and signed update behavior were independently verified. This increment does not complete the full browser goal.
 
 The selected normal profile exports Favorites, pinned pages grouped by Space and complete nested/empty folders, followed by library bookmarks not already represented. Saved home addresses and custom/pinned titles are retained. Explicit saved copies in different folders remain. Today, history, archives, closed/deleted tabs, other profiles, website storage and credentials are excluded. Unsupported and credential-bearing addresses are skipped; their count is shown before acceptance. The UTF-8 Netscape HTML output is bounded to 64 MiB and 32 nested user folders, with no partial result on failure.
 
@@ -16,7 +16,7 @@ Preparation uses immutable value snapshots on a background task. The native HTML
 
 ## Open gates
 
-The focused review and material fix pass are complete. [Full hosted CI 45480733319](https://github.com/SinfulSoul007/alcove/actions/runs/45480733319) passed at product/test commit `efeedfd8bf7e64284762bbcaa3bc8ed4a6134ea9`, including the complete source suite, both optimized architectures and universal packaging. Artifact `14967871689` was downloaded and its outer SHA-256 `0a6d60bfe222622f084b78ffd87d31bfcaced92abda3afdc8769348bcba99678` verified. Independent VM readback checked the actual ZIP and mounted DMG, both architecture signatures, exact six entitlements, minimum macOS 14 and matching version/build/public-key metadata. The image detached and the staging directory cleaned up. This candidate remains unmerged and unpublished.
+The focused review and material fix pass are complete. [Full hosted CI 45480733319](https://github.com/SinfulSoul007/alcove/actions/runs/45480733319) passed at product/test commit `efeedfd8bf7e64284762bbcaa3bc8ed4a6134ea9`, including the complete source suite, both optimized architectures and universal packaging. Artifact `14967871689` was downloaded and its outer SHA-256 `0a6d60bfe222622f084b78ffd87d31bfcaced92abda3afdc8769348bcba99678` verified. Independent VM readback checked the actual ZIP and mounted DMG, both architecture signatures, exact six entitlements, minimum macOS 14 and matching version/build/public-key metadata. The image detached and the staging directory cleaned up. That standalone candidate was later combined with Reader and published as 0.21; the linked release record contains the final exact-source CI, public hashes, VM package and production update-client evidence.
 
 Live native save-dialog/keyboard/accessibility testing, minimum-OS and real Intel hardware behavior remain open. The CI timeout is 105 minutes because the previous complete suite took 88 minutes 6 seconds under its 90-minute cap and this increment adds an app-linked native check; no existing gate is removed.
 
