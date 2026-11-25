@@ -19,6 +19,43 @@ import WebKit
     private var capturedPresentationWindow = false
     private(set) var isBorrowed = false
     private var reconciliationScheduled = false
+    private var presentationGeneration = UUID()
+    private var exitRequest: ExitRequest?
+    private var exitRequestStarted = false
+    private var exitTimeout: Task<Void, Never>?
+
+    @MainActor private struct ExitWaiter {
+        weak var presentation: WebsiteFullscreen?
+        weak var store: BrowserStore?
+        weak var web: WKWebView?
+        weak var window: NSWindow?
+        let profileID: UUID
+        let presentationID: NSUUID
+        let generation: UUID
+        let completion: @MainActor (Bool) -> Void
+
+        var isCurrent: Bool {
+            guard let presentation, !presentation.isBorrowed, presentation.presentationGeneration == generation,
+                  let store, let web, let window, window.isVisible,
+                  !store.isShuttingDown, web.navigationDelegate === store,
+                  store.profileID(for: web) == profileID, !store.profileUnavailable(profileID),
+                  store.presentationIdentity(for: web) === presentationID, web.window === window else { return false }
+            return true
+        }
+    }
+
+    @MainActor private final class ExitRequest {
+        var waiters: [ExitWaiter] = []
+        private var finished = false
+        func finish(restored: Bool) {
+            guard !finished else { return }
+            finished = true
+            let captured = waiters; waiters.removeAll()
+            // Revalidate each callback after the previous one: closing a tab or
+            // changing its owner must revoke later work from that old context.
+            for waiter in captured { waiter.completion(restored && waiter.isCurrent) }
+        }
+    }
 
     init(web: WKWebView) {
         self.web = web
@@ -29,6 +66,60 @@ import WebKit
 
     var logicalWindow: NSWindow? {
         isBorrowed ? originWindow : intendedHost?.window
+    }
+
+    var currentSource: WKWebView? { isBorrowed && isCurrent ? web : nil }
+
+    func matches(_ window: NSWindow) -> Bool {
+        guard currentSource != nil else { return false }
+        if presentationWindow === window { return true }
+        return originWindow === window && (window.isKeyWindow || presentationWindow?.isKeyWindow == true)
+    }
+
+    func exit(completion: @escaping @MainActor (Bool) -> Void) {
+        guard let web, let store, let window = logicalWindow, let profileID, let presentationID else {
+            completion(false); return
+        }
+        let waiter = ExitWaiter(presentation: self, store: store, web: web, window: window,
+                                profileID: profileID, presentationID: presentationID,
+                                generation: presentationGeneration, completion: completion)
+        guard isBorrowed || web.fullscreenState != .notInFullscreen else { completion(waiter.isCurrent); return }
+        if let exitRequest { exitRequest.waiters.append(waiter) }
+        else {
+            let request = ExitRequest(); request.waiters.append(waiter); exitRequest = request
+            // The deadline cancels a failed operation; it never declares native
+            // restoration complete. Retain the waiters even if the page dies.
+            exitTimeout = Task { @MainActor [weak self, request] in
+                do { try await Task.sleep(for: .seconds(12)) } catch { return }
+                if let self { self.finishExitRequest(request, restored: false) }
+                else { request.finish(restored: false) }
+            }
+        }
+        requestExitIfPossible()
+    }
+
+    private func requestExitIfPossible() {
+        guard let request = exitRequest, !exitRequestStarted, let web,
+              web.fullscreenState == .inFullscreen else { return }
+        exitRequestStarted = true
+        web.callAsyncJavaScript("""
+            if (document.fullscreenElement) await Document.prototype.exitFullscreen.call(document);
+            return true;
+            """, arguments: [:], in: nil, in: .defaultClient) { [weak self, request] result in
+            MainActor.assumeIsolated {
+                if case .failure = result {
+                    if let self { self.finishExitRequest(request, restored: false) }
+                    else { request.finish(restored: false) }
+                }
+            }
+        }
+    }
+
+    private func finishExitRequest(_ request: ExitRequest, restored: Bool) {
+        guard exitRequest === request else { request.finish(restored: false); return }
+        exitRequest = nil; exitRequestStarted = false
+        exitTimeout?.cancel(); exitTimeout = nil
+        request.finish(restored: restored)
     }
 
     private var isCurrent: Bool {
@@ -76,12 +167,14 @@ import WebKit
         guard let web else { return }
         if web.fullscreenState != .notInFullscreen {
             if !isBorrowed {
+                presentationGeneration = UUID()
                 restorationHost = (web.superview as? EdgeToEdgeWebHost) ?? intendedHost
                 originWindow = restorationHost?.window ?? web.window
                 isBorrowed = true
                 restorationHost?.trackFullscreenRestoration(self)
             }
             capturePresentationWindow()
+            requestExitIfPossible()
         } else {
             scheduleReconciliation()
         }
@@ -111,9 +204,11 @@ import WebKit
         originWindow = nil
         presentationWindow = nil
         capturedPresentationWindow = false
-        guard isCurrent, let store, let intendedHost else { return }
-        WebPane(webView: web, store: store).mount(in: intendedHost)
-        intendedHost.needsLayout = true
-        intendedHost.layoutSubtreeIfNeeded()
+        if isCurrent, let store, let intendedHost {
+            WebPane(webView: web, store: store).mount(in: intendedHost)
+            intendedHost.needsLayout = true
+            intendedHost.layoutSubtreeIfNeeded()
+        }
+        if let exitRequest { finishExitRequest(exitRequest, restored: true) }
     }
 }

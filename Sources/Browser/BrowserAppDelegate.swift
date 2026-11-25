@@ -33,19 +33,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         outputTermination = PageOutputTermination(output: pageOutput, presenter: quitPresenter ?? PageOutputNative().quitPresenter)
         super.init()
     }
-    var activeBrowserWindow: NSWindow? { NSApp.keyWindow?.sheetParent ?? NSApp.keyWindow ?? NSApp.mainWindow }
+    var activeBrowserWindow: NSWindow? {
+        let physical = NSApp.keyWindow?.sheetParent ?? NSApp.keyWindow ?? NSApp.mainWindow
+        return fullscreenTarget(in: physical)?.window ?? physical
+    }
     var activeQuick: QuickBrowseWindowController? { quickWindows.values.first { $0.window === activeBrowserWindow } }
-    func browserStore(in window: NSWindow?) -> BrowserStore? {
+    private func registeredBrowserStore(in window: NSWindow?) -> BrowserStore? {
         guard let window else { return nil }
         return quickWindows.values.first { $0.window === window }?.store ?? windows[window]
     }
+    func fullscreenTarget(in window: NSWindow?) -> (store: BrowserStore, web: WKWebView, window: NSWindow, presentation: WebsiteFullscreen)? {
+        guard let window else { return nil }
+        var visited = Set<ObjectIdentifier>()
+        let stores = Array(windows.values) + quickWindows.values.map(\.store)
+        for store in stores where visited.insert(ObjectIdentifier(store)).inserted {
+            for web in Array(store.views.values) + store.peekPages.values.map(\.web) {
+                guard let presentation = (web as? SplitDropWebView)?.websiteFullscreen,
+                      presentation.currentSource === web, presentation.matches(window),
+                      let logical = presentation.logicalWindow, registeredBrowserStore(in: logical) === store else { continue }
+                return (store, web, logical, presentation)
+            }
+        }
+        return nil
+    }
+    func browserStore(in window: NSWindow?) -> BrowserStore? {
+        registeredBrowserStore(in: window) ?? fullscreenTarget(in: window)?.store
+    }
     var activeStore: BrowserStore? { browserStore(in: activeBrowserWindow) }
     var activeWebView: WKWebView? {
+        if let target = fullscreenTarget(in: activeBrowserWindow) { return target.web }
         if let quick = activeQuick { return quick.activeWebView }
         guard let store = activeStore else { return nil }
         return store.primaryPeekView ?? store.currentView
     }
     func outputTarget(in window: NSWindow?) -> (store: BrowserStore, web: WKWebView, window: NSWindow)? {
+        if let target = fullscreenTarget(in: window) { return (target.store, target.web, target.window) }
         guard let window else { return nil }
         let store: BrowserStore, web: WKWebView?
         if let quick = quickWindows.values.first(where: { $0.window === window }) {
@@ -55,6 +77,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         } else { return nil }
         guard let web, web.window === window, store.isVisibleWebsite(web) else { return nil }
         return (store, web, window)
+    }
+    private func deferFullscreenCommand(documentBound: Bool = false, perform: @escaping @MainActor () -> Void) -> Bool {
+        guard let target = fullscreenTarget(in: activeBrowserWindow) else { return false }
+        guard target.window.attachedSheet == nil, target.web.window?.attachedSheet == nil,
+              let profile = target.store.profileID(for: target.web) else { return true }
+        let presentation = target.store.presentationIdentity(for: target.web)
+        let document = documentBound ? target.store.documentIdentity(for: target.web) : nil
+        target.presentation.exit { [weak self, weak store = target.store, weak web = target.web, weak window = target.window] restored in
+            guard restored, let self, let store, let web, let window, NSApp.isActive,
+                  window.isVisible, window.isKeyWindow, window.attachedSheet == nil,
+                  self.registeredBrowserStore(in: window) === store,
+                  store.profileID(for: web) == profile, store.presentationIdentity(for: web) === presentation,
+                  document.map({ store.documentIdentity(for: web) === $0 }) ?? true,
+                  web.window === window, store.isVisibleWebsite(web), self.activeWebView === web else { return }
+            perform()
+        }
+        return true
     }
     func performPageOutput(_ command: PageOutputCommand, in window: NSWindow?) {
         guard let target = outputTarget(in: window) else { return }
@@ -99,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @discardableResult func handleEscape(in window: NSWindow?) -> Bool {
         guard let window, !hasMarkedText(in: window) else { return false }
+        if let target = fullscreenTarget(in: window) { target.presentation.exit { _ in }; return true }
         if let manager=ExtensionManagerWindowController.active {manager.escape();return true}
         if SidebarResizeHandle.cancelActiveResize(in: window) { return true }
         if let pickerStore = browserStore(in: window), pickerStore.boostPicker?.source.window === window { pickerStore.cancelBoostPicker(); return true }
@@ -609,6 +649,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func location() {
         guard ExtensionManagerWindowController.active == nil else {return}
+        if deferFullscreenCommand(perform: { [weak self] in self?.location() }) { return }
         if let quick = activeQuick { quick.requestLocation(); return }
         if activeStore == nil { openMain() }
         guard let store = activeStore else { return }
@@ -616,6 +657,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func closeTab() {
         if let manager=ExtensionManagerWindowController.active {manager.closeFrontmost();return}
+        if deferFullscreenCommand(perform: { [weak self] in self?.closeTab() }) { return }
         if let quick = activeQuick { quick.window?.performClose(nil); return }
         guard let window = activeBrowserWindow,let store = browserStore(in:window) else {return}
         if store.awaitingInitialMetadata {window.performClose(nil);return}
@@ -648,6 +690,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func back() { activeWebView?.goBack() }
     @objc func forward() { activeWebView?.goForward() }
     @objc func find() {
+        if deferFullscreenCommand(documentBound: true, perform: { [weak self] in self?.find() }) { return }
         if let source = activeWebView, let reader = activeStore?.readerSession(for: source) { reader.requestFind(); return }
         if let quick = activeQuick { quick.state.showFind() } else { activeStore?.findVisible = true }
     }
