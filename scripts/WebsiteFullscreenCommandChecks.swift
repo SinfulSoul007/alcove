@@ -11,16 +11,24 @@ extension WebsiteFullscreenChecks {
 
     @available(macOS 15.4, *) @MainActor
     static func exerciseCommand(base: URL, kind: String, owned: OwnedWebsiteStores,
-                                controllers: OwnedExtensionControllers) async throws {
+                                controllers: OwnedExtensionControllers, isPrivate: Bool = false, isQuick: Bool = false) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-fullscreen-command-" + UUID().uuidString)
-        let writer = BrowserStore(dataRoot: root, keyProvider: { _ in SymmetricKey(data: Data(repeating: 87, count: 32)) })
+        var keyReads = 0
+        let writer = BrowserStore(isPrivate: isPrivate, dataRoot: root, keyProvider: { _ in
+            keyReads += 1; return SymmetricKey(data: Data(repeating: 87, count: 32))
+        })
         writer.finishOnboarding(); writer.preferences.automaticUpdateChecks = false
-        let profile = try writer.createProfile(name: "Owned fullscreen commands")
-        try owned.register(profile)
-        for item in writer.profiles where item.id == profile {
-            if let controller = item.extensionControllerID { try controllers.register(controller) }
+        let profile: UUID
+        if isPrivate { profile = BrowserProfile.defaultID }
+        else {
+            profile = try writer.createProfile(name: "Owned fullscreen commands")
+            try owned.register(profile)
+            for item in writer.profiles where item.id == profile {
+                if let controller = item.extensionControllerID { try controllers.register(controller) }
+            }
         }
-        let id = writer.newTab(url: base.appendingPathComponent(kind == "reader" ? "article" : "page"))
+        let sourceURL = base.appendingPathComponent(kind == "reader" ? "article" : "page")
+        let primaryID = writer.newTab(url: sourceURL)
         var outputSource: WKWebView?, outputWindow: NSWindow?, outputFormat: PageOutputFormat?
         var outputCalls = 0, outputErrors: [String] = []
         var environment = PageOutputEnvironment.live
@@ -43,21 +51,39 @@ extension WebsiteFullscreenChecks {
         environment.reportOrphanedError = { outputErrors.append($0) }
         let app = AppDelegate(pageOutput: PageOutputCoordinator(environment: environment)), owner = app.makeOwner(writer)
         app.normalOwner = owner // Even a broken fallback can only open this owned profile.
-        defer { owner.shutdown(); writer.shutdown(); try? FileManager.default.removeItem(at: root) }
+        defer {
+            owner.shutdown(); writer.shutdown()
+            if isPrivate {
+                check(keyReads == 0 && !FileManager.default.fileExists(atPath: writer.sessionURL.path),
+                      "Private fullscreen \(kind) never reads a metadata key or writes a saved session")
+            }
+            try? FileManager.default.removeItem(at: root)
+        }
         app.openPrimary(owner)
-        guard let window = app.normalWindow, let store = app.windows[window], store.activeProfileID == profile else {
+        guard let primaryWindow = app.primaryOwners.first(where: { $0.value === owner })?.key,
+              let store = app.windows[primaryWindow], store.activeProfileID == profile else {
             throw Failure.fixture("real owned browser window")
         }
-        window.title = "Alcove owned fullscreen \(kind)"
+        var window = primaryWindow, id = primaryID
+        var quick: QuickBrowseWindowController?
+        if isQuick {
+            id = try store.openQuickPage(url: sourceURL, profileID: profile, intendedSpaceID: store.space.id)
+            app.syncQuickWindows(owner)
+            guard let controller = app.quickWindows[QuickWindowKey(ownerID: owner.id, pageID: id)],
+                  let compactWindow = controller.window else { throw Failure.fixture("registered Quick command window") }
+            quick = controller; window = compactWindow; controller.surface()
+        }
+        window.title = "Alcove owned fullscreen \(isPrivate ? "private" : "regular") \(kind)"
+        print("FULLSCREEN_COMMAND_CONTEXT", kind, "private", isPrivate, "quick", isQuick)
         let underlying = store.view(for: id)
         var web = underlying
         var targetID = id
         if kind == "peek-escape" {
             store.openPeek(base.appendingPathComponent("page"), from: underlying)
-            guard let peek = store.primaryPeekView else { throw Failure.fixture("command Peek") }
+            guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else { throw Failure.fixture("command Peek") }
             web = peek
         } else {
-            if kind == "close" {
+            if kind == "close" && !isQuick {
                 targetID = store.newTab(url: base.appendingPathComponent("page"))
                 web = store.view(for: targetID)
             }
@@ -88,7 +114,8 @@ extension WebsiteFullscreenChecks {
                 check(exited && !presentation.isVisible && web.window === window,
                       "\(kind): Escape exits the actual native presentation and restores its original window")
                 if kind == "peek-escape" {
-                    check(store.primaryPeekView === web, "Escape exits fullscreen before closing the underlying Peek")
+                    check((isQuick ? store.quickPeekView(id) : store.primaryPeekView) === web,
+                          "Escape exits fullscreen before closing the underlying Peek")
                 } else {
                     check(store.views[id] === web && window.isVisible, "Escape preserves its original tab and browser window")
                 }
@@ -98,17 +125,19 @@ extension WebsiteFullscreenChecks {
             case "location":
                 if routed {
                     app.location(); app.location()
-                    let opened = await effect { store.commandVisible && web.window === window && window.firstResponder is NSTextView && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false }
-                    check(opened && app.windows.count == 1, "Cmd-L leaves fullscreen and opens the captured address field without creating another window")
+                    let opened = await effect { (quick?.state.isEditingAddress ?? store.commandVisible) && web.window === window && window.firstResponder is NSTextView && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false }
+                    check(opened && app.windows.count == 1 && app.quickWindows.count == (isQuick ? 1 : 0), "Cmd-L leaves fullscreen and opens the captured address field without creating another window")
                 } else {
                     check(false, "Cmd-L requires its captured routing context before address UI can be delivered")
                 }
                 store.dismissCommand()
+                quick?.state.cancelLocation(currentURL: web.url?.absoluteString ?? "")
             case "find":
                 app.find()
-                let opened = await effect { store.findVisible && web.window === window && window.firstResponder is NSTextView && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false }
+                let opened = await effect { (quick?.state.findVisible ?? store.findVisible) && web.window === window && window.firstResponder is NSTextView && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false }
                 check(opened && store.documentIdentity(for: web) === document, "Cmd-F leaves fullscreen and searches its captured live page")
                 store.findVisible = false
+                quick?.state.dismissFind()
             case "reader":
                 let menu = NSMenuItem(title: "Show Reader", action: #selector(AppDelegate.toggleReader), keyEquivalent: "")
                 check(app.validateMenuItem(menu), "Reader remains available for the captured fullscreen article")
@@ -202,6 +231,14 @@ extension WebsiteFullscreenChecks {
                       "A deferred browser command neither opens UI nor steals focus after another window becomes key")
             case "close":
                 app.closeTab()
+                if isQuick {
+                    let closed = await effect { store.quickPage(id) == nil && !window.isVisible && !presentation.isVisible && web.fullscreenState == .notInFullscreen }
+                    check(closed && app.quickWindows.isEmpty && primaryWindow.isVisible && store.tab(primaryID) != nil,
+                          "Cmd-W leaves fullscreen and closes only its captured Quick window")
+                    check(closed && NSApp.isRunning && !app.applicationShouldTerminateAfterLastWindowClosed(NSApp),
+                          "Closing a fullscreen Quick window keeps the browser application running")
+                    break
+                }
                 let closed = await effect { store.views[targetID] == nil && web.fullscreenState == .notInFullscreen && !presentation.isVisible }
                 check(closed && window.isVisible && store.tab(id) != nil, "Cmd-W exits fullscreen and closes only the captured tab while another page remains")
                 if closed {
@@ -228,22 +265,28 @@ extension WebsiteFullscreenChecks {
             do { try await leave(page) }
             catch { failures += 1; print("FULLSCREEN_COMMAND_RECOVERY_ERROR", kind, error) }
         }
+        for controller in Array(app.quickWindows.values) { controller.window?.performClose(nil) }
+        app.quickWindows.removeAll()
         for ownedWindow in Array(app.windows.keys) { ownedWindow.performClose(nil) }
         app.windows.removeAll(); app.primaryOwners.removeAll(); app.primaryLeases.removeAll()
         if let caught { throw caught }
-        print("FULLSCREEN_COMMAND_CASE_COMPLETED", kind)
+        print("FULLSCREEN_COMMAND_CASE_COMPLETED", kind, "private", isPrivate, "quick", isQuick)
     }
 
     @available(macOS 15.4, *) @MainActor
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        let all = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change"]
+        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change"]
+        let compact = ["escape", "peek-escape", "location", "find", "reader", "close"].map { "quick-" + $0 }
+        let all = regular + ["escape", "location", "find", "reader", "close"].map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         guard selected.allSatisfy(all.contains) else { throw Failure.fixture("unknown selected command case") }
-        for kind in selected.isEmpty ? all : selected {
-            do { try await exerciseCommand(base: base, kind: kind, owned: owned, controllers: controllers) }
-            catch { failures += 1; print("FULLSCREEN_COMMAND_CASE_ERROR", kind, error) }
+        for name in selected.isEmpty ? all : selected {
+            let isPrivate = name.hasPrefix("private-"), presentation = isPrivate ? String(name.dropFirst(8)) : name
+            let isQuick = presentation.hasPrefix("quick-"), kind = isQuick ? String(presentation.dropFirst(6)) : presentation
+            do { try await exerciseCommand(base: base, kind: kind, owned: owned, controllers: controllers, isPrivate: isPrivate, isQuick: isQuick) }
+            catch { failures += 1; print("FULLSCREEN_COMMAND_CASE_ERROR", name, error) }
         }
         let a = await controllers.cleanup(), b = await owned.cleanup()
         check(a && b, "Native command fixtures release and erase all owned website/extension stores")
