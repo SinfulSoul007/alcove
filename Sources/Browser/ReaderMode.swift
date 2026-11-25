@@ -8,7 +8,7 @@ import SwiftUI
     @Published private(set) var searchVisible = false
     @Published private(set) var searchFocusRequest = 0
     @Published private(set) var searchResult: Bool?
-    @Published var searchText = "" { didSet { searchGeneration = UUID(); searchResult = nil } }
+    @Published var searchText = "" { didSet { if searchText != oldValue { searchGeneration = UUID(); searchResult = nil } } }
     private var searchGeneration = UUID()
     @Published var theme = ReaderTheme.sepia { didSet { updateStyle() } }
     @Published var sansSerif = false { didSet { updateStyle() } }

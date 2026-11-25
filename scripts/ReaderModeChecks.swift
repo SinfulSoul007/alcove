@@ -101,6 +101,8 @@ import Darwin
         session.requestFind()
         try await wait("Reader find field focus") { session.searchVisible && window.firstResponder is NSTextView }
         session.searchText = "river"; session.find()
+        // Native text bindings can echo an unchanged value while WebKit searches.
+        session.searchText = "river"
         try await wait("Reader find") { session.searchResult != nil }
         check(session.searchResult == true, "Reader find searches the visible article")
         session.searchText = "river"
