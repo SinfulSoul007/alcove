@@ -1,19 +1,76 @@
-name: Native extension erasure check
+# Branch-only consumer override of a workflow already registered on main.
+# No push trigger: [skip ci] on the validation commit does not skip this test.
+name: Strict original full uBlock qualification
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  macos:
-    runs-on: macos-15
-    timeout-minutes: 10
+  full-ubo:
+    runs-on: macos-26
+    timeout-minutes: 40
     steps:
-      - name: Check out source
+      - name: Check out the qualified app sources and frozen witness
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Verify owned native erasure and request-blocking controls
-        run: caffeinate -is scripts/build.sh extension-erasure-test
+          fetch-depth: 0
+
+      - name: Check out exact engine verification helpers without rebuilding
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: SinfulSoul007/alcove
+          ref: 1fc08bd2013efe318f3d7b7914a24dcf9af07916
+          path: .engine-contract
+          persist-credentials: false
+
+      - name: Select the pinned Apple SDK on hosted arm64 macOS 26
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          test -d /Applications/Xcode_26.5.app/Contents/Developer
+          export DEVELOPER_DIR=/Applications/Xcode_26.5.app/Contents/Developer
+          test "$(xcrun --sdk macosx --show-sdk-version)" = 26.5
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
+          sw_vers
+          xcodebuild -version
+
+      - name: Verify the consumer rejection controls
+        run: python3 -B -m unittest discover -s scripts/full-ubo -p 'test_*.py' -v
+
+      - name: Download and verify the exact built engine and original release assets
+        timeout-minutes: 8
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 -B scripts/full-ubo/hosted-qualification.py prepare
+          --engine-source .engine-contract
+          --work-root "$RUNNER_TEMP/full-ubo-qualification"
+
+      - name: Run all frozen original ZIP and CRX assertions with owned cleanup
+        timeout-minutes: 25
+        run: >-
+          python3 -B scripts/full-ubo/run-native.py run
+          --work-root "$RUNNER_TEMP/full-ubo-qualification"
+
+      - name: Recover only test-owned website stores and extension controllers
+        if: always()
+        timeout-minutes: 2
+        run: >-
+          python3 -B scripts/full-ubo/run-native.py cleanup
+          --work-root "$RUNNER_TEMP/full-ubo-qualification"
+
+      - name: Preserve bounded qualification logs and verification receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Strict-full-uBlock-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/full-ubo-qualification/evidence/
+          if-no-files-found: warn
+          retention-days: 14
