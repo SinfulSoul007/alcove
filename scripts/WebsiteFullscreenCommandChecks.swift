@@ -27,8 +27,15 @@ extension WebsiteFullscreenChecks {
                 if let controller = item.extensionControllerID { try controllers.register(controller) }
             }
         }
+        let sourceSpace = writer.space.id
+        var nextSpace: UUID?
+        if kind == "next-space" {
+            nextSpace = try writer.createSpace(name: "Owned next fullscreen Space", profileID: profile)
+            writer.selectSpace(sourceSpace)
+        }
         let sourceURL = base.appendingPathComponent(kind == "reader" ? "article" : "page")
         let primaryID = writer.newTab(url: sourceURL)
+        if kind == "next-tab" || kind == "split" { _ = writer.newTab(url: sourceURL, activate: false) }
         var outputSource: WKWebView?, outputWindow: NSWindow?, outputFormat: PageOutputFormat?
         var outputCalls = 0, outputErrors: [String] = []
         var environment = PageOutputEnvironment.live
@@ -178,6 +185,32 @@ extension WebsiteFullscreenChecks {
                 check(delivered && app.windows.count == 1 && store.documentIdentity(for: web) === document,
                       "\(kind): browser chrome opens after restoring its existing window and live page")
                 store.appearanceVisible = false; store.settingsVisible = false; store.libraryVisible = false
+            case "new-tab", "sidebar", "next-tab", "next-space", "split":
+                let sidebarWasVisible = store.sidebarVisible
+                switch kind {
+                case "new-tab": app.newTab()
+                case "sidebar": app.sidebar()
+                case "next-tab": app.nextTab()
+                case "next-space": app.nextSpace()
+                default: app.split()
+                }
+                let delivered = await effect {
+                    let changed: Bool
+                    switch kind {
+                    case "new-tab": changed = store.commandVisible
+                    case "sidebar": changed = store.sidebarVisible != sidebarWasVisible
+                    case "next-tab": changed = store.selectedID != id && store.currentView?.window === window
+                    case "next-space": changed = store.space.id == nextSpace && store.currentView?.window === window
+                    default: changed = store.splitLayout?.tabIDs.contains(id) == true && web.window === window
+                    }
+                    return changed && !presentation.isVisible && web.fullscreenState == .notInFullscreen &&
+                        (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
+                }
+                check(delivered, "\(kind): browser navigation and layout actions restore native fullscreen before changing the visible browser")
+                let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
+                check(delivered && store.views[id] === web && store.documentIdentity(for: web) === document && draft == true,
+                      "\(kind): browser navigation and layout retain the exact source page and unsaved form")
+                store.dismissCommand()
             case "coalesced", "coalesced-close":
                 guard let coordinator = (web as? SplitDropWebView)?.websiteFullscreen else { throw Failure.fixture("exit coordinator") }
                 var results: [Bool] = []
@@ -277,7 +310,7 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change"]
+        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split"]
         let compact = ["escape", "peek-escape", "location", "find", "reader", "close"].map { "quick-" + $0 }
         let all = regular + ["escape", "location", "find", "reader", "close"].map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
