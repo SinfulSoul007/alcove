@@ -639,8 +639,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func stepTab(_ delta: Int) {
         guard activeQuick == nil, NSApp.keyWindow?.sheetParent == nil,
-              ExtensionManagerWindowController.active == nil,
-              let store = activeStore, store.advanceRecentTab(delta) else { return }
+              ExtensionManagerWindowController.active == nil else { return }
+        if deferFullscreenCommand(perform: { [weak self] in self?.stepTab(delta) }) { return }
+        guard let store = activeStore, store.advanceRecentTab(delta) else { return }
         store.chooseRecentTab()
     }
     func stepSpace(_ delta: Int) {
@@ -701,7 +702,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if deferFullscreenCommand(perform: { [weak self] in self?.sidebar() }) { return }
         store.sidebarVisible.toggle()
     }
-    @objc func split() { if activeQuick == nil { activeStore?.toggleSplit() } }
+    @objc func split() {
+        guard activeQuick == nil else { return }
+        if deferFullscreenCommand(perform: { [weak self] in self?.split() }) { return }
+        activeStore?.toggleSplit()
+    }
     @objc func pin() { if activeQuick == nil, let store = activeStore, store.canModifyLocalMetadata, !store.profileUnavailable(store.activeProfileID), let id = store.focusedID { store.togglePin(id) } }
     @objc func back() { activeWebView?.goBack() }
     @objc func forward() { activeWebView?.goForward() }
