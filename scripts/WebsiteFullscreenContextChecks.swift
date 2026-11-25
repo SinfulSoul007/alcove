@@ -87,6 +87,7 @@ extension WebsiteFullscreenChecks {
         let snapshot = "JSON.stringify({token:window.ownedDocumentToken,draft:document.getElementById('draft').value,scroll:scrollY,history:history.length,href:location.href})"
         let before = try await web.evaluateJavaScript(snapshot) as? String
         for target in ["element", "video"] {
+            residency("before \(label) \(target)", web: web, host: host, window: window)
             window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
             try await wait("\(label) foreground") { window.isKeyWindow && NSApp.isActive }
             if target == "video" {
@@ -103,7 +104,8 @@ extension WebsiteFullscreenChecks {
             check(web.window === presentation && web.superview !== host && web.fullscreenState == .inFullscreen,
                   "\(label) \(target): live remount and resize preserve WebKit's presentation")
             try await leave(web)
-            try await wait("\(label) restored source") { web.superview === host && web.window === window }
+            do { try await wait("\(label) restored source") { web.superview === host && web.window === window } }
+            catch { residency("failed \(label) \(target)", web: web, host: host, window: window); throw error }
             host.layoutSubtreeIfNeeded()
             check(web.frame == host.bounds && web.bounds.width > 0 && web.bounds.height > 0,
                   "\(label) \(target): restored viewport fits its actual host")

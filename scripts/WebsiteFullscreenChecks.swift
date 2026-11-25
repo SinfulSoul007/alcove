@@ -51,6 +51,7 @@ import Darwin
     }
 
     @MainActor static func leave(_ web: WKWebView) async throws {
+        let presentationWindow = web.window
         // The independent stock control proves this normal document exit returns
         // the view. On the qualified hosted OS closeAllMediaPresentations instead
         // reports state 0 while leaving the view in a detached native container.
@@ -58,7 +59,11 @@ import Darwin
             if (document.fullscreenElement) await Document.prototype.exitFullscreen.call(document);
             return true;
             """, contentWorld: .defaultClient)
-        try await wait("WebKit leaves fullscreen") { web.fullscreenState == .notInFullscreen }
+        try await wait("coordinated fullscreen exit") {
+            web.fullscreenState == .notInFullscreen && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed != true
+        }
+        check(presentationWindow != nil && presentationWindow?.isVisible == false,
+              "Completed fullscreen restoration waits for WebKit's presentation window to disappear")
     }
 
     @MainActor static func exercise(base: URL, target: String, replaceHost: Bool) async throws {
