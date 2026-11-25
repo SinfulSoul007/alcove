@@ -154,7 +154,7 @@ extension WebsiteFullscreenChecks {
             guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else { throw Failure.fixture("command Peek") }
             web = peek
         } else {
-            if kind == "close" && !isQuick {
+            if (kind == "close" || kind == "close-direct") && !isQuick {
                 targetID = store.newTab(url: base.appendingPathComponent("page"))
                 web = store.view(for: targetID)
             }
@@ -541,6 +541,24 @@ extension WebsiteFullscreenChecks {
                 } else {
                     check(false, "Last-tab close remains unqualified while captured tab close fails")
                 }
+            case "close-direct":
+                try await wait("owned surviving document") {
+                    (try? await underlying.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
+                }
+                _ = try await underlying.evaluateJavaScript("document.getElementById('draft').value='surviving close draft';true")
+                let survivorDocument = store.documentIdentity(for: underlying)
+                // This is the shared model API used by tab close controls;
+                // AppDelegate's already-qualified Cmd-W wrapper is bypassed.
+                store.close(targetID)
+                let closed = await effect {
+                    store.views[targetID] == nil && store.tab(targetID) == nil && !presentation.isVisible &&
+                        web.fullscreenState == .notInFullscreen && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
+                }
+                check(closed, "Closing a fullscreen tab through its shared model API finishes native exit before retiring the page")
+                let survivorDraft = try await underlying.evaluateJavaScript("document.getElementById('draft').value==='surviving close draft'") as? Bool
+                check(closed && window.isVisible && NSApp.isRunning && store.views[id] === underlying &&
+                      store.profileID(for: underlying) == profile && store.documentIdentity(for: underlying) === survivorDocument && survivorDraft == true,
+                      "Direct fullscreen tab closure keeps the browser and its other exact live document/profile/form intact")
             default: throw Failure.fixture("unknown native command")
             }
         } catch { caught = error }
@@ -569,7 +587,7 @@ extension WebsiteFullscreenChecks {
         let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close"] + scriptDialogs).map { "quick-" + $0 }
-        let all = regular + ["no-media"] + (["escape", "location", "find", "reader", "close"] + scriptDialogs).map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
+        let all = regular + ["no-media", "close-direct"] + (["escape", "location", "find", "reader", "close"] + scriptDialogs).map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         // Characterization controls are opt-in and never counted as normal
         // production-path command coverage in the full default matrix.
