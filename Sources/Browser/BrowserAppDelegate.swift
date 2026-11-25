@@ -622,6 +622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func newTab() {
         guard ExtensionManagerWindowController.active == nil else {return}
+        if deferFullscreenCommand(perform: { [weak self] in self?.newTab() }) { return }
         if let quick = activeQuick { quick.newQuick(); return }
         if activeStore == nil { openMain() }
         guard let store = activeStore else { return }
@@ -644,6 +645,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func stepSpace(_ delta: Int) {
         guard activeQuick == nil, let store = activeStore else { return }
+        if deferFullscreenCommand(perform: { [weak self] in self?.stepSpace(delta) }) { return }
         let spaces = store.session.spaces; store.selectSpace(spaces[(store.spaceIndex + delta + spaces.count) % spaces.count].id)
     }
     @objc func nextTab() { stepTab(1) }
@@ -694,7 +696,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func reopen() { guard activeQuick == nil, let store = activeStore, store.canModifyLocalMetadata, !store.profileUnavailable(store.activeProfileID) else { return }; store.reopenClosed() }
     @objc func reload() { activeWebView?.reload() }
-    @objc func sidebar() { if activeQuick == nil, let store = activeStore, store.extensionPopupProfileID == nil { store.sidebarVisible.toggle() } }
+    @objc func sidebar() {
+        guard activeQuick == nil, let store = activeStore, store.extensionPopupProfileID == nil else { return }
+        if deferFullscreenCommand(perform: { [weak self] in self?.sidebar() }) { return }
+        store.sidebarVisible.toggle()
+    }
     @objc func split() { if activeQuick == nil { activeStore?.toggleSplit() } }
     @objc func pin() { if activeQuick == nil, let store = activeStore, store.canModifyLocalMetadata, !store.profileUnavailable(store.activeProfileID), let id = store.focusedID { store.togglePin(id) } }
     @objc func back() { activeWebView?.goBack() }

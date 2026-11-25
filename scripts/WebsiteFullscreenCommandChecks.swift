@@ -31,11 +31,17 @@ extension WebsiteFullscreenChecks {
         var nextSpace: UUID?
         if kind == "next-space" {
             nextSpace = try writer.createSpace(name: "Owned next fullscreen Space", profileID: profile)
+            _ = writer.newTab(url: base.appendingPathComponent("page"))
             writer.selectSpace(sourceSpace)
         }
         let sourceURL = base.appendingPathComponent(kind == "reader" ? "article" : "page")
         let primaryID = writer.newTab(url: sourceURL)
-        if kind == "next-tab" || kind == "split" { _ = writer.newTab(url: sourceURL, activate: false) }
+        if kind == "next-tab" || kind == "split" {
+            _ = writer.newTab(url: sourceURL, activate: false)
+            // This API appends to the session's selection even without
+            // activating a pane. Explicitly stage the intended source first.
+            writer.select(primaryID)
+        }
         var outputSource: WKWebView?, outputWindow: NSWindow?, outputFormat: PageOutputFormat?
         var outputCalls = 0, outputErrors: [String] = []
         var environment = PageOutputEnvironment.live
