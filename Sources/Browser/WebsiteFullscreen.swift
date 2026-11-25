@@ -36,7 +36,7 @@ import WebKit
 
         var isCurrent: Bool {
             guard let presentation, !presentation.isBorrowed, presentation.presentationGeneration == generation,
-                  let store, let web, let window, window.isVisible,
+                  let store, let web, let window, window.isVisible, window.isKeyWindow, NSApp.isActive,
                   !store.isShuttingDown, web.navigationDelegate === store,
                   store.profileID(for: web) == profileID, !store.profileUnavailable(profileID),
                   store.presentationIdentity(for: web) === presentationID, web.window === window else { return false }
@@ -47,13 +47,58 @@ import WebKit
     @MainActor private final class ExitRequest {
         var waiters: [ExitWaiter] = []
         private var finished = false
+        private weak var presentation: WebsiteFullscreen?
+        private weak var window: NSWindow?
+        private weak var preferredWindow: NSWindow?
+        private let beganInForeground: Bool
+        private var focusChanged = false
+        private var focusObservations: [NSObjectProtocol] = []
+        private var focusMonitor: Any?
+
+        init(presentation: WebsiteFullscreen, window: NSWindow) {
+            self.presentation = presentation; self.window = window
+            beganInForeground = NSApp.isActive && (window.isKeyWindow || presentation.presentationWindow?.isKeyWindow == true)
+            focusObservations.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] notification in
+                MainActor.assumeIsolated {
+                    guard let self, !self.finished, let changed = notification.object as? NSWindow,
+                          changed !== self.window, changed !== self.presentation?.presentationWindow else { return }
+                    self.focusChanged = true; self.preferredWindow = changed
+                }
+            })
+            focusObservations.append(NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: NSApp, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.focusChanged = true; self?.preferredWindow = nil }
+            })
+            // A deliberate return to the source supersedes the earlier window
+            // choice. Observe only event ownership; never retain input contents.
+            focusMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+                MainActor.assumeIsolated {
+                    if let self, self.focusChanged,
+                       event.window === self.window || event.window === self.presentation?.presentationWindow {
+                        self.preferredWindow = nil
+                    }
+                }
+                return event
+            }
+        }
+
         func finish(restored: Bool) {
             guard !finished else { return }
             finished = true
+            let canContinue = beganInForeground && !focusChanged && NSApp.isActive
+            focusObservations.forEach(NotificationCenter.default.removeObserver); focusObservations.removeAll()
+            if let focusMonitor { NSEvent.removeMonitor(focusMonitor); self.focusMonitor = nil }
+            // WebKit may make the source window key at the end of its exit.
+            // Preserve a newer explicit choice without activating the app or
+            // surfacing a closed/minimized window. Every request finishes here,
+            // including the retained failure deadline, so tracking is removed.
+            if focusChanged, NSApp.isActive, window?.isKeyWindow == true,
+               let preferredWindow, preferredWindow.isVisible, !preferredWindow.isMiniaturized {
+                preferredWindow.makeKeyAndOrderFront(nil)
+            }
             let captured = waiters; waiters.removeAll()
             // Revalidate each callback after the previous one: closing a tab or
             // changing its owner must revoke later work from that old context.
-            for waiter in captured { waiter.completion(restored && waiter.isCurrent) }
+            for waiter in captured { waiter.completion(restored && canContinue && waiter.isCurrent) }
         }
     }
 
@@ -76,6 +121,8 @@ import WebKit
         return originWindow === window && (window.isKeyWindow || presentationWindow?.isKeyWindow == true)
     }
 
+    /// True permits work only in the still-current, foreground source context.
+    /// False cancels stale actions, even when native restoration itself succeeded.
     func exit(completion: @escaping @MainActor (Bool) -> Void) {
         guard let web, let store, let window = logicalWindow, let profileID, let presentationID else {
             completion(false); return
@@ -86,7 +133,7 @@ import WebKit
         guard isBorrowed || web.fullscreenState != .notInFullscreen else { completion(waiter.isCurrent); return }
         if let exitRequest { exitRequest.waiters.append(waiter) }
         else {
-            let request = ExitRequest(); request.waiters.append(waiter); exitRequest = request
+            let request = ExitRequest(presentation: self, window: window); request.waiters.append(waiter); exitRequest = request
             // The deadline cancels a failed operation; it never declares native
             // restoration complete. Retain the waiters even if the page dies.
             exitTimeout = Task { @MainActor [weak self, request] in
