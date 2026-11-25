@@ -3,6 +3,24 @@ import WebKit
 import CryptoKit
 import BrowserCore
 
+/// Observe this fixture's public delegate boundary while retaining the real
+/// production alert implementation. No synthetic frame or replacement dialog.
+@MainActor private final class OwnedFullscreenAlertProbe: NSObject, WKUIDelegate {
+    let store: BrowserStore
+    let sample: (String) -> Void
+    init(store: BrowserStore, sample: @escaping (String) -> Void) {
+        self.store = store; self.sample = sample
+    }
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        sample("delegate-entry")
+        store.webView(webView, runJavaScriptAlertPanelWithMessage: message, initiatedByFrame: frame) {
+            self.sample("delegate-completion"); completionHandler()
+        }
+        sample("delegate-return")
+    }
+}
+
 extension WebsiteFullscreenChecks {
     @MainActor static func effect(_ condition: @escaping @MainActor () -> Bool) async -> Bool {
         do { try await wait("captured native command effect") { condition() }; return true }
@@ -117,6 +135,7 @@ extension WebsiteFullscreenChecks {
         var caught: Error?
         do {
             try await wait("real browser website host") { web.window === window && web.superview is EdgeToEdgeWebHost }
+            guard let commandHost = web.superview as? EdgeToEdgeWebHost else { throw Failure.fixture("original command host") }
             try await wait("command source decoded") {
                 guard !web.isLoading else { return false }
                 return (try? await web.evaluateJavaScript("document.getElementById('video')?.readyState>=2")) as? Bool == true
@@ -319,6 +338,15 @@ extension WebsiteFullscreenChecks {
             case "script-alert":
                 let marker = "Owned fullscreen script alert"
                 var observed = false, restoredBeforePrompt = false, attachedToOrigin = false
+                let probe = OwnedFullscreenAlertProbe(store: store) { label in
+                    residency("script-alert " + label, web: web, host: commandHost, window: window)
+                    print("FULLSCREEN_SCRIPT_BOUNDARY", label, "nativeVisible", presentation.isVisible,
+                          "originKey", window.isKeyWindow, "nativeKey", presentation.isKeyWindow,
+                          "modal", NSApp.modalWindow != nil)
+                }
+                guard web.uiDelegate === store else { throw Failure.fixture("original production UI delegate") }
+                web.uiDelegate = probe
+                defer { web.uiDelegate = store }
                 func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
                 // The legacy app-modal implementation can nest AppKit's run
                 // loop. A common-mode native timer witnesses/dismisses only
@@ -361,6 +389,7 @@ extension WebsiteFullscreenChecks {
                 let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
                 check(completed && store.documentIdentity(for: web) === document && draft == true,
                       "Dismissing the actual page alert resumes its original document and preserves the unsaved form")
+                residency("script-alert after-script", web: web, host: commandHost, window: window)
             case "coalesced", "coalesced-close":
                 guard let coordinator = (web as? SplitDropWebView)?.websiteFullscreen else { throw Failure.fixture("exit coordinator") }
                 var results: [Bool] = []
