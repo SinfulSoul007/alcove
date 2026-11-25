@@ -43,7 +43,9 @@ def main():
     sources = sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'Sources/Browser').glob('*.swift') if p.name != 'main.swift')
     command(['xcrun', 'swiftc', *flags, '-emit-module', '-emit-library', '-enable-testing', '-module-name', 'BrowserCore', *core,
              '-o', str(OUT / 'libBrowserCore.dylib'), '-emit-module-path', str(OUT / 'BrowserCore.swiftmodule')])
-    native = ['xcrun', 'swiftc', *flags, '-parse-as-library', '-warnings-as-errors', '-I', str(OUT), *sources, 'scripts/WebsiteFullscreenChecks.swift']
+    native = ['xcrun', 'swiftc', *flags, '-parse-as-library', '-warnings-as-errors', '-I', str(OUT), *sources,
+              'scripts/WebsiteFullscreenChecks.swift', 'scripts/WebsiteFullscreenContextChecks.swift',
+              'scripts/OwnedWebsiteStores.swift', 'scripts/OwnedExtensionControllers.swift']
     if args.typecheck_only:
         command([*native, '-typecheck'])
         return
@@ -88,7 +90,7 @@ def main():
     worker.start()
     try:
         env = dict(os.environ, ALCOVE_FULLSCREEN_FIXTURE_URL=f'http://127.0.0.1:{server.server_port}/')
-        command([str(executable)], timeout=135, env=env)
+        command([str(executable)], timeout=325, env=env)
     finally:
         server.shutdown()
         server.server_close()

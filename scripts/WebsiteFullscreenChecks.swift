@@ -143,6 +143,10 @@ import Darwin
             do { try await exercise(base: base, target: target, replaceHost: replace) }
             catch { failures += 1; print("FULLSCREEN_CASE_ERROR", target, "replacement", replace, error) }
         }
+        if #available(macOS 15.4, *) {
+            do { try await exerciseContexts(base: base) }
+            catch { failures += 1; print("FULLSCREEN_CONTEXT_SETUP_ERROR", error) }
+        }
         print("WEBSITE_FULLSCREEN_CHECKS", checks, "FAILURES", failures)
         return failures == 0 ? 0 : 1
     }
@@ -151,7 +155,7 @@ import Darwin
         setbuf(stdout, nil)
         NSApplication.shared.setActivationPolicy(.regular)
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(110))
+            try? await Task.sleep(for: .seconds(300))
             print("WEBSITE_FULLSCREEN_WATCHDOG_TIMEOUT"); exit(3)
         }
         Task { @MainActor in exit(await run()) }
