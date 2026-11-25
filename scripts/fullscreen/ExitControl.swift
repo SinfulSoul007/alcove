@@ -23,13 +23,25 @@ import Darwin
         window.isReleasedWhenClosed = false; window.title = "Alcove owned stock WebKit exit control"
         window.contentView = host; window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         defer { web.closeAllMediaPresentations(completionHandler: nil); window.contentView = nil; window.close() }
-        web.loadHTMLString("<div id='element' style='width:500px;height:300px;background:navy;color:white'>Owned fullscreen exit control</div>", baseURL: nil)
+        guard let input = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_FIXTURE_URL"],
+              let base = URL(string: input), base.host == "127.0.0.1" else { throw Failure.timeout("owned loopback URL") }
+        web.load(URLRequest(url: base.appendingPathComponent("page")))
         try await wait("owned stock WebKit document") {
             (try? await web.evaluateJavaScript("document.getElementById('element')!==null")) as? Bool == true
         }
         try await wait("owned stock window active") { window.isKeyWindow && NSApp.isActive }
-        _ = try await web.callAsyncJavaScript("document.getElementById('element').requestFullscreen();return true;", contentWorld: .page)
-        try await wait("stock WebKit genuine entry") { web.fullscreenState == .inFullscreen }
+        _ = try await web.callAsyncJavaScript("""
+            window.exitControlResult='requesting';
+            document.getElementById('element').requestFullscreen()
+                .then(()=>window.exitControlResult='entered')
+                .catch(error=>window.exitControlResult=error.name+': '+error.message);
+            return true;
+            """, contentWorld: .page)
+        do { try await wait("stock WebKit genuine entry") { web.fullscreenState == .inFullscreen } }
+        catch {
+            print("STOCK_EXIT_ENTRY_FAILURE", method, "page", (try? await web.evaluateJavaScript("JSON.stringify({result:window.exitControlResult,enabled:document.fullscreenEnabled,origin:location.origin,ready:document.readyState})")) ?? "unavailable")
+            throw error
+        }
         print("STOCK_EXIT_ENTRY", method, "borrowed", web.superview !== host, "differentWindow", web.window !== window)
         if method == "document.exitFullscreen" {
             _ = try await web.callAsyncJavaScript("await document.exitFullscreen();return true;", contentWorld: .page)

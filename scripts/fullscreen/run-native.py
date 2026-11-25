@@ -45,7 +45,27 @@ def main():
         command(['xcrun', 'swiftc', *flags, '-parse-as-library', '-warnings-as-errors',
                  'scripts/fullscreen/ExitControl.swift', '-o', str(executable)])
         if not args.compile_only:
-            command([str(executable)], timeout=80)
+            class ControlHandler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    body = b"<!doctype html><div id='element' style='width:500px;height:300px;background:navy;color:white'>Owned fullscreen exit control</div>"
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+                def log_message(self, *_):
+                    pass
+
+            server = ThreadingHTTPServer(('127.0.0.1', 0), ControlHandler)
+            server.daemon_threads = True
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                env = dict(os.environ, ALCOVE_FULLSCREEN_FIXTURE_URL=f'http://127.0.0.1:{server.server_port}/')
+                command([str(executable)], timeout=80, env=env)
+            finally:
+                server.shutdown(); server.server_close(); worker.join(timeout=5)
         return
     core = sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'Sources/BrowserCore').glob('*.swift'))
     sources = sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'Sources/Browser').glob('*.swift') if p.name != 'main.swift')
