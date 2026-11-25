@@ -31,6 +31,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--compile-only', action='store_true')
     parser.add_argument('--typecheck-only', action='store_true')
+    parser.add_argument('--exit-control-only', action='store_true')
     args = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     sdk = os.environ.get('BROWSER_SDK') or subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
@@ -39,6 +40,13 @@ def main():
         sdk = str(pinned_sdk)
     arch = os.environ.get('BROWSER_ARCH') or os.uname().machine
     flags = ['-sdk', sdk, '-module-cache-path', str(OUT / 'cache'), '-target', f'{arch}-apple-macosx14.0']
+    if args.exit_control_only:
+        executable = OUT / 'stock-fullscreen-exit-control'
+        command(['xcrun', 'swiftc', *flags, '-parse-as-library', '-warnings-as-errors',
+                 'scripts/fullscreen/ExitControl.swift', '-o', str(executable)])
+        if not args.compile_only:
+            command([str(executable)], timeout=80)
+        return
     core = sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'Sources/BrowserCore').glob('*.swift'))
     sources = sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'Sources/Browser').glob('*.swift') if p.name != 'main.swift')
     command(['xcrun', 'swiftc', *flags, '-emit-module', '-emit-library', '-enable-testing', '-module-name', 'BrowserCore', *core,
