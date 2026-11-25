@@ -14,41 +14,38 @@ extension WebsiteFullscreenChecks {
                                 controllers: OwnedExtensionControllers) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-fullscreen-command-" + UUID().uuidString)
         let writer = BrowserStore(dataRoot: root, keyProvider: { _ in SymmetricKey(data: Data(repeating: 87, count: 32)) })
-        let app = AppDelegate(), owner = app.makeOwner(writer)
-        app.normalOwner = owner // Even a broken fallback can only open this owned profile.
-        let primary = try owner.acquirePrimaryStore(), store = primary.store
-        defer { owner.shutdown(); writer.shutdown(); try? FileManager.default.removeItem(at: root) }
-        let profile = try store.createProfile(name: "Owned fullscreen commands")
+        writer.finishOnboarding(); writer.preferences.automaticUpdateChecks = false
+        let profile = try writer.createProfile(name: "Owned fullscreen commands")
         try owned.register(profile)
-        for item in store.profiles where item.id == profile {
+        for item in writer.profiles where item.id == profile {
             if let controller = item.extensionControllerID { try controllers.register(controller) }
         }
-        store.finishOnboarding()
-        let id = store.newTab(url: base.appendingPathComponent("page")), underlying = store.view(for: id)
-        let host = EdgeToEdgeWebHost(frame: NSRect(x: 0, y: 0, width: 1000, height: 700))
-        let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.title = "Alcove owned fullscreen \(kind)"
-        window.contentView = host; window.delegate = app
-        app.windows[window] = store; app.primaryOwners[window] = owner; app.primaryLeases[window] = primary.lease
+        let id = writer.newTab(url: base.appendingPathComponent("page"))
+        let app = AppDelegate(), owner = app.makeOwner(writer)
+        app.normalOwner = owner // Even a broken fallback can only open this owned profile.
+        defer { owner.shutdown(); writer.shutdown(); try? FileManager.default.removeItem(at: root) }
+        app.openPrimary(owner)
+        guard let window = app.normalWindow, let store = app.windows[window], store.activeProfileID == profile else {
+            throw Failure.fixture("real owned browser window")
+        }
+        window.title = "Alcove owned fullscreen \(kind)"
+        let underlying = store.view(for: id)
         var web = underlying
         var targetID = id
         if kind == "peek-escape" {
-            WebPane(webView: underlying, store: store).mount(in: host)
             store.openPeek(base.appendingPathComponent("page"), from: underlying)
             guard let peek = store.primaryPeekView else { throw Failure.fixture("command Peek") }
             web = peek
-            let peekHost = EdgeToEdgeWebHost(frame: host.bounds.insetBy(dx: 60, dy: 40))
-            host.addSubview(peekHost); WebPane(webView: web, store: store).mount(in: peekHost)
         } else {
             if kind == "close" {
                 targetID = store.newTab(url: base.appendingPathComponent("page"))
                 web = store.view(for: targetID)
             }
-            WebPane(webView: web, store: store).mount(in: host)
         }
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         var caught: Error?
         do {
+            try await wait("real browser website host") { web.window === window && web.superview is EdgeToEdgeWebHost }
             try await wait("command source decoded") {
                 guard !web.isLoading else { return false }
                 return (try? await web.evaluateJavaScript("document.getElementById('video')?.readyState>=2")) as? Bool == true
@@ -81,7 +78,7 @@ extension WebsiteFullscreenChecks {
             case "location":
                 if routed {
                     app.location(); app.location()
-                    let opened = await effect { store.commandVisible && web.window === window && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false }
+                    let opened = await effect { store.commandVisible && web.window === window && window.firstResponder is NSTextView && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false }
                     check(opened && app.windows.count == 1, "Cmd-L leaves fullscreen and opens the captured address field without creating another window")
                 } else {
                     check(false, "Cmd-L requires its captured routing context before address UI can be delivered")
@@ -89,7 +86,7 @@ extension WebsiteFullscreenChecks {
                 store.dismissCommand()
             case "find":
                 app.find()
-                let opened = await effect { store.findVisible && web.window === window && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false }
+                let opened = await effect { store.findVisible && web.window === window && window.firstResponder is NSTextView && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false }
                 check(opened && store.documentIdentity(for: web) === document, "Cmd-F leaves fullscreen and searches its captured live page")
                 store.findVisible = false
             case "close":
@@ -97,7 +94,8 @@ extension WebsiteFullscreenChecks {
                 let closed = await effect { store.views[targetID] == nil && web.fullscreenState == .notInFullscreen && !presentation.isVisible }
                 check(closed && window.isVisible && store.tab(id) != nil, "Cmd-W exits fullscreen and closes only the captured tab while another page remains")
                 if closed {
-                    store.select(id); WebPane(webView: underlying, store: store).mount(in: host)
+                    store.select(id)
+                    try await wait("real survivor browser host") { underlying.window === window && underlying.superview is EdgeToEdgeWebHost }
                     try await wait("remaining page decoded") { (try? await underlying.evaluateJavaScript("document.getElementById('video')?.readyState>=2")) as? Bool == true }
                     try await enter(underlying, target: "element")
                     app.closeTab()
