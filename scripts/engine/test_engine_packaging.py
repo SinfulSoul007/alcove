@@ -188,5 +188,78 @@ class EngineInputChecks(unittest.TestCase):
             self.inputs.verify_build_manifest(candidate, patches)
 
 
+class BundleLayoutChecks(unittest.TestCase):
+    def setUp(self):
+        try:
+            self.layout = importlib.import_module('bundle_layout')
+        except ModuleNotFoundError:
+            self.fail('The self-contained bundle layout implementation is missing')
+
+    def test_places_engine_code_services_tools_and_metadata_in_bundle_locations(self):
+        cases={
+            'WebKit.framework/Versions/A/WebKit':'Contents/Frameworks/WebKit.framework/Versions/A/WebKit',
+            'com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent.Development':
+                'Contents/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent.Development',
+            'libwebrtc.dylib':'Contents/Frameworks/libwebrtc.dylib',
+            'webpushd':'Contents/MacOS/webpushd',
+            'usr/local/include/owned.h':'Contents/Resources/EngineBuildMetadata/usr/local/include/owned.h',
+            'ANGLEMetalLib.metallib':'Contents/Resources/AlcoveEngine/ANGLEMetalLib.metallib',
+            'AlcoveEngineBuild.json':'Contents/Resources/AlcoveEngine/AlcoveEngineBuild.json'}
+        for source,wanted in cases.items():
+            with self.subTest(source=source):self.assertEqual(self.layout.map_member(source),wanted)
+
+    def test_rejects_unreviewed_or_escaping_members(self):
+        for name in ('../outside','/absolute','WebKit.framework/../outside','Unknown.framework/code','usr\\escape','usr//ambiguous',
+                     'libwebrtc.dylib/child'):
+            with self.subTest(name=name),self.assertRaisesRegex(ValueError,'member|root'):
+                self.layout.map_member(name)
+
+    def images(self):
+        return [
+            {'path':'JavaScriptCore.framework/Versions/A/JavaScriptCore',
+             'identity':'/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/JavaScriptCore',
+             'dependencies':['/usr/lib/libSystem.B.dylib'],'rpaths':[]},
+            {'path':'WebKit.framework/Versions/A/WebKit',
+             'identity':'/System/Library/Frameworks/WebKit.framework/Versions/A/WebKit',
+             'dependencies':['/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/JavaScriptCore',
+                             '/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation'],
+             'rpaths':['@loader_path/old-development-location']}]
+
+    def test_relocation_maps_owned_ids_loads_and_rpaths_and_keeps_os_dependencies(self):
+        plan=self.layout.plan_relocations(self.images())
+        value=plan['WebKit.framework/Versions/A/WebKit']
+        self.assertEqual(value['identity'],'@rpath/WebKit.framework/Versions/A/WebKit')
+        self.assertEqual(value['changes'],{
+            '/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/JavaScriptCore':
+            '@rpath/JavaScriptCore.framework/Versions/A/JavaScriptCore'})
+        self.assertEqual(value['addRpath'],'@loader_path/../../..')
+        self.assertEqual(value['removeRpaths'],['@loader_path/old-development-location'])
+
+    def test_refuses_unmapped_owned_framework_dependency(self):
+        images=self.images();images[1]['dependencies'].append(
+            '/System/Library/Frameworks/WebKit.framework/Versions/A/Frameworks/WebCore.framework/Versions/A/WebCore')
+        with self.assertRaisesRegex(ValueError,'Unmapped owned'):
+            self.layout.plan_relocations(images)
+
+    def test_refuses_unknown_rpath_or_non_system_absolute_dependency(self):
+        for dependency in ('@rpath/omitted.dylib','@loader_path/../missing.dylib','/opt/local/unshipped.dylib'):
+            with self.subTest(dependency=dependency):
+                images=self.images();images[1]['dependencies'].append(dependency)
+                with self.assertRaisesRegex(ValueError,'dependency'):
+                    self.layout.plan_relocations(images)
+
+    def test_refuses_duplicate_library_identity(self):
+        images=self.images();images[1]['identity']=images[0]['identity']
+        with self.assertRaisesRegex(ValueError,'Duplicate'):
+            self.layout.plan_relocations(images)
+
+    def test_service_rpath_reaches_bundle_frameworks_after_normalized_placement(self):
+        images=self.images();images.append({'path':'com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking.Development',
+            'identity':None,'dependencies':['/System/Library/Frameworks/WebKit.framework/Versions/A/WebKit'],'rpaths':['@loader_path/../../../']})
+        value=self.layout.plan_relocations(images)[images[-1]['path']]
+        self.assertEqual(value['addRpath'],'@loader_path/../../../../../../..')
+        self.assertEqual(value['changes'],{'/System/Library/Frameworks/WebKit.framework/Versions/A/WebKit':'@rpath/WebKit.framework/Versions/A/WebKit'})
+
+
 if __name__ == '__main__':
     unittest.main()

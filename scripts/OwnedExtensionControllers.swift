@@ -7,7 +7,11 @@ import BrowserCore
     let manifest:URL
     private var ids:[UUID]
     init() throws {
+#if ALCOVE_PACKAGED_QUALIFICATION
+        manifest = try QualificationJournalPath.resolve(suffix:"owned-extension-controllers.json")
+#else
         manifest = URL(fileURLWithPath:CommandLine.arguments[0]).appendingPathExtension("owned-extension-controllers.json")
+#endif
         ids = FileManager.default.fileExists(atPath:manifest.path) ? try JSONDecoder().decode([UUID].self,from:Data(contentsOf:manifest)) : []
         guard ids.allSatisfy({$0 != BrowserProfile.zeroID && $0 != BrowserProfile.defaultID}) else {throw CocoaError(.fileReadCorruptFile)}
     }

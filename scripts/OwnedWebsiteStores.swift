@@ -10,10 +10,14 @@ import BrowserCore
     // WebKit before recovery-only runs, which otherwise have never made a view.
     private let webKitLifetime: WKWebView
     init() throws {
+#if ALCOVE_PACKAGED_QUALIFICATION
+        manifest = try QualificationJournalPath.resolve(suffix:"owned-stores.json")
+#else
+        manifest = URL(fileURLWithPath: CommandLine.arguments[0]).appendingPathExtension("owned-stores.json")
+#endif
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         webKitLifetime = WKWebView(frame: .zero, configuration: configuration)
-        manifest = URL(fileURLWithPath: CommandLine.arguments[0]).appendingPathExtension("owned-stores.json")
         ids = FileManager.default.fileExists(atPath: manifest.path) ? try JSONDecoder().decode([UUID].self, from: Data(contentsOf: manifest)) : []
         guard ids.allSatisfy({ $0 != BrowserProfile.defaultID && $0 != BrowserProfile.zeroID }) else { throw CocoaError(.fileReadCorruptFile) }
     }
@@ -21,6 +25,9 @@ import BrowserCore
         guard id != BrowserProfile.defaultID, id != BrowserProfile.zeroID else { throw CocoaError(.fileWriteInvalidFileName) }
         if !ids.contains(id) { ids.append(id) }
         try JSONEncoder().encode(ids).write(to: manifest, options: .atomic)
+#if ALCOVE_PACKAGED_QUALIFICATION
+        try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:manifest.path)
+#endif
     }
     func cleanup() async -> Bool {
         for id in ids {
