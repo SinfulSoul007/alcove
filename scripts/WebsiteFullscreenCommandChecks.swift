@@ -217,6 +217,51 @@ extension WebsiteFullscreenChecks {
                 check(delivered && store.views[id] === web && store.documentIdentity(for: web) === document && draft == true,
                       "\(kind): browser navigation and layout retain the exact source page and unsaved form")
                 store.dismissCommand()
+            case "file-prompt", "media-prompt":
+                var prompt: NSWindow?, presentedIn: NSWindow?
+                var denials: [Bool] = []
+                var duplicateReply: (() -> Void)?, recoveryReply: (() -> Void)?
+                if kind == "file-prompt" {
+                    store.requestWebsiteFiles(from: web, present: { parent, reply in
+                        let panel = NSOpenPanel(); panel.directoryURL = root
+                        panel.canChooseFiles = true; panel.canChooseDirectories = false
+                        presentedIn = parent; prompt = panel
+                        duplicateReply = { reply([root.appendingPathComponent("never-selected.txt")]) }
+                        recoveryReply = { reply(nil) }
+                        panel.beginSheetModal(for: parent) { _ in reply(nil) }
+                    }, completion: { denials.append($0 == nil) })
+                } else {
+                    store.requestWebsiteMedia(from: web, present: { parent, reply in
+                        let alert = NSAlert(); alert.messageText = "Owned fullscreen media consent"
+                        alert.addButton(withTitle: "Don’t Allow"); alert.addButton(withTitle: "Allow Once")
+                        presentedIn = parent; prompt = alert.window
+                        duplicateReply = { reply(true) }; recoveryReply = { reply(false) }
+                        alert.beginSheetModal(for: parent) { reply($0 == .alertSecondButtonReturn) }
+                    }, completion: { denials.append($0 == .deny) })
+                }
+                let shown = await effect { prompt != nil && prompt?.isVisible == true && prompt?.sheetParent === presentedIn }
+                check(shown && presentedIn === window && web.window === window && !presentation.isVisible &&
+                      (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false,
+                      "\(kind): the actual native sheet presents only after restoring its original browser window")
+                app.location()
+                check(shown && !store.commandVisible,
+                      "\(kind): a native website sheet blocks conflicting address UI")
+                let endedNativeSheet: Bool
+                if let prompt, let parent = prompt.sheetParent {
+                    endedNativeSheet = true
+                    parent.endSheet(prompt, returnCode: kind == "file-prompt" ? .cancel : .alertFirstButtonReturn)
+                    prompt.orderOut(nil)
+                } else {
+                    endedNativeSheet = false
+                    // Recovery can settle an unavailable native boundary, but
+                    // cannot make either visibility or callback assertion pass.
+                    recoveryReply?(); prompt?.orderOut(nil)
+                }
+                let settled = await effect { !denials.isEmpty }
+                duplicateReply?()
+                check(endedNativeSheet && settled && denials == [true],
+                      "\(kind): cancelling the real native sheet denies once and rejects a duplicate reply")
+                store.dismissCommand()
             case "coalesced", "coalesced-close":
                 guard let coordinator = (web as? SplitDropWebView)?.websiteFullscreen else { throw Failure.fixture("exit coordinator") }
                 var results: [Bool] = []
@@ -316,7 +361,7 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split"]
+        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt"]
         let compact = ["escape", "peek-escape", "location", "find", "reader", "close"].map { "quick-" + $0 }
         let all = regular + ["escape", "location", "find", "reader", "close"].map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
