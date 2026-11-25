@@ -72,6 +72,7 @@ import Darwin
         check(session.reader.configuration.websiteDataStore.isPersistent == false && session.reader.configuration.webExtensionController == nil && session.reader.configuration.userContentController.userScripts.isEmpty, "Renderer has an ephemeral store and no extension controller or injected scripts")
         check(!session.reader.allowsLinkPreview, "Reader disables external link previews")
         check(!session.reader.configuration.defaultWebpagePreferences.allowsContentJavaScript, "Reader disables article JavaScript")
+        check(!session.reader.configuration.preferences.isElementFullscreenEnabled, "Reader keeps website fullscreen disabled in its inert article view")
         let body = try await session.reader.evaluateJavaScript("document.querySelector('main').innerHTML") as? String ?? ""
         check(body.contains("Along the valley") && body.contains("<strong>Evidence</strong>") && !body.contains("CHROME_NAVIGATION") && !body.contains("<form"), "Reader renders article structure without site chrome or forms")
         _ = try await session.reader.evaluateJavaScript("const attempt=document.createElement('script');attempt.textContent='window.untrustedRan=1';document.body.appendChild(attempt);true")

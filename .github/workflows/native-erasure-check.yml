@@ -27,11 +27,23 @@ jobs:
           set -o pipefail
           mkdir -p .build/fullscreen
           caffeinate -is python3 scripts/fullscreen/run-native.py 2>&1 | tee .build/fullscreen/native.log
+      - name: Verify existing Reader lifecycle on the changed website hosts
+        if: always()
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh reader-mode-test 2>&1 | tee .build/fullscreen/reader.log
+      - name: Verify existing chrome geometry and sidebar controls
+        if: always()
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh chrome-test 2>&1 | tee .build/fullscreen/chrome.log
       - name: Preserve the bounded native result
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: website-fullscreen-${{ github.run_id }}
-          path: .build/fullscreen/native.log
+          path: .build/fullscreen/*.log
           if-no-files-found: warn
           retention-days: 14

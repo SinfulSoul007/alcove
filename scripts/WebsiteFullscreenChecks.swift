@@ -171,6 +171,8 @@ import Darwin
             if #available(macOS 15.4, *) {
                 do { try await exerciseContexts(base: base) }
                 catch { failures += 1; print("FULLSCREEN_CONTEXT_SETUP_ERROR", error) }
+                do { try await exerciseCommands(base: base) }
+                catch { failures += 1; print("FULLSCREEN_COMMAND_SETUP_ERROR", error) }
             }
         }
         print("WEBSITE_FULLSCREEN_CHECKS", checks, "FAILURES", failures)
