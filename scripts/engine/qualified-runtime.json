@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "wrapperCommit": "1fc08bd2013efe318f3d7b7914a24dcf9af07916",
+  "webkitRevision": "26695efdefc6076049ec50713a2c4e54b90b4d47",
+  "artifactID": 14965369072,
+  "outerBytes": 73446929,
+  "outerSHA256": "30131eb37220880025acb106279b9ec9a476b212533b23b1dfb4dd63023c5b92",
+  "tarSHA256": "add4cd8b373010931b2e8a598f426dfb15243bffb2c1560b81a1f3703346c812",
+  "rootCount": 27,
+  "memberCount": 10568,
+  "patchCount": 18,
+  "appliedSourceSHA256": "206841ff15632f71f2972f8f530500b00de48b1b4adc71c35a6c5a8d799d6be8",
+  "minimumSystemVersion": "26.5",
+  "sdk": "26.5",
+  "architecture": "arm64",
+  "frameworkSHA256": {
+    "JavaScriptCore.framework": "df403fd0b9399f611302aa11df3db3730972a7e15736935f1535cb69cca21877",
+    "WebCore.framework": "7c35f3c07bac9c58a9e13403c6750f434e1c2cf66212ed5b07df4b249834b3f2",
+    "WebKit.framework": "ac499ef069ae0a138f2b099fb84d84be0cc7072fa06a1a929afca3758fd86ba2"
+  }
+}

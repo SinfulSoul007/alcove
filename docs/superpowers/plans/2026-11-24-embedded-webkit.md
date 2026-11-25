@@ -1,6 +1,6 @@
 # Self-contained WebKit app packaging implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build and qualify a self-contained Alcove engine candidate from the exact runtime that passed original full uBlock, preserving the existing public product and full browser objective.
 
@@ -40,11 +40,11 @@
 - `remove_developer_environment(data: bytes) -> bytes`: remove only the approved framework/library-search `LC_DYLD_ENVIRONMENT` commands; preserve all remaining command bytes and every section offset/content byte.
 - `verify_derivation(before: bytes, after: bytes, allowed_changes: dict) -> dict`: reject code/data/OS-floor/unknown-load changes and report exact original/derived hashes.
 
-- [ ] **Step 1: Write rejection and derivation tests before implementation.** Require failure for wrong wrapper/archive/patch/member/link/framework inputs; malformed command sizes/counts/strings/offsets, unsupported/fat/foreign images, unapproved environment names and section overlap. A synthetic arm64 image with duplicate approved environment commands must retain identical code/data bytes and offsets after removal. A changed section byte or minimum OS must fail derivation. Assert expected errors, not any exception.
-- [ ] **Step 2: Run `python3 -B -m unittest discover -s scripts/engine -p 'test_*.py' -v`; observe missing implementation RED.** Record exact cases and output in the plan ledger.
-- [ ] **Step 3: Implement the interfaces.** Import only the pinned clean engine wrapper's trusted archive helpers. Freshly extract the authenticated archive into an owned destination; do not mutate the retained verified engine. Use a complete parsed load-command table and bounds checks, removing approved metadata in place with unchanged section locations. Do not implement executable-code rewriting.
-- [ ] **Step 4: Run the tests GREEN and inspect all 21 actual input Mach-Os.** Save the exact inventory, verify their arm64/26.5 floor, and prove environment-only derivation preserves every section. Include all actual developer-command variants as fixtures; retain immutable input bytes.
-- [ ] **Step 5: Commit** the verified import/metadata implementation and ledgered actual results.
+- [x] **Step 1: Write rejection and derivation tests before implementation.** Require failure for wrong wrapper/archive/patch/member/link/framework inputs; malformed command sizes/counts/strings/offsets, unsupported/fat/foreign images, unapproved environment names and section overlap. A synthetic arm64 image with duplicate approved environment commands must retain identical code/data bytes and offsets after removal. A changed section byte or minimum OS must fail derivation. Assert expected errors, not any exception.
+- [x] **Step 2: Run `python3 -B -m unittest discover -s scripts/engine -p 'test_*.py' -v`; observe missing implementation RED.** Record exact cases and output in the plan ledger.
+- [x] **Step 3: Implement the interfaces.** Import only the pinned clean engine wrapper's trusted archive helpers. Freshly extract the authenticated archive into an owned destination; do not mutate the retained verified engine. Use a complete parsed load-command table and bounds checks, removing approved metadata in place with unchanged section locations. Do not implement executable-code rewriting.
+- [x] **Step 4: Run the tests GREEN and inspect all 21 actual input Mach-Os.** Save the exact inventory, verify their arm64/26.5 floor, and prove environment-only derivation preserves every section. Include all actual developer-command variants as fixtures; retain immutable input bytes.
+- [x] **Step 5: Commit** the verified import/metadata implementation and ledgered actual results.
 
 ### Task 2: Self-contained bundle and sandboxed strict witness
 
