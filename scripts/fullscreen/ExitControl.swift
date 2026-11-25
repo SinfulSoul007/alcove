@@ -2,6 +2,8 @@ import AppKit
 import WebKit
 import Darwin
 
+@MainActor private final class StockWebUIDelegate: NSObject, WKUIDelegate {}
+
 /// Independent public-API control: no Alcove store, subclass or host behavior.
 @main struct FullscreenExitControl {
     enum Failure: Error { case timeout(String) }
@@ -18,6 +20,9 @@ import Darwin
         config.websiteDataStore = .nonPersistent(); config.preferences.isElementFullscreenEnabled = true
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 500))
         let web = WKWebView(frame: host.bounds, configuration: config)
+        let uiDelegate = StockWebUIDelegate()
+        web.uiDelegate = uiDelegate
+        defer { withExtendedLifetime(uiDelegate) {} }
         web.autoresizingMask = [.width, .height]; host.addSubview(web)
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.title = "Alcove owned stock WebKit exit control"
