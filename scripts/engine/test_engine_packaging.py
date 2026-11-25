@@ -261,5 +261,73 @@ class BundleLayoutChecks(unittest.TestCase):
         self.assertEqual(value['changes'],{'/System/Library/Frameworks/WebKit.framework/Versions/A/WebKit':'@rpath/WebKit.framework/Versions/A/WebKit'})
 
 
+class StagedLayoutChecks(unittest.TestCase):
+    def setUp(self):
+        try:self.package=importlib.import_module('package_candidate')
+        except ModuleNotFoundError:self.fail('The staged engine copy implementation is missing')
+        self.temporary=tempfile.TemporaryDirectory();self.addCleanup(self.temporary.cleanup)
+        self.root=Path(self.temporary.name);self.source=self.root/'input';self.source.mkdir()
+        self.destination=self.root/'prepared'
+        self.service='com.apple.WebKit.WebContent.xpc'
+        self.alias=self.source/'WebKit.framework/Versions/A/XPCServices'/self.service
+        self.alias.parent.mkdir(parents=True)
+        self.alias.symlink_to('../../../../'+self.service)
+        code=self.source/self.service/'Contents/MacOS/owned';code.parent.mkdir(parents=True);code.write_bytes(b'owned service bytes');code.chmod(0o755)
+        resource=self.source/'WebKit.framework/Versions/A/Resources/owned.txt';resource.parent.mkdir();resource.write_bytes(b'owned resource')
+        (self.source/'libwebrtc.dylib').write_bytes(b'owned library bytes')
+        (self.source/'ANGLEMetalLib.metallib').write_bytes(b'owned metal bytes')
+
+    def test_normalizes_service_aliases_without_changing_input_or_resource_bytes(self):
+        receipt=self.package.prepare_runtime_layout(self.source,self.destination)
+        service=self.destination/'Contents/Frameworks/WebKit.framework/Versions/A/XPCServices'/self.service
+        self.assertTrue(service.is_dir() and not service.is_symlink())
+        self.assertEqual((service/'Contents/MacOS/owned').read_bytes(),b'owned service bytes')
+        self.assertTrue(self.alias.is_symlink())
+        self.assertEqual((self.destination/'Contents/Frameworks/ANGLEMetalLib.metallib').read_bytes(),b'owned metal bytes')
+        self.assertFalse(receipt['nativeAppQualified'])
+        self.package.verify_layout_copy(self.destination,receipt)
+
+    def test_preserves_existing_destination(self):
+        self.destination.mkdir();(self.destination/'user.txt').write_text('keep')
+        with self.assertRaisesRegex(ValueError,'destination'):
+            self.package.prepare_runtime_layout(self.source,self.destination)
+        self.assertEqual((self.destination/'user.txt').read_text(),'keep')
+
+    def test_bad_service_lookup_alias_never_publishes_output(self):
+        self.alias.unlink();self.alias.symlink_to('../../../../wrong.xpc')
+        with self.assertRaisesRegex(ValueError,'alias'):
+            self.package.prepare_runtime_layout(self.source,self.destination)
+        self.assertFalse(self.destination.exists())
+
+    def test_escaping_input_link_never_publishes_output(self):
+        (self.source/'WebKit.framework/unsafe').symlink_to('../../outside')
+        with self.assertRaisesRegex(ValueError,'link'):
+            self.package.prepare_runtime_layout(self.source,self.destination)
+        self.assertFalse(self.destination.exists())
+
+    def test_verifier_rejects_changed_resource(self):
+        receipt=self.package.prepare_runtime_layout(self.source,self.destination)
+        (self.destination/'Contents/Frameworks/WebKit.framework/Versions/A/Resources/owned.txt').write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError,'content'):
+            self.package.verify_layout_copy(self.destination,receipt)
+
+    def test_verifier_rejects_missing_resource(self):
+        receipt=self.package.prepare_runtime_layout(self.source,self.destination)
+        (self.destination/'Contents/Frameworks/libwebrtc.dylib').unlink()
+        with self.assertRaisesRegex(ValueError,'missing|type'):
+            self.package.verify_layout_copy(self.destination,receipt)
+
+    def test_verifier_rejects_extra_output_code(self):
+        receipt=self.package.prepare_runtime_layout(self.source,self.destination)
+        (self.destination/'Contents/Frameworks/extra.dylib').write_bytes(b'unreviewed')
+        with self.assertRaisesRegex(ValueError,'Unexpected'):
+            self.package.verify_layout_copy(self.destination,receipt)
+
+    def test_layout_verifies_after_relocation(self):
+        receipt=self.package.prepare_runtime_layout(self.source,self.destination)
+        moved=self.root/'moved';self.destination.rename(moved)
+        self.package.verify_layout_copy(moved,receipt)
+
+
 if __name__ == '__main__':
     unittest.main()
