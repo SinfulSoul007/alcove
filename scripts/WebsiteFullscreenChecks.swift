@@ -69,7 +69,9 @@ import Darwin
             windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0) else {
             throw Failure.fixture("owned fullscreen mouse events")
         }
-        window.sendEvent(down); window.sendEvent(up)
+        // Use the application event queue so AppKit establishes its current
+        // event before dispatching to this owned window and WebKit.
+        NSApp.postEvent(down, atStart: false); NSApp.postEvent(up, atStart: false)
         do {
             try await wait("owned trusted fullscreen click") {
                 (try? await web.evaluateJavaScript("window.ownedClickTrace?.trusted===true&&window.ownedClickTrace?.active===true")) as? Bool == true
