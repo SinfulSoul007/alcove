@@ -77,6 +77,18 @@ import Darwin
         _ = try await session.reader.evaluateJavaScript("const attempt=document.createElement('script');attempt.textContent='window.untrustedRan=1';document.body.appendChild(attempt);true")
         check((try await session.reader.evaluateJavaScript("typeof window.untrustedRan==='undefined'") as? Bool) == true, "CSP prevents even a subsequently inserted article script from executing")
         _ = try await session.reader.evaluateJavaScript("window.scrollTo(0,400);true")
+        let hasPassage = try await session.reader.evaluateJavaScript("""
+            (() => {
+                const box = document.querySelector('main').getBoundingClientRect();
+                const range = document.caretRangeFromPoint(box.left + 16, 32);
+                if (!range || range.startContainer.nodeType !== 3 || !range.startContainer.length) return false;
+                const node = range.startContainer, offset = Math.min(range.startOffset, node.length - 1);
+                range.setStart(node, offset); range.setEnd(node, offset + 1);
+                window.alcoveOwnedReaderPassage = { range, node, offset, text: node.data.slice(offset, offset + 48), top: range.getBoundingClientRect().top };
+                return offset > 0;
+            })()
+            """) as? Bool
+        check(hasPassage == true, "Reader appearance fixture identifies text inside a visible paragraph")
         session.theme = .dark; session.sansSerif = true; session.textSize = 26; session.lineWidth = 560
         for _ in 0..<200 {
             if (try? await session.reader.evaluateJavaScript("document.documentElement.style.getPropertyValue('--size')==='26px'")) as? Bool == true { break }
@@ -84,7 +96,15 @@ import Darwin
         }
         check(window.effectiveAppearance.name == originalAppearance, "Reader theme leaves the original window appearance unchanged")
         print("READER_STYLE_STATE", session.state, "current", session.isCurrent, "sameDocument", store.documentIdentity(for: source) === document, "sourceMessage", store.message ?? "none")
-        check((try await session.reader.evaluateJavaScript("getComputedStyle(document.documentElement).getPropertyValue('--paper').trim()==='#202225'&&document.documentElement.style.getPropertyValue('--font').includes('-apple-system')&&document.documentElement.style.getPropertyValue('--width')==='560px'&&scrollY>0") as? Bool) == true, "Theme, font, text size and width apply without resetting Reader scroll")
+        check((try await session.reader.evaluateJavaScript("getComputedStyle(document.documentElement).getPropertyValue('--paper').trim()==='#202225'&&document.documentElement.style.getPropertyValue('--font').includes('-apple-system')&&document.documentElement.style.getPropertyValue('--width')==='560px'") as? Bool) == true, "Reader controls apply the requested theme, font, text size and width")
+        let samePassage = try await session.reader.evaluateJavaScript("""
+            (() => {
+                const a = window.alcoveOwnedReaderPassage;
+                return a && a.node.isConnected && a.range.startContainer === a.node && a.range.startOffset === a.offset
+                    && a.node.data.slice(a.offset, a.offset + 48) === a.text && Math.abs(a.range.getBoundingClientRect().top - a.top) <= 2;
+            })()
+            """) as? Bool
+        check(samePassage == true, "Appearance reflow preserves the actual visible text passage and its position")
         let afterControls: String?
         do { afterControls = try await source.evaluateJavaScript("document.documentElement.outerHTML") as? String }
         catch {
@@ -115,6 +135,36 @@ import Darwin
         session.dismiss(restoringFocus: true)
         check(store.readerSession(for: source) == nil && source.superview === host && source.url == originalURL && store.documentIdentity(for: source) === document, "Exit restores the same original view, address and document identity")
         check((try await source.evaluateJavaScript("document.getElementById('draft').value==='typed draft'&&scrollY===320") as? Bool) == true, "Exit preserves the original unsaved form and scroll")
+
+        let failed = try await reader(store, source)
+        failed.webView(failed.reader, didFail: nil, withError: NSError(domain: "OwnedReaderFailure", code: 1))
+        let failedState = failed.state, failedResponder = window.firstResponder
+        failed.webView(failed.reader, didFinish: nil)
+        check(failed.state == failedState && { if case .failed = failed.state { return true }; return false }(), "Late native completion cannot replace Reader failure")
+        check(window.firstResponder === failedResponder && store.documentIdentity(for: source) === document, "Late native completion leaves focus and the original document alone")
+        failed.dismiss(restoringFocus: true)
+
+        // This executable owns its adjacent manual-build resources. Temporarily
+        // remove only that copied style asset, never source or installed app data.
+        let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.resolvingSymlinksInPath()
+        let ownedAssets = executable.deletingLastPathComponent().appendingPathComponent("ReaderAssets")
+        guard executable.lastPathComponent == "reader-mode-checks",
+              Bundle.main.resourceURL?.standardizedFileURL.resolvingSymlinksInPath() == executable.deletingLastPathComponent() else { throw Failure.fixture }
+        let styleFile = ownedAssets.appendingPathComponent("Style.js")
+        let savedStyle = ownedAssets.appendingPathComponent("Style-owned-backup-" + UUID().uuidString)
+        try FileManager.default.moveItem(at: styleFile, to: savedStyle)
+        var styleRestored = false
+        defer { if !styleRestored { try? FileManager.default.moveItem(at: savedStyle, to: styleFile) } }
+        store.toggleReader(source)
+        guard let missingStyle = store.readerSession(for: source) else { throw Failure.fixture }
+        try await wait("missing style feedback") { missingStyle.state != .loading }
+        check(missingStyle.state == .failed(ReaderFailure.resources.message), "A missing owned style asset keeps Reader unavailable")
+        let resourceResponder = window.firstResponder as? NSView
+        check(resourceResponder.map { $0 === missingStyle.reader || $0.isDescendant(of: missingStyle.reader) } != true, "Synchronous style failure cannot hand focus to the unavailable article")
+        missingStyle.webView(missingStyle.reader, didFinish: nil)
+        check(missingStyle.state == .failed(ReaderFailure.resources.message), "Late completion cannot replace the missing-resource explanation")
+        try FileManager.default.moveItem(at: savedStyle, to: styleFile); styleRestored = true
+        missingStyle.dismiss(restoringFocus: true)
 
         let nextSession = try await reader(store, source)
         _ = try await nextSession.reader.evaluateJavaScript("document.querySelector('main a').click();true")

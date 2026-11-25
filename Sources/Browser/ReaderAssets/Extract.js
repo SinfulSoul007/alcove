@@ -2,35 +2,37 @@
 // world. Only the clone is mutated; no raw extracted HTML reaches the renderer.
 if (!['text/html', 'application/xhtml+xml'].includes(document.contentType)) return { error: 'unsupported' };
 if (!document.body || !document.documentElement) return { error: 'unavailable' };
-const elements = document.getElementsByTagName('*');
-if (elements.length > 50000) return { error: 'tooLarge' };
-// Bound everything a clone copies, including large inline scripts/styles, data
-// attributes and comments outside the article. Avoid joining the whole DOM text.
-let inputSize = location.href.length, attributeCount = 0, textCount = 0;
-if (document.doctype) inputSize += document.doctype.name.length + document.doctype.publicId.length + document.doctype.systemId.length;
-if (inputSize > 2000000) return { error: 'tooLarge' };
-for (const element of elements) {
-    for (const attribute of element.attributes) {
-        inputSize += attribute.name.length + attribute.value.length;
-        if (++attributeCount > 200000 || inputSize > 2000000) return { error: 'tooLarge' };
+// cloneNode(true) also copies HTMLTemplateElement.content, which normal DOM
+// collections/tree walkers omit. Walk both trees with a bounded ancestor stack.
+let inputSize = location.href.length, attributeCount = 0, textCount = 0, elementCount = 0;
+const stack = [{ node: document, depth: 0, entered: false, nextChild: document.firstChild, fragmentVisited: false }];
+while (stack.length) {
+    const frame = stack[stack.length - 1], node = frame.node;
+    if (!frame.entered) {
+        frame.entered = true;
+        if (frame.depth > 256) return { error: 'tooLarge' };
+        if (node.nodeType === 1) {
+            if (++elementCount > 50000) return { error: 'tooLarge' };
+            for (const attribute of node.attributes) {
+                inputSize += attribute.name.length + attribute.value.length;
+                if (++attributeCount > 200000 || inputSize > 2000000) return { error: 'tooLarge' };
+            }
+        } else if (node.nodeType === 3 || node.nodeType === 4 || node.nodeType === 7 || node.nodeType === 8) {
+            inputSize += node.nodeValue.length;
+            if (++textCount > 100000) return { error: 'tooLarge' };
+        } else if (node.nodeType === 10) {
+            inputSize += node.name.length + node.publicId.length + node.systemId.length;
+        }
+        if (inputSize > 2000000) return { error: 'tooLarge' };
     }
-}
-const walker = document.createTreeWalker(document, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT | NodeFilter.SHOW_PROCESSING_INSTRUCTION);
-while (walker.nextNode()) {
-    inputSize += walker.currentNode.nodeValue.length;
-    if (++textCount > 100000 || inputSize > 2000000) return { error: 'tooLarge' };
-}
-// Iterative depth check also bounds custom/script-built DOMs before native clone
-// or Readability's transformations can encounter pathological nesting.
-let cursor = document, depth = 0;
-while (cursor) {
-    if (cursor.firstChild) {
-        cursor = cursor.firstChild;
-        if (++depth > 256) return { error: 'tooLarge' };
-    } else {
-        while (cursor && !cursor.nextSibling) { cursor = cursor.parentNode; --depth; }
-        if (cursor) cursor = cursor.nextSibling;
+    let child = frame.nextChild;
+    if (child) frame.nextChild = child.nextSibling;
+    else if (!frame.fragmentVisited && node.nodeType === 1 && node.localName === 'template' && node.namespaceURI === 'http://www.w3.org/1999/xhtml') {
+        frame.fragmentVisited = true;
+        child = node.content;
     }
+    if (child) stack.push({ node: child, depth: frame.depth + 1, entered: false, nextChild: child.firstChild, fragmentVisited: false });
+    else stack.pop();
 }
 const copy = document.cloneNode(true);
 const article = new Readability(copy, { maxElemsToParse: 50000, charThreshold: 400, disableJSONLD: true, serializer: node => node }).parse();
@@ -41,7 +43,7 @@ const removed = new Set(['script','style','iframe','frame','object','embed','vid
 let textBudget = 0, nodes = 0;
 function serialize(node, depth = 0) {
     if (++nodes > 50000 || depth > 128) throw new Error('Reader output too complex');
-    if (node.nodeType === 3) {
+    if (node.nodeType === 3 || node.nodeType === 4) {
         textBudget += node.nodeValue.length;
         if (textBudget > 500000) throw new Error('Reader output too large');
         return escapeText(node.nodeValue);
@@ -54,7 +56,9 @@ function serialize(node, depth = 0) {
     if (!allowed.has(tag)) return children;
     if (tag === 'a') {
         try {
-            const url = new URL(node.getAttribute('href') || '', location.href);
+            const href = node.getAttribute('href');
+            if (href === null) return children;
+            const url = new URL(href, location.href);
             if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return children;
             return '<a href="' + escapeText(url.href) + '">' + children + '</a>';
         } catch (_) { return children; }

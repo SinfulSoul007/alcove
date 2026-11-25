@@ -63,6 +63,19 @@ import Darwin
         _ = try await web.evaluateJavaScript("document.body.textContent='x'.repeat(2000001);true")
         let large = try await web.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .world(name: "AlcoveReaderExtractionChecks")) as? [String: Any]
         check(large?["error"] as? String == "tooLarge", "Oversized documents are rejected before cloning")
+        let xhtml = "<html xmlns='http://www.w3.org/1999/xhtml'><head><title>Owned XHTML article</title></head><body><article><p><![CDATA[Story <river> & valley. \(prose)]]></p><p><![CDATA[\(prose)]]></p></article></body></html>"
+        web.load(Data(xhtml.utf8), mimeType: "application/xhtml+xml", characterEncodingName: "utf-8", baseURL: URL(string: "https://reader.alcove.example/xhtml")!)
+        var xmlReady = false
+        for _ in 0..<500 {
+            if !web.isLoading, (try? await web.evaluateJavaScript("document.contentType==='application/xhtml+xml' && document.querySelector('article p')!==null")) as? Bool == true { xmlReady = true; break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard xmlReady else { throw NSError(domain: "Owned XHTML fixture timeout", code: 1) }
+        let xmlArticle = try await web.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .world(name: "AlcoveReaderExtractionChecks")) as? [String: Any]
+        check((xmlArticle?["html"] as? String)?.contains("&lt;river&gt; &amp; valley.") == true, "Native XHTML CDATA remains escaped readable article text")
+        _ = try await web.evaluateJavaScript("document.querySelector('article p').replaceChildren(document.createCDATASection('x'.repeat(2000001)));true")
+        let xmlLarge = try await web.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .world(name: "AlcoveReaderExtractionChecks")) as? [String: Any]
+        check(xmlLarge?["error"] as? String == "tooLarge", "Native oversized XHTML CDATA is rejected before cloning")
         print("READER_EXTRACTION_CHECKS", checks, "FAILURES", failures)
         return failures == 0 ? 0 : 1
     }

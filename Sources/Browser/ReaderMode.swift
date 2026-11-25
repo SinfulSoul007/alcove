@@ -3,8 +3,9 @@ import WebKit
 import SwiftUI
 
 @MainActor final class ReaderSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
-    enum State: Equatable { case loading, ready, failed(String), closed }
-    @Published private(set) var state: State = .loading
+    typealias State = ReaderLoadState.Phase
+    @Published private var loadState = ReaderLoadState()
+    var state: State { loadState.phase }
     @Published private(set) var searchVisible = false
     @Published private(set) var searchFocusRequest = 0
     @Published private(set) var searchResult: Bool?
@@ -23,7 +24,6 @@ import SwiftUI
     private var timeout: Task<Void, Never>?
     private var closing: NSObjectProtocol?
     private var sourceURL: NSKeyValueObservation?
-    private var loadingDocument = false
     private(set) var title = "Reader"
 
     init(store: BrowserStore, source: WKWebView, window: NSWindow, profile: UUID, url: URL) {
@@ -79,7 +79,7 @@ import SwiftUI
                     let byline = String((article["byline"] as? String ?? "").prefix(500))
                     let site = String((article["site"] as? String ?? self.url.host ?? "").prefix(300))
                     let direction = article["direction"] as? String == "rtl" ? "rtl" : "ltr"
-                    self.loadingDocument = true
+                    guard self.loadState.beginDocument() else { return }
                     self.reader.loadHTMLString(ReaderDocument.html(title: self.title, byline: byline, site: site, direction: direction, content: html), baseURL: nil)
                 }
             }
@@ -88,12 +88,13 @@ import SwiftUI
     private func fail(_ failure: ReaderFailure) {
         timeout?.cancel(); timeout = nil
         guard isCurrent else { dismiss(); return }
-        state = .failed(failure.message)
+        guard loadState.fail(failure.message) else { return }
+        reader.stopLoading()
     }
     func dismiss(restoringFocus: Bool = false) {
         guard state != .closed else { return }
         let source = source, window = window
-        dismissFind(); state = .closed; timeout?.cancel(); timeout = nil; sourceURL = nil
+        dismissFind(); loadState.close(); timeout?.cancel(); timeout = nil; sourceURL = nil
         if let closing { NotificationCenter.default.removeObserver(closing); self.closing = nil }
         if let source, store?.readerSessions[ObjectIdentifier(source)] === self {
             store?.readerSessions.removeValue(forKey: ObjectIdentifier(source))
@@ -119,19 +120,16 @@ import SwiftUI
     func updateStyle() {
         guard isCurrent, state == .ready else { return }
         let palette = theme.colors
-        let script = """
-            const root = document.documentElement.style;
-            root.setProperty('--paper', paper); root.setProperty('--ink', ink); root.setProperty('--muted', muted); root.setProperty('--link', link);
-            root.setProperty('--size', size + 'px'); root.setProperty('--width', width + 'px'); root.setProperty('--font', font);
-            return true;
-            """
+        let script: String
+        do { script = try ReaderResources.styleScript() } catch { fail(.resources); return }
         reader.callAsyncJavaScript(script, arguments: ["paper": palette.0, "ink": palette.1, "muted": palette.2, "link": palette.3,
             "size": min(30, max(14, textSize)), "width": min(960, max(480, lineWidth)),
             "font": sansSerif ? "-apple-system, BlinkMacSystemFont, sans-serif" : "Georgia, Charter, serif"], in: nil, in: .defaultClient) { _ in }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        guard isCurrent, webView === reader, loadingDocument else { return }
-        timeout?.cancel(); timeout = nil; loadingDocument = false; state = .ready; updateStyle()
+        guard isCurrent, state == .loading, webView === reader, loadState.finishDocument() else { return }
+        timeout?.cancel(); timeout = nil; updateStyle()
+        guard isCurrent, state == .ready else { return }
         if let source, let window, window.isKeyWindow, window.attachedSheet == nil,
            store?.isVisibleWebsite(source) == true, reader.window === window {
             window.makeFirstResponder(reader)
@@ -163,7 +161,7 @@ import SwiftUI
         }
         // Only our one local HTML document may load. No downloads, frames, external
         // redirects or script-origin navigations are allowed inside Reader.
-        decisionHandler(loadingDocument && action.request.url?.absoluteString == "about:blank" ? .allow : .cancel)
+        decisionHandler(loadState.isLoadingDocument && action.request.url?.absoluteString == "about:blank" ? .allow : .cancel)
     }
 }
 

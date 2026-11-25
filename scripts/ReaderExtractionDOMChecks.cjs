@@ -11,7 +11,8 @@ const article = `<article><h1>The River Report</h1><p>${prose}</p><h2>Along the 
 let checks = 0, failures = 0;
 function check(value, label) { ++checks; if (!value) ++failures; console.log(`${value ? 'PASS' : 'FAIL'}: ${label}`); }
 function extract(body, head = '<title>The River Report</title>', contentType = 'text/html', prefix = '') {
-    const dom = new JSDOM(`${prefix}<html><head>${head}</head><body>${body}</body></html>`, { url: 'https://reader.alcove.example/story', contentType, runScripts: 'outside-only' });
+    const namespace = contentType === 'application/xhtml+xml' ? ' xmlns="http://www.w3.org/1999/xhtml"' : '';
+    const dom = new JSDOM(`${prefix}<html${namespace}><head>${head}</head><body>${body}</body></html>`, { url: 'https://reader.alcove.example/story', contentType, runScripts: 'outside-only' });
     try {
         const draft = dom.window.document.querySelector('input');
         if (draft) draft.value = 'typed draft';
@@ -41,6 +42,19 @@ check(extract(article.replace('<article>', `<article data-payload="${'x'.repeat(
 check(extract(article, `<!--${'x'.repeat(2000001)}-->`).output.error === 'tooLarge', 'Oversized comments are rejected before cloning');
 check(extract(article, '', 'text/html', `<!--${'x'.repeat(2000001)}-->`).output.error === 'tooLarge', 'Document-level comments are budgeted before cloning');
 check(extract('<div>'.repeat(300) + article + '</div>'.repeat(300)).output.error === 'tooLarge', 'Excessive source nesting is rejected before cloning');
+const ordinaryTemplates = extract(article + '<template><section>Small template<template><b>Nested template</b></template></section></template>');
+check(ordinaryTemplates.output.html?.includes('Along the valley') && ordinaryTemplates.unchanged, 'Ordinary nested templates do not prevent reading or mutate the source');
+check(extract(article + `<template>${'x'.repeat(2000001)}</template>`).output.error === 'tooLarge', 'Template fragment text is budgeted before cloning');
+check(extract(article + `<template><template><div data-payload="${'x'.repeat(2000001)}"></div></template></template>`).output.error === 'tooLarge', 'Nested template attributes are budgeted before cloning');
+check(extract(article + '<template>' + '<div></div>'.repeat(25000) + '</template><template>' + '<div></div>'.repeat(25000) + '</template>').output.error === 'tooLarge', 'Element budgets accumulate across separate template fragments');
+check(extract(article + '<template>'.repeat(140) + '<p>nested</p>' + '</template>'.repeat(140)).output.error === 'tooLarge', 'Nested template fragment depth is bounded before cloning');
+const anchorOutput = extract(article.replace('</article>', '<p><a>Anchor label</a><a href="">Explicit empty link</a><a href="#section">Explicit fragment link</a></p></article>'));
+const anchors = JSDOM.fragment(anchorOutput.output.html || '');
+check(anchors.textContent.includes('Anchor label') && ![...anchors.querySelectorAll('a')].some(a => a.textContent === 'Anchor label'), 'Href-less anchors retain their text without becoming navigation');
+check([...anchors.querySelectorAll('a')].some(a => a.textContent === 'Explicit empty link' && a.href === 'https://reader.alcove.example/story') && [...anchors.querySelectorAll('a')].some(a => a.textContent === 'Explicit fragment link' && a.href === 'https://reader.alcove.example/story#section'), 'Explicit empty and fragment href semantics remain intact');
+const xhtml = extract(`<article><h1>River report</h1><p><![CDATA[Story <river> & valley. ${prose}]]></p><p><![CDATA[${prose}]]></p></article>`, '<title>River report</title>', 'application/xhtml+xml');
+check(xhtml.output.html?.includes('A patient reader follows the river') && xhtml.output.html.includes('&lt;river&gt; &amp; valley.') && xhtml.unchanged, 'Ordinary XHTML CDATA article text is preserved and escaped');
+check(extract(`<article><p><![CDATA[${'x'.repeat(2000001)}]]></p></article>`, '<title>Large XHTML</title>', 'application/xhtml+xml').output.error === 'tooLarge', 'Oversized XHTML CDATA is rejected before cloning');
 check(extract(article, '', 'application/xml').output.error === 'unsupported', 'Non-HTML documents are unsupported');
 console.log('READER_DOM_CHECKS', checks, 'FAILURES', failures);
 process.exitCode = failures ? 1 : 0;

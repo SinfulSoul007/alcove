@@ -2,14 +2,23 @@ import Foundation
 
 /// Both packaged apps and standalone native fixtures carry the same pinned files.
 enum ReaderResources {
-    static func extractionScript() throws -> String {
+    private static func root() throws -> URL {
         #if SWIFT_PACKAGE
         let root = Bundle.module.resourceURL?.appendingPathComponent("ReaderAssets")
         #else
         let root = Bundle.main.resourceURL?.appendingPathComponent("ReaderAssets")
         #endif
         guard let root else { throw ReaderFailure.resources }
-        return try extractionScript(at: root)
+        return root
+    }
+    static func extractionScript() throws -> String { try extractionScript(at: root()) }
+    static func styleScript() throws -> String { try styleScript(at: root()) }
+    static func styleScript(at root: URL) throws -> String {
+        do {
+            let script = try String(contentsOf: root.appendingPathComponent("Style.js"), encoding: .utf8)
+            guard !script.isEmpty, script.utf8.count < 20000 else { throw ReaderFailure.resources }
+            return script
+        } catch { throw ReaderFailure.resources }
     }
     static func extractionScript(at root: URL) throws -> String {
         do {

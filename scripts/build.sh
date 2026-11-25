@@ -29,6 +29,13 @@ SIDEBAR_SOURCES=()
 for source in Sources/Browser/SidebarInteraction.swift Sources/Browser/SidebarRevealController.swift Sources/Browser/SidebarTracking.swift; do
     [[ ! -f "$source" ]] || SIDEBAR_SOURCES+=("$source")
 done
+run_reader_load_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors Sources/Browser/ReaderLoadState.swift scripts/ReaderLoadChecks.swift -o "$MANUAL/reader-load-checks"
+    "$MANUAL/reader-load-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors Sources/Browser/ReaderResources.swift scripts/ReaderResourceChecks.swift -o "$MANUAL/reader-resource-checks"
+    "$MANUAL/reader-resource-checks"
+}
+if [[ "${1:-}" == "reader-load-test" ]]; then run_reader_load_checks; exit; fi
 run_reader_checks() {
     local mode="$1"
     if [[ "$mode" == "extraction" ]]; then
@@ -435,6 +442,7 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    run_reader_load_checks
     run_reader_checks extraction
     run_reader_checks mode
     run_website_threat_core_checks
