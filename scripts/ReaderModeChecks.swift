@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 import WebKit
 import CryptoKit
 import BrowserCore
@@ -49,8 +50,9 @@ import Darwin
         let host = EdgeToEdgeWebHost(frame: NSRect(x: 0, y: 0, width: 1000, height: 700))
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = host
-        WebPane(webView: source, store: store).mount(in: host); window.makeKeyAndOrderFront(nil)
         defer { window.contentView = nil; window.close() }
+        WebPane(webView: source, store: store).mount(in: host); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        try await wait("owned Reader window active") { NSApp.isActive && window.isKeyWindow }
         let app = AppDelegate(); app.windows[window] = store
         defer { app.windows.removeAll() }
         try await ready(source)
@@ -63,6 +65,7 @@ import Darwin
         let originalAppearance = window.effectiveAppearance.name
         let session = try await reader(store, source)
         let firstResponder = window.firstResponder as? NSView
+        print("READER_FOCUS_STATE", "active", NSApp.isActive, "key", window.isKeyWindow, "mounted", session.reader.window === window, "accepts", session.reader.acceptsFirstResponder, "responder", window.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
         check(window.isKeyWindow && firstResponder.map { $0 === session.reader || $0.isDescendant(of: session.reader) } == true, "The visible Reader receives keyboard focus instead of scrolling the hidden source")
         check(session.source === source && session.profileID == profile && session.window === window, "Reader captures the original webpage profile and native window")
         check(source.superview === host && session.reader !== source && session.overlay?.superview === host, "Reader overlays the mounted original page without replacing it")
@@ -91,9 +94,17 @@ import Darwin
         let draftAfterControls = try await source.evaluateJavaScript("document.getElementById('draft').value==='typed draft'&&window.sourceSentinel===42&&scrollY===320") as? Bool
         print("READER_APPEARANCE_DIAGNOSTIC", "state", session.state, "current", session.isCurrent, "sameSourceDocument", store.documentIdentity(for: source) === document, "sourceMessage", store.message ?? "none")
         check(afterControls == before && draftAfterControls == true, "Reader controls preserve the exact source DOM, draft, globals and scroll")
-        session.requestFind(); session.searchText = "river"; session.find()
+        let queryObservation = session.$searchText.sink { print("READER_FIND_QUERY", $0) }
+        let resultObservation = session.$searchResult.sink { print("READER_FIND_RESULT", $0.map(String.init) ?? "pending") }
+        defer { queryObservation.cancel(); resultObservation.cancel() }
+        print("READER_FIND_STATE", "active", NSApp.isActive, "key", window.isKeyWindow, "current", session.isCurrent, "mounted", session.reader.window === window)
+        session.requestFind()
+        try await wait("Reader find field focus") { session.searchVisible && window.firstResponder is NSTextView }
+        session.searchText = "river"; session.find()
         try await wait("Reader find") { session.searchResult != nil }
         check(session.searchResult == true, "Reader find searches the visible article")
+        session.searchText = "river"
+        check(session.searchResult == true, "An unchanged Reader query preserves the current match result")
         session.searchText = "missing-owned-reader-phrase"; session.find()
         try await wait("Reader no matches") { session.searchResult != nil }
         check(session.searchResult == false, "Reader find reports missing text without searching a hidden original page")
