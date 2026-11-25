@@ -7,6 +7,10 @@ on:
         description: Run Reader and sidebar regression groups
         type: boolean
         default: true
+      visuals:
+        description: Capture owned sidebar layouts for visual review
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -52,11 +56,21 @@ jobs:
           set -o pipefail
           mkdir -p .build/fullscreen
           caffeinate -is scripts/build.sh chrome-test 2>&1 | tee .build/fullscreen/chrome.log
+      - name: Verify and capture sidebar layouts
+        if: ${{ always() && inputs.visuals }}
+        env:
+          ALCOVE_SIDEBAR_SCREENSHOT_DIR: ${{ github.workspace }}/.build/fullscreen/sidebar-snapshots
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen/sidebar-snapshots
+          caffeinate -is scripts/build.sh sidebar-organization-layout-test 2>&1 | tee .build/fullscreen/sidebar-layout.log
       - name: Preserve the bounded native result
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: website-fullscreen-${{ github.run_id }}
-          path: .build/fullscreen/*.log
+          path: |
+            .build/fullscreen/*.log
+            .build/fullscreen/sidebar-snapshots/*.png
           if-no-files-found: warn
           retention-days: 14

@@ -149,6 +149,44 @@ extension WebsiteFullscreenChecks {
                 check(delivered && app.windows.count == 1 && store.documentIdentity(for: web) === document,
                       "\(kind): browser chrome opens after restoring its existing window and live page")
                 store.appearanceVisible = false; store.settingsVisible = false; store.libraryVisible = false
+            case "coalesced", "coalesced-close":
+                guard let coordinator = (web as? SplitDropWebView)?.websiteFullscreen else { throw Failure.fixture("exit coordinator") }
+                var results: [Bool] = []
+                coordinator.exit { restored in
+                    results.append(restored)
+                    if restored && kind == "coalesced-close" { store.close(id) }
+                }
+                coordinator.exit { results.append($0) }
+                let finished = await effect { results.count == 2 }
+                check(finished && !presentation.isVisible && web.fullscreenState == .notInFullscreen,
+                      "\(kind): simultaneous exit requests complete at the actual native restoration boundary")
+                if kind == "coalesced-close" {
+                    check(results == [true, false] && store.views[id] == nil,
+                          "A captured tab closed by the first exit callback revokes the second callback")
+                } else {
+                    check(results == [true, true] && web.window === window,
+                          "Coalesced callbacks each receive one valid original presentation")
+                    if finished {
+                        try await enter(web, target: "element")
+                        check(results.count == 2 && coordinator.isBorrowed,
+                              "A new genuine fullscreen presentation does not replay completed exit callbacks")
+                        try await leave(web)
+                        check(results.count == 2, "Completed callbacks remain settled after a later native exit")
+                    }
+                }
+            case "focus-change":
+                let other = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 420, height: 280),
+                                     styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                other.isReleasedWhenClosed = false; other.title = "Owned alternate focus"
+                other.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 280))
+                defer { other.contentView = nil; other.close() }
+                app.find()
+                other.makeKeyAndOrderFront(nil)
+                let exited = await effect { (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false }
+                check(exited && !presentation.isVisible && web.window === window,
+                      "A focus change during command delivery still completes native fullscreen restoration")
+                check(exited && !store.findVisible && other.isKeyWindow,
+                      "A deferred browser command neither opens UI nor steals focus after another window becomes key")
             case "close":
                 app.closeTab()
                 let closed = await effect { store.views[targetID] == nil && web.fullscreenState == .notInFullscreen && !presentation.isVisible }
@@ -187,7 +225,7 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        for kind in ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library"] {
+        for kind in ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change"] {
             do { try await exerciseCommand(base: base, kind: kind, owned: owned, controllers: controllers) }
             catch { failures += 1; print("FULLSCREEN_COMMAND_CASE_ERROR", kind, error) }
         }
