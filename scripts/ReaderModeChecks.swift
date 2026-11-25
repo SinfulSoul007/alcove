@@ -219,7 +219,12 @@ import Darwin
         let handoffReader = try await reader(store, source)
         let other = try owner.acquirePrimaryStore(copying: store)
         defer { owner.release(other.lease) }
-        check(store.moveView(id, profile: profile, to: other.store), "A same-profile live view can hand off to another owned window")
+        // Opening the second primary claims its selection and transfers the live
+        // view already. Assert that real handoff instead of trying to move it twice.
+        check(store.views[id] == nil && store.profileID(for: source) == nil
+              && other.store.views[id] === source && other.store.profileID(for: source) == profile
+              && other.store.documentIdentity(for: source) === handoffReader.document,
+              "Opening another owned window transfers the original view, profile and document once")
         check(handoffReader.state == .closed && store.readerSession(for: source) == nil && other.store.readerSession(for: source) == nil, "Handoff discards Reader without copying article state across stores")
         let otherHost = EdgeToEdgeWebHost(frame: host.frame)
         let otherWindow = NSWindow(contentRect: host.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
