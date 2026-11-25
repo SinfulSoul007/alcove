@@ -3,6 +3,15 @@ import WebKit
 import BrowserCore
 
 class EdgeToEdgeWebHost: NSView {
+    private let fullscreenRestorations = NSHashTable<WebsiteFullscreen>.weakObjects()
+    func trackFullscreenRestoration(_ presentation: WebsiteFullscreen) { fullscreenRestorations.add(presentation) }
+    func untrackFullscreenRestoration(_ presentation: WebsiteFullscreen) { fullscreenRestorations.remove(presentation) }
+    override func willRemoveSubview(_ subview: NSView) {
+        super.willRemoveSubview(subview)
+        // WebKit removes its temporary placeholder after returning the real view.
+        // Let the owner inspect completion after this native operation finishes.
+        for presentation in fullscreenRestorations.allObjects { presentation.hostSubviewWillChange() }
+    }
     private var recovery:ExtensionRecoveryBanner?
     private var protection:WebsiteProtectionOverlay?
     private var reader: ReaderOverlay?

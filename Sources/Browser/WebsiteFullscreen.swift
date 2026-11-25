@@ -15,6 +15,8 @@ import WebKit
     // may replace it while WebKit still needs its placeholder to return the view.
     private var restorationHost: EdgeToEdgeWebHost?
     private weak var originWindow: NSWindow?
+    private weak var presentationWindow: NSWindow?
+    private var capturedPresentationWindow = false
     private(set) var isBorrowed = false
     private var reconciliationScheduled = false
 
@@ -56,7 +58,18 @@ import WebKit
     }
 
     func viewDidMove() {
+        capturePresentationWindow()
         scheduleReconciliation()
+    }
+
+    func hostSubviewWillChange() { scheduleReconciliation() }
+
+    private func capturePresentationWindow() {
+        guard isBorrowed, !capturedPresentationWindow, let web,
+              web.fullscreenState != .notInFullscreen,
+              let window = web.window, window !== originWindow else { return }
+        presentationWindow = window
+        capturedPresentationWindow = true
     }
 
     private func stateChanged() {
@@ -66,7 +79,9 @@ import WebKit
                 restorationHost = (web.superview as? EdgeToEdgeWebHost) ?? intendedHost
                 originWindow = restorationHost?.window ?? web.window
                 isBorrowed = true
+                restorationHost?.trackFullscreenRestoration(self)
             }
+            capturePresentationWindow()
         } else {
             scheduleReconciliation()
         }
@@ -86,12 +101,16 @@ import WebKit
 
     private func reconcileRestoration() {
         guard isBorrowed, let web, web.fullscreenState == .notInFullscreen,
-              let restorationHost, web.superview === restorationHost else { return }
+              let restorationHost, web.superview === restorationHost,
+              !capturedPresentationWindow || presentationWindow?.isVisible != true else { return }
         // State and view-move notifications can arrive in either order. Only
         // reconcile once WebKit has actually returned its borrowed view.
         isBorrowed = false
+        restorationHost.untrackFullscreenRestoration(self)
         self.restorationHost = nil
         originWindow = nil
+        presentationWindow = nil
+        capturedPresentationWindow = false
         guard isCurrent, let store, let intendedHost else { return }
         WebPane(webView: web, store: store).mount(in: intendedHost)
         intendedHost.needsLayout = true
