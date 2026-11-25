@@ -64,7 +64,7 @@ import BrowserCore
     }
     private func refresh() {
         guard let store,let web,let parent=superview,parent === web.superview,
-              let next=store.websiteProtectionTicket(for:web) else {ticket=nil;invalidateControls();isHidden=true;return}
+              let next=store.websiteProtectionTicket(for:web),next.canPresent else {ticket=nil;invalidateControls();isHidden=true;return}
         let changed=ticket !== next || boundRevision != next.revision || isHidden
         if changed {replaceControls(for:next)}
         ticket=next;boundRevision=next.revision;isHidden=false;next.presented(in:self)

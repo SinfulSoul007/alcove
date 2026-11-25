@@ -56,6 +56,7 @@ enum WebsiteProtectionPurpose {
     private var restoringFullscreen=false
     private var pendingAssessment:WebsiteProtectionAssessment?
     var isPending:Bool {decision != nil}
+    var canPresent:Bool {isPending && !restoringFullscreen}
     init(source:WebsiteProtectionSource,url:URL,kind:WebsiteProtectionPurpose,decision:@escaping @MainActor (Bool)->Void) {
         self.source=source;self.url=url;self.kind=kind;self.decision=decision
     }
