@@ -5,7 +5,7 @@ import BrowserCore
 
 /// Observe this fixture's public delegate boundary while retaining the real
 /// production alert implementation. No synthetic frame or replacement dialog.
-@MainActor private final class OwnedFullscreenAlertProbe: NSObject, WKUIDelegate {
+@MainActor private final class OwnedFullscreenScriptProbe: NSObject, WKUIDelegate {
     let store: BrowserStore
     let sample: (String) -> Void
     init(store: BrowserStore, sample: @escaping (String) -> Void) {
@@ -16,6 +16,22 @@ import BrowserCore
         sample("delegate-entry")
         store.webView(webView, runJavaScriptAlertPanelWithMessage: message, initiatedByFrame: frame) {
             self.sample("delegate-completion"); completionHandler()
+        }
+        sample("delegate-return")
+    }
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        sample("delegate-entry")
+        store.webView(webView, runJavaScriptConfirmPanelWithMessage: message, initiatedByFrame: frame) { result in
+            self.sample("delegate-completion"); completionHandler(result)
+        }
+        sample("delegate-return")
+    }
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        sample("delegate-entry")
+        store.webView(webView, runJavaScriptTextInputPanelWithPrompt: prompt, defaultText: defaultText, initiatedByFrame: frame) { result in
+            self.sample("delegate-completion"); completionHandler(result)
         }
         sample("delegate-return")
     }
@@ -335,12 +351,13 @@ extension WebsiteFullscreenChecks {
                 let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
                 check(store.profileID(for: web) == profile && store.documentIdentity(for: web) === document && draft == true,
                       "Cancelling the fullscreen warning preserves its original profile, document and unsaved form")
-            case "script-alert":
-                let marker = "Owned fullscreen script alert"
+            case "script-alert", "script-confirm", "script-prompt":
+                let marker = "Owned fullscreen " + kind
                 var observed = false, restoredBeforePrompt = false, attachedToOrigin = false
-                let probe = OwnedFullscreenAlertProbe(store: store) { label in
-                    residency("script-alert " + label, web: web, host: commandHost, window: window)
-                    print("FULLSCREEN_SCRIPT_BOUNDARY", label, "nativeVisible", presentation.isVisible,
+                var defaultWasPreserved = kind != "script-prompt"
+                let probe = OwnedFullscreenScriptProbe(store: store) { label in
+                    residency(kind + " " + label, web: web, host: commandHost, window: window)
+                    print("FULLSCREEN_SCRIPT_BOUNDARY", kind, label, "nativeVisible", presentation.isVisible,
                           "originKey", window.isKeyWindow, "nativeKey", presentation.isKeyWindow,
                           "modal", NSApp.modalWindow != nil, "sourceWindowNil", web.window == nil,
                           "sourceInNative", web.window === presentation)
@@ -361,12 +378,17 @@ extension WebsiteFullscreenChecks {
                         restoredBeforePrompt = web.window === window && !presentation.isVisible &&
                             web.fullscreenState == .notInFullscreen && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
                         attachedToOrigin = prompt.sheetParent === window
-                        print("FULLSCREEN_SCRIPT_ALERT", "restored", restoredBeforePrompt, "originSheet", attachedToOrigin,
+                        print("FULLSCREEN_SCRIPT_DIALOG", kind, "restored", restoredBeforePrompt, "originSheet", attachedToOrigin,
                               "appModal", NSApp.modalWindow === prompt)
+                        if kind == "script-prompt", let field = descendants(content).compactMap({ $0 as? NSTextField }).first(where: \.isEditable) {
+                            defaultWasPreserved = field.stringValue == "Owned starting text"
+                            field.stringValue = "Owned submitted text"
+                        }
                         timer.invalidate()
-                        if let parent = prompt.sheetParent { parent.endSheet(prompt, returnCode: .alertFirstButtonReturn) }
+                        let response: NSApplication.ModalResponse = kind == "script-confirm" ? .alertSecondButtonReturn : .alertFirstButtonReturn
+                        if let parent = prompt.sheetParent { parent.endSheet(prompt, returnCode: response) }
                         else {
-                            NSApp.abortModal()
+                            NSApp.stopModal(withCode: response)
                             if let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [],
                                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) {
                                 NSApp.postEvent(wake, atStart: true)
@@ -377,20 +399,32 @@ extension WebsiteFullscreenChecks {
                 }
                 RunLoop.main.add(timer, forMode: .common)
                 defer { timer.invalidate() }
-                _ = try await web.callAsyncJavaScript("window.ownedScriptAlertDone=false;setTimeout(()=>{alert(marker);window.ownedScriptAlertDone=true},0);return true;",
-                    arguments: ["marker": marker], in: nil, contentWorld: .page)
+                _ = try await web.callAsyncJavaScript("""
+                    window.ownedScriptDialogDone=false;
+                    setTimeout(()=>{
+                        if(kind==='script-alert'){alert(marker);window.ownedScriptDialogResult='alert-returned';}
+                        else if(kind==='script-confirm') window.ownedScriptDialogResult=confirm(marker);
+                        else window.ownedScriptDialogResult=prompt(marker,'Owned starting text');
+                        window.ownedScriptDialogDone=true;
+                    },0);return true;
+                    """, arguments: ["marker": marker, "kind": kind], in: nil, contentWorld: .page)
                 let shown = await effect { observed }
                 check(shown && restoredBeforePrompt && attachedToOrigin,
-                      "A real page alert restores fullscreen and presents as a sheet on its captured browser window")
+                      "\(kind): a real page dialog restores fullscreen and presents as a sheet on its captured browser window")
                 var completed = false
                 do {
-                    try await wait("owned script alert completion") { (try? await web.evaluateJavaScript("window.ownedScriptAlertDone===true")) as? Bool == true }
+                    try await wait("owned script dialog completion") { (try? await web.evaluateJavaScript("window.ownedScriptDialogDone===true")) as? Bool == true }
                     completed = true
-                } catch { print("FULLSCREEN_SCRIPT_ALERT_COMPLETION_ERROR", error) }
+                } catch { print("FULLSCREEN_SCRIPT_DIALOG_COMPLETION_ERROR", kind, error) }
+                let result = try await web.evaluateJavaScript("window.ownedScriptDialogResult")
+                let expectedResult = kind == "script-confirm" ? (result as? Bool == false) :
+                    (result as? String == (kind == "script-alert" ? "alert-returned" : "Owned submitted text"))
+                check(completed && expectedResult, "\(kind): the actual document receives the native dialog result")
+                if kind == "script-prompt" { check(shown && defaultWasPreserved, "The real prompt preserves its starting text before submitting edited text") }
                 let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
                 check(completed && store.documentIdentity(for: web) === document && draft == true,
-                      "Dismissing the actual page alert resumes its original document and preserves the unsaved form")
-                residency("script-alert after-script", web: web, host: commandHost, window: window)
+                      "\(kind): dismissing the actual dialog resumes its original document and preserves the unsaved form")
+                residency(kind + " after-script", web: web, host: commandHost, window: window)
             case "coalesced", "coalesced-close":
                 guard let coordinator = (web as? SplitDropWebView)?.websiteFullscreen else { throw Failure.fixture("exit coordinator") }
                 var results: [Bool] = []
@@ -490,7 +524,7 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert"]
+        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt"]
         let compact = ["escape", "peek-escape", "location", "find", "reader", "close"].map { "quick-" + $0 }
         let all = regular + ["escape", "location", "find", "reader", "close"].map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
