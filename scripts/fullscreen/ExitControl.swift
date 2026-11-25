@@ -33,7 +33,7 @@ import Darwin
         web.load(URLRequest(url: base.appendingPathComponent("page")))
         try await wait("owned stock WebKit document") {
             guard !web.isLoading else { return false }
-            return (try? await web.evaluateJavaScript("document.getElementById('element')!==null")) as? Bool == true
+            return (try? await web.evaluateJavaScript("document.getElementById('element')!==null&&document.getElementById('video')?.readyState>=2")) as? Bool == true
         }
         try await wait("owned stock window active") { window.isKeyWindow && NSApp.isActive }
         _ = try await web.callAsyncJavaScript("""

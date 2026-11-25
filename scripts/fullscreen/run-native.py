@@ -27,6 +27,17 @@ def command(args, *, timeout=300, env=None):
     subprocess.run(args, cwd=ROOT, check=True, timeout=timeout, env=env)
 
 
+def pinned_media():
+    video = OUT / 'test-25fps.mp4'
+    if not video.exists() or hashlib.sha256(video.read_bytes()).hexdigest() != VIDEO_SHA256:
+        with urllib.request.urlopen(VIDEO_URL, timeout=45) as response:
+            data = response.read(2_000_001)
+        if len(data) > 2_000_000 or hashlib.sha256(data).hexdigest() != VIDEO_SHA256:
+            raise RuntimeError('Pinned upstream test video failed its integrity check')
+        video.write_bytes(data)
+    return video.read_bytes()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--compile-only', action='store_true')
@@ -45,11 +56,12 @@ def main():
         command(['xcrun', 'swiftc', *flags, '-parse-as-library', '-warnings-as-errors',
                  'scripts/fullscreen/ExitControl.swift', '-o', str(executable)])
         if not args.compile_only:
+            media = pinned_media()
             class ControlHandler(BaseHTTPRequestHandler):
                 def do_GET(self):
-                    body = b"<!doctype html><div id='element' style='width:500px;height:300px;background:navy;color:white'>Owned fullscreen exit control</div>"
+                    body, content_type = (media, 'video/mp4') if self.path == '/video.mp4' else (HTML, 'text/html; charset=utf-8')
                     self.send_response(200)
-                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Content-Type', content_type)
                     self.send_header('Content-Length', str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
@@ -84,14 +96,7 @@ def main():
         shutil.copytree(source, OUT / folder, dirs_exist_ok=True)
     if args.compile_only:
         return
-    video = OUT / 'test-25fps.mp4'
-    if not video.exists() or hashlib.sha256(video.read_bytes()).hexdigest() != VIDEO_SHA256:
-        with urllib.request.urlopen(VIDEO_URL, timeout=45) as response:
-            data = response.read(2_000_001)
-        if len(data) > 2_000_000 or hashlib.sha256(data).hexdigest() != VIDEO_SHA256:
-            raise RuntimeError('Pinned upstream test video failed its integrity check')
-        video.write_bytes(data)
-    media = video.read_bytes()
+    media = pinned_media()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
