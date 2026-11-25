@@ -78,8 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard let web, web.window === window, store.isVisibleWebsite(web) else { return nil }
         return (store, web, window)
     }
-    private func deferFullscreenCommand(documentBound: Bool = false, perform: @escaping @MainActor () -> Void) -> Bool {
-        guard let target = fullscreenTarget(in: activeBrowserWindow) else { return false }
+    private func deferFullscreenCommand(in window: NSWindow? = nil, documentBound: Bool = false, perform: @escaping @MainActor () -> Void) -> Bool {
+        guard let target = fullscreenTarget(in: window ?? activeBrowserWindow) else { return false }
         guard target.window.attachedSheet == nil, target.web.window?.attachedSheet == nil,
               let profile = target.store.profileID(for: target.web) else { return true }
         let presentation = target.store.presentationIdentity(for: target.web)
@@ -97,13 +97,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func performPageOutput(_ command: PageOutputCommand, in window: NSWindow?) {
         guard let target = outputTarget(in: window) else { return }
+        if deferFullscreenCommand(in: window, documentBound: true, perform: { [weak self, weak window = target.window] in
+            self?.performPageOutput(command, in: window)
+        }) { return }
         switch command {
         case .printPage: pageOutput.printPage(web: target.web, store: target.store, window: target.window)
         case .pdf: pageOutput.save(web: target.web, store: target.store, window: target.window, format: .pdf)
         case .webArchive: pageOutput.save(web: target.web, store: target.store, window: target.window, format: .webArchive)
         }
     }
-    @objc func toggleReader() { if let target = outputTarget(in: activeBrowserWindow) { target.store.toggleReader(target.web) } }
+    @objc func toggleReader() {
+        if deferFullscreenCommand(documentBound: true, perform: { [weak self] in self?.toggleReader() }) { return }
+        if let target = outputTarget(in: activeBrowserWindow) { target.store.toggleReader(target.web) }
+    }
     @objc func printPage() { performPageOutput(.printPage, in: activeBrowserWindow) }
     @objc func exportPDF() { performPageOutput(.pdf, in: activeBrowserWindow) }
     @objc func savePage() { performPageOutput(.webArchive, in: activeBrowserWindow) }
@@ -529,7 +535,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if menuItem.action == #selector(toggleReader) {
             guard let target = outputTarget(in: activeBrowserWindow) else { return false }
             menuItem.title = target.store.readerSession(for: target.web) == nil ? "Show Reader" : "Exit Reader"
-            return target.window.attachedSheet == nil && target.store.canToggleReader(for: target.web)
+            return target.window.attachedSheet == nil && target.web.window?.attachedSheet == nil && target.store.canToggleReader(for: target.web)
         }
         let outputActions: Set<Selector> = [#selector(printPage), #selector(exportPDF), #selector(savePage)]
         if let action = menuItem.action, outputActions.contains(action) {
@@ -538,7 +544,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if action == #selector(printPage) { menuItem.title = reading ? "Print Original Page…" : "Print…" }
             else if action == #selector(exportPDF) { menuItem.title = reading ? "Export Original Page as PDF…" : "Export as PDF…" }
             else { menuItem.title = reading ? "Save Original Page As…" : "Save Page As…" }
-            return pageOutput.canBegin(web: target.web, store: target.store, window: target.window)
+            // Check the actual native presentation for readiness, without
+            // starting output there. Execution restores its logical window first.
+            let presentationWindow = fullscreenTarget(in: target.window)?.web.window ?? target.window
+            return target.window.attachedSheet == nil && !pageOutput.isBusy(in: target.window)
+                && pageOutput.canBegin(web: target.web, store: target.store, window: presentationWindow)
         }
         if activeStore?.awaitingInitialMetadata == true {
             return [#selector(openMain), #selector(newBrowserWindow), #selector(newQuick), #selector(privateWindow), #selector(closeTab), #selector(quit), #selector(about)].contains(menuItem.action)
@@ -706,6 +716,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func showLibrary() { showLibrarySection() }
     @objc func showDownloads() { showLibrarySection(.downloads) }
     private func showLibrarySection(_ section: LibrarySection? = nil) {
+        if deferFullscreenCommand(perform: { [weak self] in self?.showLibrarySection(section) }) { return }
         let profile = activeQuick.flatMap { $0.store.quickProfileID($0.pageID) }
         let store = primaryForActive()
         do {
@@ -718,7 +729,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard let store = activeStore, let web = activeWebView else { return }
         do { try store.bookmarkWebsite(web) } catch { store.message = error.localizedDescription }
     }
-    @objc func settings() { primaryForActive().settingsVisible = true }
+    @objc func settings() {
+        if deferFullscreenCommand(perform: { [weak self] in self?.settings() }) { return }
+        primaryForActive().settingsVisible = true
+    }
     @objc func siteSearchSettings() { primaryForActive().presentedPanel = .siteSearch }
     @objc func linkRoutingSettings() { primaryForActive().presentedPanel = .links }
     @objc func websiteBoosts() {
@@ -732,7 +746,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard let store=activeStore,let window=activeBrowserWindow else {return}
         store.requestExtensionManager(from:window,profileID:activeQuick.flatMap{store.quickProfileID($0.pageID)})
     }
-    @objc func customize() { primaryForActive().appearanceVisible = true }
+    @objc func customize() {
+        if deferFullscreenCommand(perform: { [weak self] in self?.customize() }) { return }
+        primaryForActive().appearanceVisible = true
+    }
     @objc func manageProfiles() {
         let owner = ensureNormalOwner()
         openPrimary(owner)

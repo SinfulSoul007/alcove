@@ -2,6 +2,11 @@ name: Owned website fullscreen qualification
 
 on:
   workflow_dispatch:
+    inputs:
+      regressions:
+        description: Run Reader and sidebar regression groups
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -36,13 +41,13 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Verify existing Reader lifecycle on the changed website hosts
-        if: always()
+        if: ${{ always() && inputs.regressions }}
         run: |
           set -o pipefail
           mkdir -p .build/fullscreen
           caffeinate -is scripts/build.sh reader-mode-test 2>&1 | tee .build/fullscreen/reader.log
       - name: Verify existing chrome geometry and sidebar controls
-        if: always()
+        if: ${{ always() && inputs.regressions }}
         run: |
           set -o pipefail
           mkdir -p .build/fullscreen
