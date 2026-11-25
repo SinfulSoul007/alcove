@@ -342,7 +342,8 @@ extension WebsiteFullscreenChecks {
                     residency("script-alert " + label, web: web, host: commandHost, window: window)
                     print("FULLSCREEN_SCRIPT_BOUNDARY", label, "nativeVisible", presentation.isVisible,
                           "originKey", window.isKeyWindow, "nativeKey", presentation.isKeyWindow,
-                          "modal", NSApp.modalWindow != nil)
+                          "modal", NSApp.modalWindow != nil, "sourceWindowNil", web.window == nil,
+                          "sourceInNative", web.window === presentation)
                 }
                 guard web.uiDelegate === store else { throw Failure.fixture("original production UI delegate") }
                 web.uiDelegate = probe

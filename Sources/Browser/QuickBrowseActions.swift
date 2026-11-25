@@ -40,7 +40,12 @@ extension BrowserStore {
         return isVisibleWebsite(web)
     }
     func isVisibleWebsite(_ web: WKWebView) -> Bool {
-        guard !isShuttingDown, web.window != nil,
+        web.window != nil && isCurrentWebsite(web)
+    }
+    /// Logical page selection, including the short native fullscreen return
+    /// interval in which WebKit has detached the view from every window.
+    func isCurrentWebsite(_ web: WKWebView) -> Bool {
+        guard !isShuttingDown,
               let profile = profileID(for: web), !profileUnavailable(profile) else { return false }
         if let context = quickContext(for: web) {
             if let peek = quickPeekView(context.id) { return web === peek }

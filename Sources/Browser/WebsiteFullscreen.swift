@@ -241,10 +241,13 @@ import WebKit
 
     private func reconcileRestoration() {
         guard isBorrowed, let web, web.fullscreenState == .notInFullscreen,
-              let restorationHost, web.superview === restorationHost,
+              let restorationHost,
               !capturedPresentationWindow || presentationWindow?.isVisible != true else { return }
-        // State and view-move notifications can arrive in either order. Only
-        // reconcile once WebKit has actually returned its borrowed view.
+        // WebKit's immediate exit for script dialogs can remove its placeholder
+        // and leave the view in a detached container. Reclaim only after both
+        // public fullscreen state and the captured native window have ended;
+        // never take a view from another live window or an active presentation.
+        guard web.superview === restorationHost || (capturedPresentationWindow && web.window == nil) else { return }
         isBorrowed = false
         restorationHost.untrackFullscreenRestoration(self)
         self.restorationHost = nil

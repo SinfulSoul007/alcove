@@ -220,11 +220,21 @@ extension BrowserStore {
             present(window) { finish($0 ? .grant : .deny) }
         }, completion: completion)
     }
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        guard frame.webView === webView else { completionHandler(); return }
+        requestWebsitePrompt(from: webView, denied: (), present: { window, finish in
+            let alert = NSAlert(); alert.messageText = frame.request.url?.host ?? "Website"; alert.informativeText = message
+            alert.addButton(withTitle: "OK")
+            alert.beginSheetModal(for: window) { _ in finish(()) }
+        }, completion: { _ in completionHandler() })
+    }
     private func requestWebsitePrompt<Value>(from web: WKWebView, denied: Value,
                                               present: @escaping (NSWindow, @escaping (Value) -> Void) -> Void,
                                               completion: @escaping (Value) -> Void) {
         let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen
-        guard isFocusedWebsite(web), let window = fullscreen?.logicalWindow ?? web.window,
+        guard let window = fullscreen?.logicalWindow ?? web.window,
+              isFocusedWebsite(web) || (fullscreen?.currentSource === web && window.isKeyWindow && isCurrentWebsite(web)),
               window.attachedSheet == nil, web.window?.attachedSheet == nil,
               let url = web.url, let profile = profileID(for: web) else { completion(denied); return }
         let document = documentIdentity(for: web)
