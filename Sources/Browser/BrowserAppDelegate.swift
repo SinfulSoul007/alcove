@@ -79,6 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         return (store, web, window)
     }
     private func deferFullscreenCommand(in window: NSWindow? = nil, documentBound: Bool = false, perform: @escaping @MainActor () -> Void) -> Bool {
+        // A source may already be restored while its document-modal sheet owns
+        // the key window. Keep browser chrome behind that active native choice.
+        if NSApp.keyWindow?.sheetParent != nil || (window ?? activeBrowserWindow)?.attachedSheet != nil { return true }
         guard let target = fullscreenTarget(in: window ?? activeBrowserWindow) else { return false }
         guard target.window.attachedSheet == nil, target.web.window?.attachedSheet == nil,
               let profile = target.store.profileID(for: target.web) else { return true }

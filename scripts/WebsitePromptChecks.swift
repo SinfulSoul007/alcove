@@ -19,8 +19,8 @@ private final class UploadFixtureDelegate: NSObject, WKUIDelegate {
         recognizedRequest = frame.webView === webView && frame.isMainFrame && parameters.allowsMultipleSelection
         guard recognizedRequest else { completionHandler(nil); return }
         store.requestWebsiteFiles(from: webView, present: { window, complete in
-            presentedWindow = window
-            complete(files)
+            self.presentedWindow = window
+            complete(self.files)
         }, completion: completionHandler)
     }
 }

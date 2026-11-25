@@ -240,10 +240,15 @@ extension WebsiteFullscreenChecks {
                     }, completion: { denials.append($0 == .deny) })
                 }
                 let shown = await effect { prompt != nil && prompt?.isVisible == true && prompt?.sheetParent === presentedIn }
+                print("FULLSCREEN_PROMPT_PRESENTED", kind, "shown", shown, "parentIsOrigin", presentedIn === window,
+                      "sourceInOrigin", web.window === window, "nativeVisible", presentation.isVisible,
+                      "state", web.fullscreenState.rawValue, "borrowed", (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed ?? false)
                 check(shown && presentedIn === window && web.window === window && !presentation.isVisible &&
                       (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false,
                       "\(kind): the actual native sheet presents only after restoring its original browser window")
                 app.location()
+                print("FULLSCREEN_PROMPT_COMMAND", kind, "commandVisible", store.commandVisible,
+                      "keyIsSheet", NSApp.keyWindow === prompt, "originHasSheet", window.attachedSheet != nil)
                 check(shown && !store.commandVisible,
                       "\(kind): a native website sheet blocks conflicting address UI")
                 let endedNativeSheet: Bool
@@ -262,6 +267,9 @@ extension WebsiteFullscreenChecks {
                 check(endedNativeSheet && settled && denials == [true],
                       "\(kind): cancelling the real native sheet denies once and rejects a duplicate reply")
                 store.dismissCommand()
+                let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
+                check(store.profileID(for: web) == profile && store.documentIdentity(for: web) === document && draft == true,
+                      "\(kind): the native prompt preserves its captured profile, live document and unsaved form")
             case "coalesced", "coalesced-close":
                 guard let coordinator = (web as? SplitDropWebView)?.websiteFullscreen else { throw Failure.fixture("exit coordinator") }
                 var results: [Bool] = []

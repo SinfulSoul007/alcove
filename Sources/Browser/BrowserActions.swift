@@ -210,33 +210,51 @@ extension BrowserStore {
             alert.beginSheetModal(for: window) { finish($0 == .alertSecondButtonReturn) }
         }, completion: decisionHandler)
     }
-    func requestWebsiteFiles(from webView: WKWebView, present: (NSWindow, @escaping ([URL]?) -> Void) -> Void,
+    func requestWebsiteFiles(from webView: WKWebView, present: @escaping (NSWindow, @escaping ([URL]?) -> Void) -> Void,
                              completion: @escaping ([URL]?) -> Void) {
         requestWebsitePrompt(from: webView, denied: nil, present: present, completion: completion)
     }
-    func requestWebsiteMedia(from webView: WKWebView, present: (NSWindow, @escaping (Bool) -> Void) -> Void,
+    func requestWebsiteMedia(from webView: WKWebView, present: @escaping (NSWindow, @escaping (Bool) -> Void) -> Void,
                              completion: @escaping (WKPermissionDecision) -> Void) {
         requestWebsitePrompt(from: webView, denied: .deny, present: { window, finish in
             present(window) { finish($0 ? .grant : .deny) }
         }, completion: completion)
     }
     private func requestWebsitePrompt<Value>(from web: WKWebView, denied: Value,
-                                              present: (NSWindow, @escaping (Value) -> Void) -> Void,
+                                              present: @escaping (NSWindow, @escaping (Value) -> Void) -> Void,
                                               completion: @escaping (Value) -> Void) {
-        guard isFocusedWebsite(web), let window = web.window, window.attachedSheet == nil,
+        let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen
+        guard isFocusedWebsite(web), let window = fullscreen?.logicalWindow ?? web.window,
+              window.attachedSheet == nil, web.window?.attachedSheet == nil,
               let url = web.url, let profile = profileID(for: web) else { completion(denied); return }
         let document = documentIdentity(for: web)
         let presentation = presentationIdentity(for: web)
         var finished = false
-        present(window) { [weak self, weak web, weak window] result in
+        let cancel = {
             guard !finished else { return }
-            finished = true
-            // A sheet may finish before AppKit returns key status to its original window.
-            guard let self, let web, let window, web.window === window, web.url == url,
-                  self.profileID(for: web) == profile, self.isVisibleWebsite(web),
-                  self.documentIdentity(for: web) === document,
-                  self.presentationIdentity(for: web) === presentation else { completion(denied); return }
-            completion(result)
+            finished = true; completion(denied)
         }
+        let deliver = { [weak self, weak web, weak window] in
+            guard !finished else { return }
+            guard let self, let web, let window, web.window === window, web.url == url,
+                  self.profileID(for: web) == profile, self.isFocusedWebsite(web), window.attachedSheet == nil,
+                  self.documentIdentity(for: web) === document,
+                  self.presentationIdentity(for: web) === presentation else { cancel(); return }
+            present(window) { [weak self, weak web, weak window] result in
+                guard !finished else { return }
+                finished = true
+                // A sheet may finish before AppKit returns key status to its original window.
+                guard let self, let web, let window, web.window === window, web.url == url,
+                      self.profileID(for: web) == profile, self.isVisibleWebsite(web),
+                      self.documentIdentity(for: web) === document,
+                      self.presentationIdentity(for: web) === presentation else { completion(denied); return }
+                completion(result)
+            }
+        }
+        // Capture all ownership before exit. Recapturing here after restoration
+        // could present an old file/device request for a replacement document.
+        if let fullscreen, fullscreen.isBorrowed || web.fullscreenState != .notInFullscreen {
+            fullscreen.exit { restored in if restored { deliver() } else { cancel() } }
+        } else { deliver() }
     }
 }

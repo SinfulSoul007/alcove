@@ -15,6 +15,10 @@ on:
         description: Optional command-only diagnostic case; empty runs all native checks
         type: string
         default: ''
+      website_prompts:
+        description: Run the existing website prompt lifetime and file-input regression group
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,7 +26,7 @@ permissions:
 jobs:
   macos:
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -70,6 +74,12 @@ jobs:
           set -o pipefail
           mkdir -p .build/fullscreen/sidebar-snapshots
           caffeinate -is scripts/build.sh sidebar-organization-layout-test 2>&1 | tee .build/fullscreen/sidebar-layout.log
+      - name: Verify website prompt lifetime and native file input
+        if: ${{ always() && inputs.website_prompts }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh website-prompt-test 2>&1 | tee .build/fullscreen/website-prompts.log
       - name: Preserve the bounded native result
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
