@@ -13,10 +13,22 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommand(base: URL, kind: String, owned: OwnedWebsiteStores,
                                 controllers: OwnedExtensionControllers, isPrivate: Bool = false, isQuick: Bool = false) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-fullscreen-command-" + UUID().uuidString)
+        var protection: WebsiteProtectionService?
+        if kind == "warning" {
+            // A one-domain owned catalog; no target navigation or network request.
+            let rows = Data("listed.alcove.example\n".utf8)
+            let instant = ISO8601DateFormatter().string(from: Date())
+            let metadata = try JSONSerialization.data(withJSONObject: ["formatVersion": 1, "provider": "PhishDestroy",
+                "sourceRevision": String(repeating: "1", count: 40), "sourceUpdatedAt": instant, "retrievedAt": instant,
+                "sha256": SHA256.hash(data: rows).map { String(format: "%02x", $0) }.joined(),
+                "licenseSHA256": String(repeating: "0", count: 64), "domainCount": 1])
+            let catalog = try WebsiteThreatCatalog(domains: rows, metadata: metadata)
+            let service = WebsiteProtectionService(loader: { catalog }); _ = await service.load(); protection = service
+        }
         var keyReads = 0
         let writer = BrowserStore(isPrivate: isPrivate, dataRoot: root, keyProvider: { _ in
             keyReads += 1; return SymmetricKey(data: Data(repeating: 87, count: 32))
-        })
+        }, websiteProtection: protection)
         writer.finishOnboarding(); writer.preferences.automaticUpdateChecks = false
         let profile: UUID
         if isPrivate { profile = BrowserProfile.defaultID }
@@ -270,6 +282,33 @@ extension WebsiteFullscreenChecks {
                 let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
                 check(store.profileID(for: web) == profile && store.documentIdentity(for: web) === document && draft == true,
                       "\(kind): the native prompt preserves its captured profile, live document and unsaved form")
+            case "warning":
+                var decisions: [Bool] = []
+                let held = URL(string: "https://listed.alcove.example/owned-fullscreen-warning")!
+                guard let ticket = store.decideWebsiteProtection(web, url: held, kind: .navigation(isMainFrame: true),
+                                                                 decision: { decisions.append($0) }) else { throw Failure.fixture("owned warning ticket") }
+                func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+                var warning: NSView?
+                let visible = await effect {
+                    guard web.window === window, !presentation.isVisible,
+                          (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false,
+                          let parent = web.superview,
+                          let overlay = descendants(parent).first(where: { $0.identifier?.rawValue == "AlcoveWebsiteProtection" && !$0.isHiddenOrHasHiddenAncestor }),
+                          overlay.window === window, overlay.frame.intersects(parent.bounds) else { return false }
+                    warning = overlay; return true
+                }
+                check(visible && ticket.isPending && decisions.isEmpty,
+                      "A held website warning exits fullscreen and visibly covers the captured original page")
+                let controls = warning.map(descendants) ?? []
+                let safe = controls.first(where: { $0.identifier?.rawValue == "AlcoveWebsiteProtectionSafe" }) as? NSButton
+                let proceed = controls.first(where: { $0.identifier?.rawValue == "AlcoveWebsiteProtectionContinue" }) as? NSButton
+                if let safe { safe.performClick(nil) } else { ticket.cancel() }
+                proceed?.performClick(nil)
+                check(visible && safe != nil && decisions == [false] && !ticket.isPending,
+                      "The visible warning cancels once and a retained Continue control cannot revive it")
+                let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
+                check(store.profileID(for: web) == profile && store.documentIdentity(for: web) === document && draft == true,
+                      "Cancelling the fullscreen warning preserves its original profile, document and unsaved form")
             case "coalesced", "coalesced-close":
                 guard let coordinator = (web as? SplitDropWebView)?.websiteFullscreen else { throw Failure.fixture("exit coordinator") }
                 var results: [Bool] = []
@@ -369,7 +408,7 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt"]
+        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning"]
         let compact = ["escape", "peek-escape", "location", "find", "reader", "close"].map { "quick-" + $0 }
         let all = regular + ["escape", "location", "find", "reader", "close"].map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
