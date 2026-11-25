@@ -366,6 +366,7 @@ extension WebsiteFullscreenChecks {
             case "script-alert", "script-confirm", "script-prompt", "script-alert-native-control":
                 let marker = "Owned fullscreen " + kind
                 var observed = false, restoredBeforePrompt = false, attachedToOrigin = false
+                var nativeHiddenBeforePrompt = false, sourceSheet = false, commandBlocked = false
                 var defaultWasPreserved = kind != "script-prompt"
                 let probe = OwnedFullscreenScriptProbe(store: store, nativeExitControl: kind == "script-alert-native-control") { label in
                     residency(kind + " " + label, web: web, host: commandHost, window: window)
@@ -390,8 +391,11 @@ extension WebsiteFullscreenChecks {
                         restoredBeforePrompt = web.window === window && !presentation.isVisible &&
                             web.fullscreenState == .notInFullscreen && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
                         attachedToOrigin = prompt.sheetParent === window
+                        nativeHiddenBeforePrompt = !presentation.isVisible
+                        sourceSheet = attachedToOrigin && NSApp.modalWindow !== prompt
                         print("FULLSCREEN_SCRIPT_DIALOG", kind, "restored", restoredBeforePrompt, "originSheet", attachedToOrigin,
                               "appModal", NSApp.modalWindow === prompt)
+                        if sourceSheet { app.location(); commandBlocked = !store.commandVisible }
                         if kind == "script-prompt", let field = descendants(content).compactMap({ $0 as? NSTextField }).first(where: \.isEditable) {
                             defaultWasPreserved = field.stringValue == "Owned starting text"
                             field.stringValue = "Owned submitted text"
@@ -421,8 +425,12 @@ extension WebsiteFullscreenChecks {
                     },0);return true;
                     """, arguments: ["marker": marker, "kind": kind], in: nil, contentWorld: .page)
                 let shown = await effect { observed }
-                check(shown && restoredBeforePrompt && attachedToOrigin,
-                      "\(kind): a real page dialog restores fullscreen and presents as a sheet on its captured browser window")
+                // WebKit cannot finalize its immediate exit until the dialog
+                // reply resumes JavaScript. Physical hiding and correct sheet
+                // ownership must precede the prompt; live restoration follows.
+                check(shown && nativeHiddenBeforePrompt && sourceSheet,
+                      "\(kind): native fullscreen is hidden before a real dialog sheet appears on its captured browser window")
+                check(shown && commandBlocked, "\(kind): a source-bound script sheet blocks conflicting address UI")
                 var completed = false
                 do {
                     try await wait("owned script dialog completion") { (try? await web.evaluateJavaScript("window.ownedScriptDialogDone===true")) as? Bool == true }
@@ -433,6 +441,12 @@ extension WebsiteFullscreenChecks {
                     (result as? String == (kind.hasPrefix("script-alert") ? "alert-returned" : "Owned submitted text"))
                 check(completed && expectedResult, "\(kind): the actual document receives the native dialog result")
                 if kind == "script-prompt" { check(shown && defaultWasPreserved, "The real prompt preserves its starting text before submitting edited text") }
+                let restored = await effect {
+                    web.window === window && web.superview is EdgeToEdgeWebHost && !presentation.isVisible &&
+                        web.fullscreenState == .notInFullscreen && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
+                }
+                check(restored && store.profileID(for: web) == profile,
+                      "\(kind): answering the actual dialog completes native exit and restores its exact page to the original profile/window")
                 let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
                 check(completed && store.documentIdentity(for: web) === document && draft == true,
                       "\(kind): dismissing the actual dialog resumes its original document and preserves the unsaved form")
@@ -520,7 +534,9 @@ extension WebsiteFullscreenChecks {
         // Recover using the independently qualified document exit, only after
         // observing each command's own result. Recovery never turns a failure green.
         let remaining = [underlying, web] + Array(store.views.values) + store.peekPages.values.map(\.web)
-        for page in remaining where page.fullscreenState != .notInFullscreen || (page as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true {
+        var recovered = Set<ObjectIdentifier>()
+        for page in remaining where recovered.insert(ObjectIdentifier(page)).inserted &&
+            (page.fullscreenState != .notInFullscreen || (page as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true) {
             do { try await leave(page) }
             catch { failures += 1; print("FULLSCREEN_COMMAND_RECOVERY_ERROR", kind, error) }
         }
