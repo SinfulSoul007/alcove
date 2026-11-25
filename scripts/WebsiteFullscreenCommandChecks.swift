@@ -8,12 +8,24 @@ import BrowserCore
 @MainActor private final class OwnedFullscreenScriptProbe: NSObject, WKUIDelegate {
     let store: BrowserStore
     let sample: (String) -> Void
-    init(store: BrowserStore, sample: @escaping (String) -> Void) {
-        self.store = store; self.sample = sample
+    let nativeExitControl: Bool
+    init(store: BrowserStore, nativeExitControl: Bool = false, sample: @escaping (String) -> Void) {
+        self.store = store; self.sample = sample; self.nativeExitControl = nativeExitControl
     }
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         sample("delegate-entry")
+        if nativeExitControl {
+            webView.closeAllMediaPresentations {
+                self.sample("native-control-completion")
+                self.forwardAlert(webView, message: message, frame: frame, completionHandler: completionHandler)
+            }
+            sample("native-control-return")
+            return
+        }
+        forwardAlert(webView, message: message, frame: frame, completionHandler: completionHandler)
+    }
+    private func forwardAlert(_ webView: WKWebView, message: String, frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         store.webView(webView, runJavaScriptAlertPanelWithMessage: message, initiatedByFrame: frame) {
             self.sample("delegate-completion"); completionHandler()
         }
@@ -351,11 +363,11 @@ extension WebsiteFullscreenChecks {
                 let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
                 check(store.profileID(for: web) == profile && store.documentIdentity(for: web) === document && draft == true,
                       "Cancelling the fullscreen warning preserves its original profile, document and unsaved form")
-            case "script-alert", "script-confirm", "script-prompt":
+            case "script-alert", "script-confirm", "script-prompt", "script-alert-native-control":
                 let marker = "Owned fullscreen " + kind
                 var observed = false, restoredBeforePrompt = false, attachedToOrigin = false
                 var defaultWasPreserved = kind != "script-prompt"
-                let probe = OwnedFullscreenScriptProbe(store: store) { label in
+                let probe = OwnedFullscreenScriptProbe(store: store, nativeExitControl: kind == "script-alert-native-control") { label in
                     residency(kind + " " + label, web: web, host: commandHost, window: window)
                     print("FULLSCREEN_SCRIPT_BOUNDARY", kind, label, "nativeVisible", presentation.isVisible,
                           "originKey", window.isKeyWindow, "nativeKey", presentation.isKeyWindow,
@@ -402,7 +414,7 @@ extension WebsiteFullscreenChecks {
                 _ = try await web.callAsyncJavaScript("""
                     window.ownedScriptDialogDone=false;
                     setTimeout(()=>{
-                        if(kind==='script-alert'){alert(marker);window.ownedScriptDialogResult='alert-returned';}
+                        if(kind.startsWith('script-alert')){alert(marker);window.ownedScriptDialogResult='alert-returned';}
                         else if(kind==='script-confirm') window.ownedScriptDialogResult=confirm(marker);
                         else window.ownedScriptDialogResult=prompt(marker,'Owned starting text');
                         window.ownedScriptDialogDone=true;
@@ -418,7 +430,7 @@ extension WebsiteFullscreenChecks {
                 } catch { print("FULLSCREEN_SCRIPT_DIALOG_COMPLETION_ERROR", kind, error) }
                 let result = try await web.evaluateJavaScript("window.ownedScriptDialogResult")
                 let expectedResult = kind == "script-confirm" ? (result as? Bool == false) :
-                    (result as? String == (kind == "script-alert" ? "alert-returned" : "Owned submitted text"))
+                    (result as? String == (kind.hasPrefix("script-alert") ? "alert-returned" : "Owned submitted text"))
                 check(completed && expectedResult, "\(kind): the actual document receives the native dialog result")
                 if kind == "script-prompt" { check(shown && defaultWasPreserved, "The real prompt preserves its starting text before submitting edited text") }
                 let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
@@ -528,7 +540,9 @@ extension WebsiteFullscreenChecks {
         let compact = ["escape", "peek-escape", "location", "find", "reader", "close"].map { "quick-" + $0 }
         let all = regular + ["escape", "location", "find", "reader", "close"].map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
-        guard selected.allSatisfy(all.contains) else { throw Failure.fixture("unknown selected command case") }
+        // Characterization controls are opt-in and never counted as normal
+        // production-path command coverage in the full default matrix.
+        guard selected.allSatisfy((all + ["script-alert-native-control"]).contains) else { throw Failure.fixture("unknown selected command case") }
         for name in selected.isEmpty ? all : selected {
             let isPrivate = name.hasPrefix("private-"), presentation = isPrivate ? String(name.dropFirst(8)) : name
             let isQuick = presentation.hasPrefix("quick-"), kind = isQuick ? String(presentation.dropFirst(6)) : presentation
