@@ -553,8 +553,9 @@ extension WebsiteFullscreenChecks {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
         let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt"]
-        let compact = ["escape", "peek-escape", "location", "find", "reader", "close"].map { "quick-" + $0 }
-        let all = regular + ["escape", "location", "find", "reader", "close"].map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
+        let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
+        let compact = (["escape", "peek-escape", "location", "find", "reader", "close"] + scriptDialogs).map { "quick-" + $0 }
+        let all = regular + (["escape", "location", "find", "reader", "close"] + scriptDialogs).map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         // Characterization controls are opt-in and never counted as normal
         // production-path command coverage in the full default matrix.
