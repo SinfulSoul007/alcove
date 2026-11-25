@@ -19,7 +19,7 @@ import Darwin
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 500))
         let web = WKWebView(frame: host.bounds, configuration: config)
         web.autoresizingMask = [.width, .height]; host.addSubview(web)
-        let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.title = "Alcove owned stock WebKit exit control"
         window.contentView = host; window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         defer { web.closeAllMediaPresentations(completionHandler: nil); window.contentView = nil; window.close() }
@@ -27,7 +27,8 @@ import Darwin
               let base = URL(string: input), base.host == "127.0.0.1" else { throw Failure.timeout("owned loopback URL") }
         web.load(URLRequest(url: base.appendingPathComponent("page")))
         try await wait("owned stock WebKit document") {
-            (try? await web.evaluateJavaScript("document.getElementById('element')!==null")) as? Bool == true
+            guard !web.isLoading else { return false }
+            return (try? await web.evaluateJavaScript("document.getElementById('element')!==null")) as? Bool == true
         }
         try await wait("owned stock window active") { window.isKeyWindow && NSApp.isActive }
         _ = try await web.callAsyncJavaScript("""
