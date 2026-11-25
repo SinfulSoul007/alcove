@@ -1,6 +1,6 @@
 # Reader mode validation and current gates
 
-This is a local Reader increment on top of 1ae53e659cf9be38470b6a6968a197b1d9113821, with no release/version/engine changes.
+Reader is included in the [public 0.21 preview](releases/0.21.0-preview-verification.md), exact source `57a11f4462204eb380e28a9ab37ea1e7638313c9`. Combined CI passed native extraction 13/0 and native lifecycle 49/0 with owned cleanup true/true, both optimized architectures and universal package checks. Public installer bytes, mounted-DMG contents and signed update behavior were independently verified. The earlier checkpoints below record development evidence; the current release record supersedes their pending integration/publication statements.
 
 ## Architecture and resources
 
@@ -109,6 +109,6 @@ Real-layout qualification used Google's standalone headless-shell158.0.8127.88, 
 
 ## Current remaining gates
 
-The new native assertions for actual passage identity/position, XHTML CDATA, missing style resources and late failed-load completion have typechecked but have not run. Their full exact-head hosted execution, optimized Intel build and final package suite are the next integration gates. The successful8c530 CI predates these changes. Missing-style native tests temporarily move only the standalone fixture's adjacent copied asset and restore it; they refuse an installed app/resource location. All original source DOM/form/scroll and ownership assertions remain intact.
+The final native assertions for passage identity/position, XHTML CDATA, missing style resources and late failed-load completion passed in exact-source combined CI 45557540457. The optimized Intel build, universal ZIP/DMG and public download/update gates also passed; see the linked release record. Missing-style tests moved only the standalone fixture's copied asset and restored it, preserving all original source DOM/form/scroll and ownership assertions.
 
-No further VM GUI/native WebKit retry was made while that session remained locked. No new CI dispatch, monitoring or push was made by this fix pass. Actual normal/split/Peek/Quick layouts, popovers, keyboard/IME behavior, typography and animation still require observed GUI verification. Headless layout results and native fixture coverage do not imply pixel-level review. The existing unsupported-content limits above remain, and this increment does not complete the broader browser project.
+Actual normal/split/Peek/Quick layouts, popovers, keyboard/IME behavior, typography and animation still require broader observed GUI and accessibility verification. Native fixture and headless layout results do not imply pixel-level review, minimum-OS or real Intel hardware coverage. Unsupported-content limits remain, and this increment does not complete the full browser goal.

@@ -6,13 +6,13 @@ A native, open-source WebKit browser for Mac, inspired by Arc’s sidebar, Space
 
 ## Download
 
-Download **0.20.0 preview**: [DMG](https://github.com/SinfulSoul007/alcove/releases/download/v0.20.0-preview.1/Alcove-0.20.0-universal-unsigned-preview.dmg) · [ZIP](https://github.com/SinfulSoul007/alcove/releases/download/v0.20.0-preview.1/Alcove-0.20.0-universal-unsigned-preview.zip) · [Release notes and verification](docs/releases/0.20.0-preview-verification.md).
+Download **0.21.0 preview**: [DMG](https://github.com/SinfulSoul007/alcove/releases/download/v0.21.0-preview.1/Alcove-0.21.0-universal-unsigned-preview.dmg) · [ZIP](https://github.com/SinfulSoul007/alcove/releases/download/v0.21.0-preview.1/Alcove-0.21.0-universal-unsigned-preview.zip) · [Release notes and verification](docs/releases/0.21.0-preview-verification.md).
 
 Open the DMG and drag **Alcove.app** to Applications, or unzip it and move the app there. Quit an existing Alcove before replacing it. Both downloads contain the same universal app. [GitHub Releases](https://github.com/SinfulSoul007/alcove/releases) retains earlier previews.
 
 **The preview is ad hoc signed, not Developer ID signed or notarized by Apple.** Gatekeeper may warn or block it. Do not disable Gatekeeper or other system protections to run it. If macOS blocks this preview, build from source or wait for a notarized release. Published SHA-256 checksums identify the release files; they are not an independent security certification.
 
-The **0.21 development candidate** adds local Reader mode and profile-scoped bookmarks HTML export. It is undergoing combined native/build/package verification; the public 0.20 downloads above do not include these additions. This candidate continues to use system WebKit. The separately tested original-uBlock engine is not embedded or released in it.
+The **0.21 preview** includes local Reader mode and profile-scoped bookmarks HTML export. Its complete source suite, both architectures, universal installers and publisher-signed updates passed verification. It uses system WebKit. The separately tested original-uBlock engine and developing website-fullscreen changes are not included.
 
 ## Features
 
@@ -141,7 +141,7 @@ If a legacy `session.json` already exists inside Alcove’s own storage director
 
 The earlier sidebar checkpoint has [historical verification notes](docs/releases/0.9.0-sidebar-preview-verification.md). The combined 0.9 source has [verification notes](docs/releases/0.9.0-preview-verification.md).
 
-Developing source adds **File → Export Bookmarks HTML…** for the selected normal profile. It includes Favorites, pinned Space folders and remaining bookmarks, using saved pin addresses. Today and history are excluded. Choose the destination in the save dialog; the resulting HTML is readable outside Alcove's metadata encryption. This feature is not in the public 0.20 download. See its [verification and remaining checks](docs/bookmark-export-verification.md).
+Use **File → Export Bookmarks HTML…** for the selected normal profile. It includes Favorites, pinned Space folders and remaining bookmarks, using saved pin addresses. Today and history are excluded. Choose the destination in the save dialog; the resulting HTML is readable outside Alcove's metadata encryption. This feature is included in the public 0.21 preview. See its [verification and remaining checks](docs/bookmark-export-verification.md).
 
 ## Build from source
 
@@ -202,14 +202,16 @@ This runs core/store/profile/window-lifecycle/real-website/appearance/update che
 
 ## Still needed before a stable release
 
-Broader website/login/media/download compatibility testing, accessibility and keyboard polish, full site-permission management, password-manager integration, independent security review, performance and energy benchmarks, expanded phishing/malware coverage, bookmark portability, Reader compatibility and broader Chrome extension and profile lifecycle testing remain. The 0.21 development candidate implements Reader and bookmark export, with combined native/package verification still pending. Publisher-signed updates, bookmark HTML import, Downloads and Playing Tabs are implemented; their broader compatibility and native QA remain part of the release work.
+Broader website/login/media/download compatibility testing, accessibility and keyboard polish, full site-permission management, password-manager integration, independent security review, performance and energy benchmarks, expanded phishing/malware coverage, bookmark portability, Reader compatibility and broader Chrome extension and profile lifecycle testing remain. The public 0.21 preview includes Reader and bookmark export, with combined native/build/package and signed-update verification complete; their broader compatibility and desktop visual/accessibility QA remain open. Publisher-signed updates, bookmark HTML import, Downloads and Playing Tabs are implemented; their broader compatibility and native QA remain part of the release work.
 
 Arc-inspired next steps include more gesture/animation fidelity, automatic site-search discovery, live routing/gesture fidelity, Boosts and Easels/capture. Quick Browse supplies the Little Arc-style external-link workflow. Favorites, drag organization and Shift-click Peek are implemented; full Arc parity is not claimed. Encrypted sync and assisted workflows remain unimplemented parts of the broader browser goal. No Safari-equivalent speed or complete-security claim is made.
 
 Optional tab suspension unloads idle background pages when a window has more than six live pages. It keeps their tabs and last addresses. Unsaved form entries and other in-memory state can be lost when an idle page unloads. The window can keep more than six live pages when playback, capture, or other activity prevents suspension. Optional archive preserves pinned tabs and each Space’s selected tab, and offers restore from the Library. Quick Browse has its own default six-hour policy and can be turned Off.
 
+## Reader mode
+
+Use **View → Show Reader**, the page's Reader button, or “Toggle Reader Mode” in the command list to read an article without site chrome. Reader works on the focused split pane, Peek and Quick Browse. Its appearance control offers light, sepia and dark paper, serif or sans serif, text size and content width. **Back to Page** or Escape returns to the original live document with its forms and scroll intact. Links return through the original page and its website protection; Shift-click opens Peek. Text processing stays on your Mac and uses the bundled [Mozilla Readability](https://github.com/mozilla/readability), Apache-2.0. Images, media, cross-origin frames, very short pages and oversized documents are outside this first Reader increment; unavailable pages explain why. The original page remains running underneath Reader. Reader closes on navigation, window closure, transfer or profile clearing.
+
 ## License
 
 MIT for this repository’s code. Apple frameworks retain their own terms.
-
-Use **View → Show Reader**, the page's Reader button, or “Toggle Reader Mode” in the command list to read an article without site chrome. Reader works on the focused split pane, Peek and Quick Browse. Its appearance control offers light, sepia and dark paper, serif or sans serif, text size and content width. **Back to Page** or Escape returns to the original live document with its forms and scroll intact. Links return through the original page and its website protection; Shift-click opens Peek. Text processing stays on your Mac and uses the bundled [Mozilla Readability](https://github.com/mozilla/readability), Apache-2.0. Images, media, cross-origin frames, very short pages and oversized documents are outside this first Reader increment; unavailable pages explain why. The original page remains running underneath Reader. Reader closes on navigation, window closure, transfer or profile clearing.
