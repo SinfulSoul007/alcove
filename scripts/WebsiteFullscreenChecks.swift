@@ -16,11 +16,21 @@ import Darwin
     }
 
     @MainActor static func wait(_ label: String, _ condition: @escaping @MainActor () async throws -> Bool) async throws {
-        for _ in 0..<500 {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(12))
+        while clock.now < deadline {
             if try await condition() { return }
             try await Task.sleep(for: .milliseconds(20))
         }
         throw Failure.timeout(label)
+    }
+
+    @MainActor static func residency(_ label: String, web: WKWebView, host: EdgeToEdgeWebHost, window: NSWindow) {
+        print("FULLSCREEN_RESTORATION", label, "state", web.fullscreenState.rawValue,
+              "originalHost", web.superview === host, "originalWindow", web.window === window,
+              "parent", web.superview.map { String(describing: type(of: $0)) } ?? "none",
+              "hostChildren", host.subviews.map { String(describing: type(of: $0)) },
+              "borrowed", (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed ?? false)
     }
 
     @MainActor static func enter(_ web: WKWebView, target: String) async throws {
@@ -114,7 +124,13 @@ import Darwin
         check(web.window === presentationWindow && web.superview !== destination && web.fullscreenState == .inFullscreen,
               "\(target): \(replaceHost ? "replacement host" : "SwiftUI remount and resize") does not reclaim WebKit's borrowed view")
         try await leave(web)
-        try await wait("website restored to latest host") { web.superview === destination && web.window === window }
+        do {
+            try await wait("website restored to latest host") { web.superview === destination && web.window === window }
+        } catch {
+            residency("failed \(target)", web: web, host: destination, window: window)
+            throw error
+        }
+        residency("restored \(target)", web: web, host: destination, window: window)
         destination.layoutSubtreeIfNeeded()
         check(web.frame == destination.bounds && web.bounds.width > 0 && web.bounds.height > 0,
               "\(target): exit restores a usable viewport in the latest intended host")
@@ -143,9 +159,11 @@ import Darwin
             do { try await exercise(base: base, target: target, replaceHost: replace) }
             catch { failures += 1; print("FULLSCREEN_CASE_ERROR", target, "replacement", replace, error) }
         }
-        if #available(macOS 15.4, *) {
-            do { try await exerciseContexts(base: base) }
-            catch { failures += 1; print("FULLSCREEN_CONTEXT_SETUP_ERROR", error) }
+        if failures == 0 {
+            if #available(macOS 15.4, *) {
+                do { try await exerciseContexts(base: base) }
+                catch { failures += 1; print("FULLSCREEN_CONTEXT_SETUP_ERROR", error) }
+            }
         }
         print("WEBSITE_FULLSCREEN_CHECKS", checks, "FAILURES", failures)
         return failures == 0 ? 0 : 1

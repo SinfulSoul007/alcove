@@ -16,6 +16,7 @@ import WebKit
     private var restorationHost: EdgeToEdgeWebHost?
     private weak var originWindow: NSWindow?
     private(set) var isBorrowed = false
+    private var reconciliationScheduled = false
 
     init(web: WKWebView) {
         self.web = web
@@ -44,7 +45,7 @@ import WebKit
         profileID = profile
         presentationID = store.presentationIdentity(for: web)
         intendedHost = host
-        reconcileRestoration()
+        scheduleReconciliation()
     }
 
     /// Called before any AppKit reparenting, including repeated SwiftUI updates.
@@ -55,7 +56,7 @@ import WebKit
     }
 
     func viewDidMove() {
-        reconcileRestoration()
+        scheduleReconciliation()
     }
 
     private func stateChanged() {
@@ -67,7 +68,19 @@ import WebKit
                 isBorrowed = true
             }
         } else {
-            reconcileRestoration()
+            scheduleReconciliation()
+        }
+    }
+
+    private func scheduleReconciliation() {
+        guard isBorrowed, !reconciliationScheduled else { return }
+        reconciliationScheduled = true
+        // These notifications can occur inside AppKit's add/removeSubview.
+        // Never reparent recursively before that native operation has returned.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.reconciliationScheduled = false
+            self.reconcileRestoration()
         }
     }
 
