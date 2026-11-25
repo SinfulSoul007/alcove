@@ -157,6 +157,15 @@ import Darwin
               let base = URL(string: input), base.host == "127.0.0.1" else {
             print("FULLSCREEN_ENVIRONMENT_UNAVAILABLE"); return 2
         }
+        if let selection = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"], !selection.isEmpty {
+            print("FULLSCREEN_SELECTION_COMMANDS_ONLY", selection)
+            if #available(macOS 15.4, *) {
+                do { try await exerciseCommands(base: base) }
+                catch { failures += 1; print("FULLSCREEN_COMMAND_SETUP_ERROR", error) }
+            } else { failures += 1; print("FULLSCREEN_COMMAND_OS_UNAVAILABLE") }
+            print("WEBSITE_FULLSCREEN_CHECKS", checks, "FAILURES", failures)
+            return failures == 0 ? 0 : 1
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-fullscreen-preference-" + UUID().uuidString)
         let production = BrowserStore(isPrivate: true, dataRoot: root)
         let id = production.newTab()

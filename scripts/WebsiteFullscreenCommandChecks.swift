@@ -180,9 +180,22 @@ extension WebsiteFullscreenChecks {
                 other.isReleasedWhenClosed = false; other.title = "Owned alternate focus"
                 other.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 280))
                 defer { other.contentView = nil; other.close() }
+                var focusEvents: [String] = []
+                let focusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { notification in
+                    MainActor.assumeIsolated {
+                        guard let changed = notification.object as? NSWindow else { return }
+                        focusEvents.append(changed === other ? "other" : changed === window ? "origin" : changed === presentation ? "fullscreen" : "unrelated")
+                    }
+                }
+                defer { NotificationCenter.default.removeObserver(focusObserver) }
                 app.find()
                 other.makeKeyAndOrderFront(nil)
+                print("FULLSCREEN_FOCUS_REQUESTED", "otherKey", other.isKeyWindow, "originKey", window.isKeyWindow,
+                      "fullscreenKey", presentation.isKeyWindow, "find", store.findVisible)
                 let exited = await effect { (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false }
+                print("FULLSCREEN_FOCUS_RESULT", "exited", exited, "otherKey", other.isKeyWindow,
+                      "originKey", window.isKeyWindow, "fullscreenKey", presentation.isKeyWindow,
+                      "find", store.findVisible, "events", focusEvents)
                 check(exited && !presentation.isVisible && web.window === window,
                       "A focus change during command delivery still completes native fullscreen restoration")
                 check(exited && !store.findVisible && other.isKeyWindow,
@@ -225,7 +238,10 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        for kind in ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change"] {
+        let all = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change"]
+        let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
+        guard selected.allSatisfy(all.contains) else { throw Failure.fixture("unknown selected command case") }
+        for kind in selected.isEmpty ? all : selected {
             do { try await exerciseCommand(base: base, kind: kind, owned: owned, controllers: controllers) }
             catch { failures += 1; print("FULLSCREEN_COMMAND_CASE_ERROR", kind, error) }
         }
