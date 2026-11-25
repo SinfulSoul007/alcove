@@ -36,15 +36,30 @@ enum BrowserSplitDropGeometry {
 /// WebKit registers drag types of its own. Route Alcove's type from the
 /// actual hit view, which AppKit visits before its container.
 final class SplitDropWebView: WKWebView {
+    private(set) var websiteFullscreen: WebsiteFullscreen?
     private weak var splitDragHost: SplitDropWebHost?
     private var splitDragSequence: Int?
 
     override init(frame: CGRect, configuration: WKWebViewConfiguration) {
+        // This subclass is reserved for actual browser pages. Reader and other
+        // inert/internal web views keep their separate restricted configurations.
+        configuration.preferences.isElementFullscreenEnabled = true
         super.init(frame: frame, configuration: configuration)
+        websiteFullscreen = WebsiteFullscreen(web: self)
         registerForDraggedTypes(registeredDraggedTypes + [SidebarTabDrag.pasteboardType])
     }
 
     required init?(coder: NSCoder) { fatalError("Use init(frame:configuration:)") }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        websiteFullscreen?.viewDidMove()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        websiteFullscreen?.viewDidMove()
+    }
 
     private func isSidebarDrag(_ sender: NSDraggingInfo) -> Bool {
         sender.draggingPasteboard.types?.contains(SidebarTabDrag.pasteboardType) == true

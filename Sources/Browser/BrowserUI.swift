@@ -53,6 +53,7 @@ class EdgeToEdgeWebHost: NSView {
         overlay.frame=bounds;overlay.autoresizingMask=[.width,.height];overlay.bind(store:store,web:webView)
     }
     func setContent(_ view: NSView) {
+        if let web = view as? SplitDropWebView, web.websiteFullscreen?.deferMount(in: self) == true { return }
         guard subviews.first !== view else { fitContent();return }
         reader?.rootView.session.dismiss()
         reader?.removeFromSuperview(); reader = nil; readerWebView = nil
@@ -92,6 +93,7 @@ struct WebPane: NSViewRepresentable {
                 splitHost?.bindDrop(store: nil, destination: nil, color: splitAccent)
                 return
             }
+            (webView as? SplitDropWebView)?.websiteFullscreen?.bind(store: store, host: host)
             host.setContent(webView)
             host.setRecovery(store: store, webView: webView)
             host.setReader(store: store, webView: webView)
