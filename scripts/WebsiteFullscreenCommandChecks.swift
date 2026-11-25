@@ -316,6 +316,51 @@ extension WebsiteFullscreenChecks {
                 let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
                 check(store.profileID(for: web) == profile && store.documentIdentity(for: web) === document && draft == true,
                       "Cancelling the fullscreen warning preserves its original profile, document and unsaved form")
+            case "script-alert":
+                let marker = "Owned fullscreen script alert"
+                var observed = false, restoredBeforePrompt = false, attachedToOrigin = false
+                func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+                // The legacy app-modal implementation can nest AppKit's run
+                // loop. A common-mode native timer witnesses/dismisses only
+                // this owned marker, without relying on a blocked actor task.
+                let timer = Timer(timeInterval: 0.02, repeats: true) { timer in
+                    MainActor.assumeIsolated {
+                        guard let prompt = window.attachedSheet ?? presentation.attachedSheet ?? NSApp.modalWindow,
+                              let content = prompt.contentView,
+                              descendants(content).contains(where: { ($0 as? NSTextField)?.stringValue == marker }) else { return }
+                        observed = true
+                        restoredBeforePrompt = web.window === window && !presentation.isVisible &&
+                            web.fullscreenState == .notInFullscreen && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
+                        attachedToOrigin = prompt.sheetParent === window
+                        print("FULLSCREEN_SCRIPT_ALERT", "restored", restoredBeforePrompt, "originSheet", attachedToOrigin,
+                              "appModal", NSApp.modalWindow === prompt)
+                        timer.invalidate()
+                        if let parent = prompt.sheetParent { parent.endSheet(prompt, returnCode: .alertFirstButtonReturn) }
+                        else {
+                            NSApp.abortModal()
+                            if let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [],
+                                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) {
+                                NSApp.postEvent(wake, atStart: true)
+                            }
+                        }
+                        prompt.orderOut(nil)
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                defer { timer.invalidate() }
+                _ = try await web.callAsyncJavaScript("window.ownedScriptAlertDone=false;setTimeout(()=>{alert(marker);window.ownedScriptAlertDone=true},0);return true;",
+                    arguments: ["marker": marker], in: nil, contentWorld: .page)
+                let shown = await effect { observed }
+                check(shown && restoredBeforePrompt && attachedToOrigin,
+                      "A real page alert restores fullscreen and presents as a sheet on its captured browser window")
+                var completed = false
+                do {
+                    try await wait("owned script alert completion") { (try? await web.evaluateJavaScript("window.ownedScriptAlertDone===true")) as? Bool == true }
+                    completed = true
+                } catch { print("FULLSCREEN_SCRIPT_ALERT_COMPLETION_ERROR", error) }
+                let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
+                check(completed && store.documentIdentity(for: web) === document && draft == true,
+                      "Dismissing the actual page alert resumes its original document and preserves the unsaved form")
             case "coalesced", "coalesced-close":
                 guard let coordinator = (web as? SplitDropWebView)?.websiteFullscreen else { throw Failure.fixture("exit coordinator") }
                 var results: [Bool] = []
@@ -415,7 +460,7 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning"]
+        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert"]
         let compact = ["escape", "peek-escape", "location", "find", "reader", "close"].map { "quick-" + $0 }
         let all = regular + ["escape", "location", "find", "reader", "close"].map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
