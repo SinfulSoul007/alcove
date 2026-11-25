@@ -20,6 +20,10 @@ HTML = b'''<!doctype html><meta charset="utf-8"><title>Owned fullscreen fixture<
 <div id="element">Owned generic fullscreen element</div>
 <video id="video" src="/video.mp4" preload="auto" muted loop controls></video>
 <input id="draft" value="original"><div id="spacer"></div>'''
+ARTICLE = HTML + ('<article><h1>The owned fullscreen report</h1><p>' +
+                  ('A patient reader follows the river through the mountains. '
+                   'This report explains the landscape, its history, and the people who live here. ' * 60) +
+                  '</p></article>').encode()
 
 
 def command(args, *, timeout=300, env=None):
@@ -105,6 +109,8 @@ def main():
                 body, content_type = media, 'video/mp4'
             elif self.path == '/page':
                 body, content_type = HTML, 'text/html; charset=utf-8'
+            elif self.path == '/article':
+                body, content_type = ARTICLE, 'text/html; charset=utf-8'
             else:
                 self.send_error(404)
                 return

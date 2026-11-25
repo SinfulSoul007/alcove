@@ -20,8 +20,28 @@ extension WebsiteFullscreenChecks {
         for item in writer.profiles where item.id == profile {
             if let controller = item.extensionControllerID { try controllers.register(controller) }
         }
-        let id = writer.newTab(url: base.appendingPathComponent("page"))
-        let app = AppDelegate(), owner = app.makeOwner(writer)
+        let id = writer.newTab(url: base.appendingPathComponent(kind == "reader" ? "article" : "page"))
+        var outputSource: WKWebView?, outputWindow: NSWindow?, outputFormat: PageOutputFormat?
+        var outputCalls = 0, outputErrors: [String] = []
+        var environment = PageOutputEnvironment.live
+        // Actual page capture remains native. Only the user-owned destination
+        // and print-panel boundaries are witnessed/cancelled by this fixture.
+        let nativeCapture = environment.capture
+        environment.capture = { source, format, done in
+            outputSource = source; nativeCapture(source, format, done)
+        }
+        environment.choose = { window, _, format, done in
+            outputWindow = window; outputFormat = format; outputCalls += 1
+            done(nil); return {}
+        }
+        environment.print = { source, window, done in
+            outputSource = source; outputWindow = window; outputCalls += 1
+            _ = PageOutputNative.printOperation(for: source)
+            done(false); return {}
+        }
+        environment.reportError = { message, _ in outputErrors.append(message) }
+        environment.reportOrphanedError = { outputErrors.append($0) }
+        let app = AppDelegate(pageOutput: PageOutputCoordinator(environment: environment)), owner = app.makeOwner(writer)
         app.normalOwner = owner // Even a broken fallback can only open this owned profile.
         defer { owner.shutdown(); writer.shutdown(); try? FileManager.default.removeItem(at: root) }
         app.openPrimary(owner)
@@ -89,6 +109,46 @@ extension WebsiteFullscreenChecks {
                 let opened = await effect { store.findVisible && web.window === window && window.firstResponder is NSTextView && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false }
                 check(opened && store.documentIdentity(for: web) === document, "Cmd-F leaves fullscreen and searches its captured live page")
                 store.findVisible = false
+            case "reader":
+                let menu = NSMenuItem(title: "Show Reader", action: #selector(AppDelegate.toggleReader), keyEquivalent: "")
+                check(app.validateMenuItem(menu), "Reader remains available for the captured fullscreen article")
+                app.toggleReader()
+                let opened = await effect {
+                    store.readerSession(for: web)?.state == .ready && web.window === window &&
+                    (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
+                }
+                let reader = store.readerSession(for: web)
+                check(opened && !presentation.isVisible && reader?.window === window && reader?.reader.window === window,
+                      "Reader leaves native fullscreen and mounts in the original browser window")
+                let draft = try await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41") as? Bool
+                check(opened && store.documentIdentity(for: web) === document && draft == true,
+                      "Fullscreen Reader preserves the exact original article, document and unsaved form")
+                reader?.dismiss(restoringFocus: true)
+            case "print", "pdf", "archive":
+                let action = kind == "print" ? #selector(AppDelegate.printPage) : kind == "pdf" ? #selector(AppDelegate.exportPDF) : #selector(AppDelegate.savePage)
+                let menu = NSMenuItem(title: "Output", action: action, keyEquivalent: "")
+                check(app.validateMenuItem(menu), "\(kind): page-output menu remains available during native fullscreen")
+                let command: PageOutputCommand = kind == "print" ? .printPage : kind == "pdf" ? .pdf : .webArchive
+                app.performPageOutput(command, in: presentation)
+                let delivered = await effect { outputCalls == 1 }
+                check(delivered && outputSource === web && outputWindow === window && !presentation.isVisible &&
+                      web.window === window && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false,
+                      "\(kind): native page output reaches its boundary only after restoring the captured browser window")
+                check(delivered && outputErrors.isEmpty && (kind == "print" || outputFormat == (kind == "pdf" ? .pdf : .webArchive)) &&
+                      store.documentIdentity(for: web) === document && !app.pageOutput.isBusy(in: window),
+                      "\(kind): cancelling the captured output boundary preserves the document and releases its job")
+            case "customize", "settings", "library":
+                if kind == "customize" { app.customize() }
+                else if kind == "settings" { app.settings() }
+                else { app.showLibrary() }
+                let delivered = await effect {
+                    let visible = kind == "customize" ? store.appearanceVisible : kind == "settings" ? store.settingsVisible : store.libraryVisible
+                    return visible && web.window === window && !presentation.isVisible &&
+                        (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
+                }
+                check(delivered && app.windows.count == 1 && store.documentIdentity(for: web) === document,
+                      "\(kind): browser chrome opens after restoring its existing window and live page")
+                store.appearanceVisible = false; store.settingsVisible = false; store.libraryVisible = false
             case "close":
                 app.closeTab()
                 let closed = await effect { store.views[targetID] == nil && web.fullscreenState == .notInFullscreen && !presentation.isVisible }
@@ -127,7 +187,7 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        for kind in ["escape", "peek-escape", "location", "find", "close"] {
+        for kind in ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library"] {
             do { try await exerciseCommand(base: base, kind: kind, owned: owned, controllers: controllers) }
             catch { failures += 1; print("FULLSCREEN_COMMAND_CASE_ERROR", kind, error) }
         }
