@@ -51,10 +51,13 @@ import Darwin
     }
 
     @MainActor static func leave(_ web: WKWebView) async throws {
-        // The public native API works for both generic elements and native media.
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            web.closeAllMediaPresentations { continuation.resume() }
-        }
+        // The independent stock control proves this normal document exit returns
+        // the view. On the qualified hosted OS closeAllMediaPresentations instead
+        // reports state 0 while leaving the view in a detached native container.
+        _ = try await web.callAsyncJavaScript("""
+            if (document.fullscreenElement) await Document.prototype.exitFullscreen.call(document);
+            return true;
+            """, contentWorld: .defaultClient)
         try await wait("WebKit leaves fullscreen") { web.fullscreenState == .notInFullscreen }
     }
 

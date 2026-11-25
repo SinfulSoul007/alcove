@@ -1,4 +1,4 @@
-name: Owned stock WebKit fullscreen exit control
+name: Owned website fullscreen qualification
 
 on:
   workflow_dispatch:
@@ -22,11 +22,11 @@ jobs:
           export DEVELOPER_DIR=/Applications/Xcode_26.5.app/Contents/Developer
           test "$(xcrun --sdk macosx --show-sdk-version)" = 26.5
           echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
-      - name: Compare the two public exit methods in stock WebKit
+      - name: Verify genuine website fullscreen and view restoration
         run: |
           set -o pipefail
           mkdir -p .build/fullscreen
-          caffeinate -is python3 scripts/fullscreen/run-native.py --exit-control-only 2>&1 | tee .build/fullscreen/native.log
+          caffeinate -is python3 scripts/fullscreen/run-native.py 2>&1 | tee .build/fullscreen/native.log
       - name: Preserve the bounded native result
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
