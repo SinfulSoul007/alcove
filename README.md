@@ -12,6 +12,8 @@ Open the DMG and drag **Alcove.app** to Applications, or unzip it and move the a
 
 **The preview is ad hoc signed, not Developer ID signed or notarized by Apple.** Gatekeeper may warn or block it. Do not disable Gatekeeper or other system protections to run it. If macOS blocks this preview, build from source or wait for a notarized release. Published SHA-256 checksums identify the release files; they are not an independent security certification.
 
+The **0.21 development candidate** adds local Reader mode and profile-scoped bookmarks HTML export. It is undergoing combined native/build/package verification; the public 0.20 downloads above do not include these additions. This candidate continues to use system WebKit. The separately tested original-uBlock engine is not embedded or released in it.
+
 ## Features
 
 - Compact, resizable Arc-style sidebar with Favorites tiles, pinned tabs/folders, Today and named Spaces.
@@ -209,3 +211,5 @@ Optional tab suspension unloads idle background pages when a window has more tha
 ## License
 
 MIT for this repository’s code. Apple frameworks retain their own terms.
+
+Use **View → Show Reader**, the page's Reader button, or “Toggle Reader Mode” in the command list to read an article without site chrome. Reader works on the focused split pane, Peek and Quick Browse. Its appearance control offers light, sepia and dark paper, serif or sans serif, text size and content width. **Back to Page** or Escape returns to the original live document with its forms and scroll intact. Links return through the original page and its website protection; Shift-click opens Peek. Text processing stays on your Mac and uses the bundled [Mozilla Readability](https://github.com/mozilla/readability), Apache-2.0. Images, media, cross-origin frames, very short pages and oversized documents are outside this first Reader increment; unavailable pages explain why. The original page remains running underneath Reader. Reader closes on navigation, window closure, transfer or profile clearing.

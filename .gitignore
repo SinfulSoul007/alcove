@@ -5,3 +5,4 @@ build/
 dist/
 work/
 __pycache__/
+.superpowers/

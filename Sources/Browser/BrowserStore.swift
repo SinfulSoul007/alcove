@@ -181,6 +181,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var archivingOldTabs = false
     @Published var clearingToday = false
     var views: [UUID: WKWebView] = [:]
+    var readerSessions: [ObjectIdentifier: ReaderSession] = [:]
     private let documentIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     private let presentationIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     func documentIdentity(for web: WKWebView) -> NSUUID {
@@ -194,6 +195,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return identity
     }
     func invalidateDocumentIdentity(for web: WKWebView) {
+        cancelReader(for: web)
         cancelWebsiteProtectionTickets(for:web)
         documentIDs.setObject(NSUUID(), forKey: web)
         reconcilePrivateExtensionReopen()
@@ -235,6 +237,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return (web, icon)
     }
     func transferDocumentBindings(for web: WKWebView, to destination: BrowserStore) {
+        cancelReader(for: web)
         cancelWebsiteProtectionTickets(for:web)
         let identity = documentIdentity(for: web)
         let extensionOrigin = extensionOriginPopups.contains(web)
@@ -373,7 +376,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         guard !isShuttingDown else { return }
         closeExtensionManagers()
         cancelRecentTabSwitcher()
-        cancelAllWebsiteProtectionTickets(); flush(); isShuttingDown = true; privateExtensionReopenJob?.finish(.failure(ExtensionHostError.closed)); cancelAllExtensionNavigations(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
+        cancelAllReaders(); cancelAllWebsiteProtectionTickets(); flush(); isShuttingDown = true; privateExtensionReopenJob?.finish(.failure(ExtensionHostError.closed)); cancelAllExtensionNavigations(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
         profileOperationSubscription?.cancel(); profileOperationSubscription = nil
         closeAllPeeks(); for id in Array(views.keys) { discardView(id) }; namedDataStores.removeAll()
         metadataOwnership?.release(); metadataOwnership = nil

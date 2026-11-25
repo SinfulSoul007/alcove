@@ -3,7 +3,7 @@ public enum BrowserCommand: String, CaseIterable, Identifiable {
     case splitLeft, splitRight, splitTop, splitBottom, flipSplit
     case collapsePinned, expandPinned, renameTab, duplicateTab
     case returnToPinnedURL, returnToPinnedURLKeepingPage
-    case editPinnedURL, useCurrentPinnedURL
+    case editPinnedURL, useCurrentPinnedURL, reader
     public func matches(_ query: String) -> Bool {
         let searchable = self == .linkRouting ? title + " Link Preferences Air Traffic Control" : self == .boosts ? title + " Create Boost This Site" : title
         let words = searchable.lowercased().split(whereSeparator: { $0.isWhitespace })
@@ -13,6 +13,7 @@ public enum BrowserCommand: String, CaseIterable, Identifiable {
     public var id: String { rawValue }
     public var title: String {
         switch self {
+        case .reader: return "Toggle Reader Mode"
         case .pin: return "Pin Tab"
         case .unpin: return "Unpin Tab"
         case .favorite: return "Favorite Tab"

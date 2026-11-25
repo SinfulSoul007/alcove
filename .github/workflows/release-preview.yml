@@ -175,11 +175,11 @@ jobs:
           cat > release-notes.txt <<'NOTE'
           Universal macOS 14+ preview for Apple Silicon and Intel.
 
-          Alcove now checks navigation destinations against a bundled local phishing-domain list. A warning holds the original request and offers Go Back or a separate explicit continuation. Checks stay on your Mac; browsing addresses are not sent to the list provider. The warning identifies the actual hostname, provider and list date. Settings reports loading, unavailable and stale data honestly.
+          Reader mode prepares HTML articles locally with Mozilla Readability. Use View → Show Reader for the focused page. The article has light, sepia and dark themes, serif/sans type, size/width controls and its own Find/zoom. Typography changes preserve the visible passage. The original page, unsaved form and scroll remain available when Reader closes. Article scripts, remote images and extension injection do not run in the separate Reader view. Print/save actions explicitly use the original page.
 
-          Warnings follow the actual page in normal tabs, Split View, Peek, Quick Browse and extension-created website windows. Cancel keeps the current document and form. Continue preserves the original request, including form submissions and navigation downloads. Closing or transferring a page revokes its old warning controls. Closing a blocked tab remembers the committed page behind the warning for Reopen Closed Tab.
+          File → Export Bookmarks HTML… saves the selected normal profile's Favorites, pinned pages, folders and library bookmarks in browser-compatible HTML. Other profiles, Today, history, cookies and private browsing are excluded. The export uses saved pin addresses and custom names. The file contains readable titles and URLs outside Alcove's encrypted library; the native save sheet explains this before saving.
 
-          Sidebar resizing now keeps the mouse interaction free of a lingering keyboard focus ring. Using the keyboard restores its visible focus indicator. All welcome-theme choices fit the minimum setup window height.
+          Existing sidebar, Spaces, profiles, nested folders, split pages, Peek, Quick Browse, customization and first-launch setup remain available. The bundled local phishing-domain checks continue to warn before navigation; data older than 30 days is marked stale, and coverage remains limited.
 
           Future update offers are checked against Alcove's publisher signature. Download and install updates manually; Alcove never silently replaces or executes a downloaded app.
 
@@ -187,7 +187,7 @@ jobs:
 
           The local list is an additional layer with limited coverage. An address absent from it is not a safety guarantee. It does not inspect downloaded files, page contents or arbitrary subresource requests. List updates currently arrive with app releases; data older than 30 days is marked stale.
 
-          This release uses system WebKit. Full uBlock Origin remains unsupported in this preview, and Chrome extension compatibility is incomplete. The separate experimental engine has not passed full-uBlock qualification and is not included. Extensions require macOS 15.4 or later and their supported APIs and permissions must be reviewed before installation.
+          This release uses system WebKit. Full uBlock Origin remains unsupported in this preview, and Chrome extension compatibility is incomplete. A separate source-built engine passed the original full-uBlock ZIP/CRX test executable; self-contained ordinary-app integration is unfinished and that engine is not included. Extensions require macOS 15.4 or later and their supported APIs and permissions must be reviewed before installation.
 
           Browser metadata is encrypted locally; WebKit's cookies, caches and website data are managed separately. Private browsing does not make you anonymous. Independent security review, broader site compatibility, accessibility, Intel hardware and minimum-OS testing remain ongoing. This is a preview with unfinished features.
 

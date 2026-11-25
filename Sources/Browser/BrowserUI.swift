@@ -5,6 +5,8 @@ import BrowserCore
 class EdgeToEdgeWebHost: NSView {
     private var recovery:ExtensionRecoveryBanner?
     private var protection:WebsiteProtectionOverlay?
+    private var reader: ReaderOverlay?
+    private weak var readerWebView: WKWebView?
     private weak var protectionWebView:WKWebView?
     private weak var recoveryWebView: WKWebView?
     func setRecovery(store:BrowserStore,webView:WKWebView) {
@@ -14,6 +16,7 @@ class EdgeToEdgeWebHost: NSView {
         banner.bind(store:store,webView:webView);layoutRecovery()
     }
     func removeContent(_ webView: WKWebView) {
+        removeReader(for: webView)
         if protectionWebView === webView {protection?.removeFromSuperview();protection=nil;protectionWebView=nil}
         if webView.superview === self { webView.removeFromSuperview() }
         if recoveryWebView === webView {
@@ -22,7 +25,21 @@ class EdgeToEdgeWebHost: NSView {
             recoveryWebView = nil
         }
     }
+    func setReader(store: BrowserStore, webView: WKWebView) {
+        guard let session = store.readerSession(for: webView), session.isCurrent else { removeReader(for: webView); return }
+        if readerWebView !== webView || reader?.rootView.session !== session {
+            reader?.removeFromSuperview()
+            reader = ReaderOverlay(session: session); readerWebView = webView
+        }
+        if let reader { reader.frame = bounds; reader.autoresizingMask = [.width, .height]; if reader.superview !== self { addSubview(reader) } }
+        if let protection { addSubview(protection, positioned: .above, relativeTo: reader) }
+    }
+    func removeReader(for webView: WKWebView) {
+        guard readerWebView === webView else { return }
+        reader?.removeFromSuperview(); reader = nil; readerWebView = nil
+    }
     func layoutRecovery() {
+        reader?.frame = bounds
         protection?.frame=bounds
         protection?.layoutSubtreeIfNeeded()
         guard let recovery,!recovery.isHidden else {return}
@@ -37,6 +54,8 @@ class EdgeToEdgeWebHost: NSView {
     }
     func setContent(_ view: NSView) {
         guard subviews.first !== view else { fitContent();return }
+        reader?.rootView.session.dismiss()
+        reader?.removeFromSuperview(); reader = nil; readerWebView = nil
         for old in subviews { old.removeFromSuperview() }
         // SwiftUI can replace a split pane between AppKit layout passes. Give WebKit
         // its actual viewport immediately so its remote drawing surface cannot stay zero-sized.
@@ -75,6 +94,7 @@ struct WebPane: NSViewRepresentable {
             }
             host.setContent(webView)
             host.setRecovery(store: store, webView: webView)
+            host.setReader(store: store, webView: webView)
             host.setWebsiteProtection(store:store,webView:webView)
         } else { host.setContent(webView) }
         splitHost?.bindDrop(store: store, destination: splitDestination, color: splitAccent)
@@ -401,6 +421,7 @@ struct BrowserUI: View {
                     }.padding(.horizontal, 12).frame(height: 36)
                         .background(theme.tile, in: RoundedRectangle(cornerRadius: 10))
                 }.buttonStyle(.plain)
+                ReaderControl(store: store, web: store.primaryPeekView ?? store.currentView)
                 if !extensionsInTitlebar { extensions }
             }.padding(.horizontal, 8).padding(.bottom, 8)
             VStack(alignment: .leading, spacing: 0) {

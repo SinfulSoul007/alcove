@@ -234,6 +234,7 @@ struct QuickBrowseUI: View {
                 store.performQuickNavigation(id, action: foregroundWeb?.isLoading == true ? .stop : .reload)
             }
             addressField
+            ReaderControl(store: store, web: foregroundWeb)
             ExtensionControls(store:store,web:foregroundWeb,profileID:store.quickProfileID(id)).frame(width:25,height:28)
             if !compact {
                 Button { profilePickerVisible.toggle() } label: {

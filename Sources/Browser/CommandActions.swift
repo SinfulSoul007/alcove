@@ -9,6 +9,7 @@ extension BrowserStore {
         let addresses = focusedID.map { pinnedAddressActions(for: $0) } ?? .unavailable
         return BrowserCommand.allCases.filter { command in
             switch command {
+            case .reader: return (primaryPeekView ?? currentView).map { canToggleReader(for: $0) } ?? false
             case .pin: return canChangeTabMetadata && selectedTab?.url.isEmpty == false
             case .unpin: return canChangeTabMetadata && selectedTab?.pinned == true
             case .favorite: return canChangeTabMetadata && selectedTab?.url.isEmpty == false
@@ -38,6 +39,7 @@ extension BrowserStore {
         guard availableCommands.contains(command) else { return }
         commandVisible = false; commandOpensNewTab = false
         switch command {
+        case .reader: if let web = primaryPeekView ?? currentView { toggleReader(web) }
         case .pin: if let tab = selectedTab, !tab.pinned { togglePin(tab.id) }
         case .unpin: if let tab = selectedTab, tab.pinned { togglePin(tab.id) }
         case .favorite: if let tab = selectedTab, tab.favorite != true { toggleFavorite(tab.id) }
