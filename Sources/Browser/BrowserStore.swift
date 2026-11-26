@@ -559,7 +559,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             if let peek {
                 guard !extensionOriginPopups.contains(peek) else { throw ExtensionHostError.unsupportedWebsitePopup }
                 commandVisible = false
-                peek.load(URLRequest(url: url))
+                loadWebsite(peek, to: url)
                 return
             }
             if editing && new { closePrimaryPeek() }
@@ -569,10 +569,30 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             if !new, let web = views[id], extensionOriginPopups.contains(web) { throw ExtensionHostError.unsupportedWebsitePopup }
             commandVisible = false
             update(id) { $0.url = url.absoluteString; $0.title = url.host ?? "Page" }
-            view(for: id).load(URLRequest(url: url))
+            loadWebsite(view(for: id), to: url)
         } catch {
             if editing { commandError = error.localizedDescription }
             else { message = error.localizedDescription }
+        }
+    }
+    private func loadWebsite(_ web: WKWebView, to url: URL) {
+        let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen
+        let profile = profileID(for: web), document = documentIdentity(for: web), presentation = presentationIdentity(for: web)
+        let needsExit = fullscreen?.isBorrowed == true || web.fullscreenState != .notInFullscreen
+        cancelWebsitePrompts(for: web)
+        guard needsExit, let fullscreen else { web.load(URLRequest(url: url)); return }
+        // The accepted URL belongs to this exact source, even if another tab
+        // or window becomes active while WebKit returns its borrowed view.
+        fullscreen.exitForRetirement { [weak self, weak web] restored in
+            guard let self, let web, let profile, !self.isShuttingDown,
+                  web.navigationDelegate === self, self.profileID(for: web) == profile, !self.profileUnavailable(profile),
+                  self.documentIdentity(for: web) === document,
+                  self.presentationIdentity(for: web) === presentation else { return }
+            guard restored else {
+                self.message = "Couldn’t leave fullscreen to navigate. Exit fullscreen and try again."
+                return
+            }
+            web.load(URLRequest(url: url))
         }
     }
     func update(_ id: UUID, change: (inout BrowserCore.Tab) -> Void) {

@@ -27,6 +27,10 @@ on:
         description: Run existing shared-window and live handoff regressions
         type: boolean
         default: false
+      navigation_regressions:
+        description: Run existing site-search and link-routing store regressions
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,7 +38,7 @@ permissions:
 jobs:
   macos:
     runs-on: macos-26
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -106,6 +110,18 @@ jobs:
           set -o pipefail
           mkdir -p .build/fullscreen
           caffeinate -is scripts/build.sh window-group-test 2>&1 | tee .build/fullscreen/window-group.log
+      - name: Verify existing site-search navigation
+        if: ${{ always() && inputs.navigation_regressions }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh site-search-store-test 2>&1 | tee .build/fullscreen/site-search-store.log
+      - name: Verify existing link-routing navigation
+        if: ${{ always() && inputs.navigation_regressions }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh link-routing-store-test 2>&1 | tee .build/fullscreen/link-routing-store.log
       - name: Verify existing live window handoff
         if: ${{ always() && inputs.window_lifecycle }}
         run: |
