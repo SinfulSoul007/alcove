@@ -14,7 +14,19 @@ import CryptoKit
 
     var body: some View {
         Group {
-            if kind == "layout-full-sidebar-control" {
+            if ["layout-progress-control", "layout-content-frame-control"].contains(kind) {
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: max(0, chrome.pageTopInset - 8))
+                    if kind == "layout-progress-control" {
+                        ProgressView(value: web.estimatedProgress).progressViewStyle(.linear)
+                            .tint(.purple).frame(height: 2)
+                    }
+                    WebPane(webView: web, store: store)
+                }
+                .background(store.activeTheme.isDark ? Color(red: 0.095, green: 0.09, blue: 0.12) : .white)
+                .clipShape(RoundedRectangle(cornerRadius: store.appearance.cornerRadius))
+                .padding(8).padding(.leading, store.sidebarVisible ? 260 : 0)
+            } else if kind == "layout-full-sidebar-control" {
                 GeometryReader { geometry in
                     HStack(spacing: 0) {
                         if store.sidebarVisible {
@@ -198,7 +210,8 @@ extension WebsiteFullscreenChecks {
                                     "layout-sidebar-saved-control", "layout-chrome-feedback-control",
                                     "layout-native-menus-control", "layout-address-controls-control",
                                     "layout-tracking-control", "layout-store-sheet-control",
-                                    "layout-full-sidebar-control"].contains(kind)
+                                    "layout-full-sidebar-control", "layout-progress-control",
+                                    "layout-content-frame-control"].contains(kind)
             if kind == "layout-preconfigured-control" || componentControl {
                 preparedChrome = NativeWindowChrome()
                 preparedChrome?.attach(to: control)
