@@ -108,7 +108,9 @@ enum BoostRuntimeError: LocalizedError {
         let generation = page.generation
         guard let state = try await query(page, "const s=globalThis.__alcoveBoostState_v1;return s?{nonce:s.nonce,ready:s.ready}:null;", in: world) as? [String: Any],
               let nonce = state["nonce"] as? String, nonce.count == 32,
+              page.generation == generation,
               let pageNonce = try await query(page, "return typeof __alcoveBoostPageNonce_v1==='string'?__alcoveBoostPageNonce_v1:null;", in: .page) as? String, pageNonce.count == 32,
+              page.generation == generation,
               try await query(page, "return globalThis.__alcoveBoostState_v1?.nonce;", in: world) as? String == nonce,
               page.generation == generation else { throw BoostRuntimeError.unavailable }
         if page.nonce != nonce { page.nonce = nonce; page.ran = []; page.processedReady = false }
@@ -120,12 +122,13 @@ enum BoostRuntimeError: LocalizedError {
         for web in Array(store.views.values) + store.peekPages.values.map(\.web) where seen.insert(ObjectIdentifier(web)).inserted { schedule(page(for: web), auto: false) }
     }
     private static func schedule(_ page: BoostPageState, auto: Bool) {
+        let generation = page.generation
         Task { @MainActor [weak page] in
-            guard let page else { return }
+            guard let page, page.generation == generation else { return }
             do { try await refreshPage(page, auto: auto) }
             catch is CancellationError { }
             catch BoostRuntimeError.unavailable { }
-            catch { report(error, page: page) }
+            catch { if page.generation == generation { report(error, page: page) } }
         }
     }
     static func report(_ error: Error, page: BoostPageState) {
@@ -133,12 +136,13 @@ enum BoostRuntimeError: LocalizedError {
         store.message = "Boost: \(String(error.localizedDescription.prefix(500)))"
     }
     private static func refreshPage(_ page: BoostPageState, auto: Bool) async throws {
+        let generation = page.generation
         guard snapshot(page) != nil else { return }
         let document = try await readDocument(page)
-        guard let value = snapshot(page) else { return }
+        guard page.generation == generation, let value = snapshot(page) else { return }
         page.serial += 1
         _ = try await query(page, "return globalThis.__alcoveBoostState_v1?.apply(nonce,host,serial,appearance,css,selectors,textScale);", arguments: ["nonce": document.nonce, "host": value.origin.host, "serial": page.serial, "appearance": value.boost?.content.appearance.css ?? "", "css": value.boost?.content.css ?? "", "selectors": value.boost?.hiddenSelectors ?? [], "textScale": value.boost?.content.appearance.textScale ?? 1], in: world)
-        guard matches(page, value), page.nonce == document.nonce else { return }
+        guard page.generation == generation, matches(page, value), page.nonce == document.nonce else { return }
         if auto && document.ready && !page.processedReady {
             page.processedReady = true
             if let boost = value.boost, boost.isJavaScriptApproved {
@@ -174,12 +178,14 @@ enum BoostRuntimeError: LocalizedError {
               message.frameInfo.securityOrigin.port == value.origin.port || (message.frameInfo.securityOrigin.port == 0 && value.origin.port == (value.origin.scheme == "https" ? 443 : 80)) else { return }
         switch kind {
         case "start", "ready":
+            let generation = page.generation
             Task { @MainActor [weak page] in
-                guard let page else { return }
+                guard let page, page.generation == generation, matches(page, value) else { return }
                 do {
                     guard try await readDocument(page).nonce == nonce else { return }
                     try await refreshPage(page, auto: kind == "ready")
-                } catch is CancellationError { } catch BoostRuntimeError.unavailable { } catch { report(error, page: page) }
+                } catch is CancellationError { } catch BoostRuntimeError.unavailable { }
+                catch { if page.generation == generation, matches(page, value) { report(error, page: page) } }
             }
         case "picked", "cancelPicker", "pickerError": store.receiveBoostPickerMessage(payload, page: page)
         default: break

@@ -16,7 +16,7 @@ import WebKit
 }
 
 @MainActor func checkBoostProcessTermination(_ check: (Bool, String) -> Void) async throws {
-    for privateMode in [false, true] {
+    for (privateMode, queuedRefresh) in [(false, false), (true, false), (false, true), (true, true)] {
         let fixture = try SiteSearchStoreFixture(isPrivate: privateMode)
         defer { fixture.close() }
         let store = fixture.store, id = store.selectedID!
@@ -27,11 +27,12 @@ import WebKit
         store.registerView(web, for: id, profile: fixture.profile)
         let oldDocument = store.documentIdentity(for: web)
 
+        if queuedRefresh { store.refreshBoosts() }
         store.webViewWebContentProcessDidTerminate(web)
         // Allow the callback's queued MainActor work to run. No JavaScript
         // engine, website, media or real crash is needed for this boundary.
         try await Task.sleep(for: .milliseconds(50))
-        let scope = privateMode ? "Private" : "Normal"
+        let scope = (privateMode ? "Private" : "Normal") + (queuedRefresh ? " with a queued refresh" : "")
         check(store.message == "This page stopped responding. Use Reload to try again.",
               "\(scope) page-process recovery keeps its useful reload message")
         check(web.queryCount == 0,
