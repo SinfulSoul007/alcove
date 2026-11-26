@@ -107,6 +107,7 @@ def main():
               'scripts/WebsiteFullscreenCommandChecks.swift',
               'scripts/WebsiteFullscreenProfileDeletionChecks.swift',
               'scripts/WebsiteFullscreenQuitChecks.swift',
+              'scripts/WebsiteNativeLayoutChecks.swift',
               'scripts/OwnedWebsiteStores.swift', 'scripts/OwnedExtensionControllers.swift']
     if args.typecheck_only:
         command([*native, '-typecheck'])
@@ -156,9 +157,11 @@ def main():
         # The expanded matrix must finish every case; a partial aggregate run
         # cannot qualify a case it never reached. Run every group after failure.
         quit_cases = [prefix + kind for prefix in ['', 'private-', 'quick-', 'private-quick-'] for kind in ['quit', 'peek-quit']]
+        layout_cases = {'layout-production', 'layout-minimum-control', 'layout-fixed-control'}
         selection = [name for name in env.get('ALCOVE_FULLSCREEN_COMMAND_CASES', '').split(',') if name]
         selected_quits = [name for name in selection if name in quit_cases] if selection else quit_cases
-        ordinary = [name for name in selection if name not in quit_cases]
+        selected_layout = [name for name in selection if name in layout_cases]
+        ordinary = [name for name in selection if name not in quit_cases and name not in layout_cases]
         groups = (['diagnostic'] if ordinary else []) if selection else ['primary', 'private-primary', 'quick']
         failed = []
         for group in groups:
@@ -176,6 +179,26 @@ def main():
                 print('FULLSCREEN_PROCESS_GROUP_FAILED', group, type(error).__name__, flush=True)
             else:
                 print('FULLSCREEN_PROCESS_GROUP_PASSED', group, flush=True)
+        for name in selected_layout:
+            layout_env = dict(env, ALCOVE_FULLSCREEN_COMMAND_CASES=name)
+            layout_env.pop('ALCOVE_FULLSCREEN_COMMAND_GROUP', None)
+            print('FULLSCREEN_LAYOUT_PROCESS_STARTED', name, flush=True)
+            try:
+                result = subprocess.run([str(executable)], cwd=ROOT, env=layout_env,
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=325)
+                print(result.stdout[:2_000_000], end='', flush=True)
+                cycles = result.stdout.count('AttributeGraph: cycle detected')
+                print('FULLSCREEN_LAYOUT_CYCLES', name, cycles, flush=True)
+                if result.returncode != 0 or cycles != 0 or len(result.stdout) > 2_000_000:
+                    failed.append(name)
+                    print('FULLSCREEN_LAYOUT_PROCESS_FAILED', name, 'exit', result.returncode, 'cycles', cycles, flush=True)
+                else:
+                    print('FULLSCREEN_LAYOUT_PROCESS_PASSED', name, flush=True)
+            except subprocess.TimeoutExpired as error:
+                failed.append(name)
+                output = error.stdout or b''
+                print(output.decode(errors='replace')[:2_000_000] if isinstance(output, bytes) else output[:2_000_000], flush=True)
+                print('FULLSCREEN_LAYOUT_PROCESS_FAILED', name, 'timeout', flush=True)
         for name in selected_quits:
             with tempfile.TemporaryDirectory(prefix='owned-quit-', dir=OUT) as scratch:
                 child_env = dict(env, ALCOVE_FULLSCREEN_COMMAND_CASES=name, ALCOVE_FULLSCREEN_QUIT_ROOT=scratch)
