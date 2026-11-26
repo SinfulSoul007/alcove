@@ -322,12 +322,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard window.attachedSheet == nil, let store = windows[window],
               !store.onboardingVisible, !store.commandVisible, !store.findVisible,
               store.presentedPanel == nil, store.primaryPeekView == nil,
-              store.visibleRecentTabSwitcher == nil, store.boostPicker == nil,
-              let web = store.currentView, web.window === window, store.isVisibleWebsite(web),
-              let profile = store.profileID(for: web), !store.profileUnavailable(profile),
-              store.websiteProtectionTicket(for: web)?.canPresent != true else { return }
+              store.visibleRecentTabSwitcher == nil, store.boostPicker == nil else { return }
         let responder = window.firstResponder
         guard responder == nil || responder === window || responder is SidebarResizeHandle.Handle else { return }
+        guard let web = store.currentView else {
+            // Empty windows have no page to accept focus. Keep ordinary arrow
+            // keys out of the splitter until the user deliberately focuses it.
+            window.makeFirstResponder(window)
+            return
+        }
+        guard web.window === window, store.isVisibleWebsite(web),
+              let profile = store.profileID(for: web), !store.profileUnavailable(profile),
+              store.websiteProtectionTicket(for: web)?.canPresent != true else { return }
         window.makeFirstResponder(web)
     }
     private func showExternalPresenter(of owner: BrowserWindowOwner, activate: Bool = true) {
