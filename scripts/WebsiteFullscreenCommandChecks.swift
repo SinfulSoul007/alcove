@@ -198,6 +198,7 @@ extension WebsiteFullscreenChecks {
                 }
                 _ = try await survivor.evaluateJavaScript("document.getElementById('draft').value='surviving profile clear draft';document.cookie='owned_fullscreen_clear=survivor; path=/; SameSite=Lax';localStorage.setItem('owned_fullscreen_clear','survivor');true")
                 clearingSurvivor = (other, otherWindow, survivorID, survivor, otherProfile, other.documentIdentity(for: survivor))
+                store.select(id)
                 window.makeKeyAndOrderFront(nil)
             }
             if kind.hasPrefix("handoff") {
