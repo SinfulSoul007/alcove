@@ -11,6 +11,10 @@ on:
         description: Capture owned sidebar layouts for visual review
         type: boolean
         default: false
+      optimized:
+        description: Compile the native witness with the app's -O optimization
+        type: boolean
+        default: false
       command_case:
         description: Optional command-only diagnostic case; empty runs all native checks
         type: string
@@ -62,6 +66,7 @@ jobs:
       - name: Verify genuine website fullscreen and view restoration
         env:
           ALCOVE_FULLSCREEN_COMMAND_CASES: ${{ inputs.command_case }}
+          ALCOVE_FULLSCREEN_OPTIMIZED: ${{ inputs.optimized }}
         run: |
           set -o pipefail
           mkdir -p .build/fullscreen

@@ -158,9 +158,6 @@ struct BrowserUI: View {
     }
     private var browserBody: some View {
         GeometryReader { geometry in
-            // Sheet content belongs to a separate presentation graph. Capture
-            // a value, rather than reading its parent GeometryProxy there.
-            let panelHeight = geometry.size.height - 40
             let compact = store.extensionPopupProfileID != nil
             let width = SidebarSizing.width(saved: resize.temporaryWidth ?? sidebarWidth, windowWidth: geometry.size.width)
             let managerShown = store.presentedPanel == .spaces
@@ -252,19 +249,19 @@ struct BrowserUI: View {
             .sheet(item: sheetPanel) { panel in
                 Group {
                     switch panel {
-                    case .library: LibraryPanel(store: store, availableHeight: panelHeight)
-                    case .settings: SettingsPanel(store: store, availableHeight: panelHeight)
-                    case .siteSearch: SiteSearchPanel(store: store, availableHeight: panelHeight)
-                    case .links: LinkRoutingPanel(store: store, availableHeight: panelHeight)
-                    case .boosts: BoostPanel(store: store, availableHeight: panelHeight)
+                    case .library: LibraryPanel(store: store, availableHeight: geometry.size.height - 40)
+                    case .settings: SettingsPanel(store: store, availableHeight: geometry.size.height - 40)
+                    case .siteSearch: SiteSearchPanel(store: store, availableHeight: geometry.size.height - 40)
+                    case .links: LinkRoutingPanel(store: store, availableHeight: geometry.size.height - 40)
+                    case .boosts: BoostPanel(store: store, availableHeight: geometry.size.height - 40)
                     case .appearance:
                         if store.canModifyLocalMetadata {
-                            AppearancePanel(store: store, availableHeight: panelHeight, onResetSidebarWidth: resetSidebarWidth)
+                            AppearancePanel(store: store, availableHeight: geometry.size.height - 40, onResetSidebarWidth: resetSidebarWidth)
                         }
                         else { lockedAppearancePanel }
                     case .spaces: EmptyView()
-                    case .profiles: ProfilesPanel(store: store, availableHeight: panelHeight)
-                    case .updates: UpdatesPanel(controller: updates, channel: Binding(get: { UpdateChannel(rawValue: store.preferences.updateChannel ?? "preview") ?? .preview }, set: { guard store.canModifyLocalMetadata else { return }; store.preferences.updateChannel = $0.rawValue; store.save() }), availableHeight: panelHeight, canModifyChannel: store.canModifyLocalMetadata, onClose: { store.presentedPanel = nil })
+                    case .profiles: ProfilesPanel(store: store, availableHeight: geometry.size.height - 40)
+                    case .updates: UpdatesPanel(controller: updates, channel: Binding(get: { UpdateChannel(rawValue: store.preferences.updateChannel ?? "preview") ?? .preview }, set: { guard store.canModifyLocalMetadata else { return }; store.preferences.updateChannel = $0.rawValue; store.save() }), availableHeight: geometry.size.height - 40, canModifyChannel: store.canModifyLocalMetadata, onClose: { store.presentedPanel = nil })
                     }
                 }.background(BrowserSheetQuitPolicy(preventsTermination: panel.preventsApplicationTerminationWhenModal))
             }

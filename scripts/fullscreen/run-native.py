@@ -62,6 +62,8 @@ def main():
     parser.add_argument('--compile-only', action='store_true')
     parser.add_argument('--typecheck-only', action='store_true')
     parser.add_argument('--exit-control-only', action='store_true')
+    parser.add_argument('--optimized', action='store_true',
+                        default=os.environ.get('ALCOVE_FULLSCREEN_OPTIMIZED', '').lower() == 'true')
     args = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     sdk = os.environ.get('BROWSER_SDK') or subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
@@ -70,6 +72,9 @@ def main():
         sdk = str(pinned_sdk)
     arch = os.environ.get('BROWSER_ARCH') or os.uname().machine
     flags = ['-sdk', sdk, '-module-cache-path', str(OUT / 'cache'), '-target', f'{arch}-apple-macosx14.0']
+    if args.optimized:
+        flags.append('-O')
+    print('FULLSCREEN_BUILD_MODE', 'optimized' if args.optimized else 'unoptimized', flush=True)
     if args.exit_control_only:
         executable = OUT / 'stock-fullscreen-exit-control'
         command(['xcrun', 'swiftc', *flags, '-parse-as-library', '-warnings-as-errors',
@@ -166,7 +171,7 @@ def main():
         # The expanded matrix must finish every case; a partial aggregate run
         # cannot qualify a case it never reached. Run every group after failure.
         quit_cases = [prefix + kind for prefix in ['', 'private-', 'quick-', 'private-quick-'] for kind in ['quit', 'peek-quit']]
-        layout_cases = {'layout-production', 'layout-normal-production', 'layout-no-motion-production', 'layout-collapsed-production', 'layout-single-tab-production', 'layout-minimum-control', 'layout-fixed-control', 'layout-preconfigured-control', 'layout-content-minimum-control', 'layout-web-content-control', 'layout-chrome-reader-control', 'layout-sidebar-row-control', 'layout-sidebar-scroll-control', 'layout-sidebar-saved-control', 'layout-chrome-feedback-control', 'layout-native-menus-control', 'layout-address-controls-control', 'layout-tracking-control', 'layout-store-sheet-control', 'layout-full-sidebar-control', 'layout-isolated-defaults-control', 'layout-progress-control', 'layout-content-frame-control', 'layout-resize-grip-control', 'layout-ignored-safe-area-control', 'layout-conditional-progress-control', 'layout-ready-production', 'layout-full-sidebar-narrow-control', 'layout-wide-defaults-control'}
+        layout_cases = {'layout-production', 'layout-normal-production', 'layout-no-motion-production', 'layout-collapsed-production', 'layout-single-tab-production', 'layout-minimum-control', 'layout-fixed-control', 'layout-preconfigured-control', 'layout-content-minimum-control', 'layout-web-content-control', 'layout-chrome-reader-control', 'layout-sidebar-row-control', 'layout-sidebar-scroll-control', 'layout-sidebar-saved-control', 'layout-chrome-feedback-control', 'layout-native-menus-control', 'layout-address-controls-control', 'layout-tracking-control', 'layout-store-sheet-control', 'layout-full-sidebar-control', 'layout-isolated-defaults-control', 'layout-progress-control', 'layout-content-frame-control', 'layout-resize-grip-control', 'layout-ignored-safe-area-control', 'layout-conditional-progress-control', 'layout-ready-production', 'layout-full-sidebar-narrow-control', 'layout-wide-defaults-control', 'layout-normal-motion-production', 'layout-normal-no-motion-production', 'layout-normal-ready-focus-production', 'layout-normal-loading-focus-production'}
         selection = [name for name in env.get('ALCOVE_FULLSCREEN_COMMAND_CASES', '').split(',') if name]
         selected_quits = [name for name in selection if name in quit_cases] if selection else quit_cases
         selected_layout = [name for name in selection if name in layout_cases]

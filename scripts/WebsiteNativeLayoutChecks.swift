@@ -2,6 +2,28 @@ import AppKit
 import SwiftUI
 import WebKit
 import CryptoKit
+import QuartzCore
+import BrowserCore
+
+@MainActor private final class NativeSidebarMotionSampler: NSObject {
+    struct Sample {
+        let time: CFTimeInterval
+        let pageX: CGFloat
+        let dividerX: CGFloat
+    }
+    weak var page: WKWebView?
+    weak var divider: NSView?
+    weak var root: NSView?
+    var samples: [Sample] = []
+    var missingPresentation = 0
+
+    @objc func capture(_ link: CADisplayLink) {
+        guard let root = root?.layer?.presentation(), let page = page?.layer?.presentation(),
+              let divider = divider?.layer?.presentation() else { missingPresentation += 1; return }
+        samples.append(Sample(time: link.timestamp, pageX: root.convert(page.bounds, from: page).minX,
+                              dividerX: root.convert(divider.bounds, from: divider).minX))
+    }
+}
 
 /// Characterization controls use the real components, with the same live page.
 /// They localize layout notices; they cannot qualify the complete BrowserUI.
@@ -173,13 +195,28 @@ extension WebsiteFullscreenChecks {
         }
         if kind == "layout-wide-defaults-control" { sidebarDefaults?.set(260.0, forKey: "sidebarWidth") }
         defer { sidebarDefaults?.removePersistentDomain(forName: suiteName) }
-        let isPrivate = kind != "layout-normal-production"
+        let motionCheck = ["layout-normal-motion-production", "layout-normal-no-motion-production"].contains(kind)
+        let focusCheck = ["layout-normal-ready-focus-production", "layout-normal-loading-focus-production"].contains(kind)
+        let savedSidebarPreference = UserDefaults.standard.object(forKey: "sidebarWidth")
+        defer {
+            if focusCheck {
+                if let savedSidebarPreference { UserDefaults.standard.set(savedSidebarPreference, forKey: "sidebarWidth") }
+                else { UserDefaults.standard.removeObject(forKey: "sidebarWidth") }
+            }
+        }
+        let isPrivate = !(["layout-normal-production", "layout-normal-motion-production", "layout-normal-no-motion-production",
+                           "layout-normal-ready-focus-production", "layout-normal-loading-focus-production"].contains(kind))
         let fixtureKey = SymmetricKey(size: .bits256)
         var keyReads = 0
         let store = BrowserStore(isPrivate: isPrivate, dataRoot: root, keyProvider: { _ in
             keyReads += 1; return fixtureKey
         })
         store.finishOnboarding(); store.preferences.automaticUpdateChecks = false
+        if motionCheck {
+            var appearance = store.appearance
+            appearance.animationsEnabled = kind == "layout-normal-motion-production"
+            store.appearance = appearance
+        }
         if kind == "layout-no-motion-production" {
             var appearance = store.appearance; appearance.animationsEnabled = false; store.appearance = appearance
         }
@@ -194,6 +231,18 @@ extension WebsiteFullscreenChecks {
             }
         }
         let id = store.newTab(url: base.appendingPathComponent("page-no-media"))
+        if motionCheck {
+            // These are unloaded models, not extra WKWebViews or real sites.
+            store.session.spaces[store.spaceIndex].tabs += (0..<96).map {
+                BrowserCore.Tab(title: "Owned motion row \($0)", url: "about:blank", pinned: $0 < 32)
+            }
+            var library = store.library
+            library.favoriteTabs = (0..<12).map {
+                var tab = BrowserCore.Tab(title: "Owned favorite \($0)", url: "about:blank", pinned: true)
+                tab.favorite = true; return tab
+            }
+            store.library = library
+        }
         if kind == "layout-single-tab-production" {
             for other in store.space.tabs.map(\.id) where other != id { store.close(other) }
         }
@@ -202,7 +251,7 @@ extension WebsiteFullscreenChecks {
             check(store.profileID(for: web) == normalProfile && web.configuration.websiteDataStore.identifier == normalProfile,
                   "Normal native layout uses its registered disposable named profile")
         }
-        if kind == "layout-ready-production" {
+        if kind == "layout-ready-production" || kind == "layout-normal-ready-focus-production" || motionCheck {
             try await wait("owned page ready before browser UI") {
                 guard !web.isLoading else { return false }
                 return (try? await web.evaluateJavaScript("document.readyState==='complete'&&document.getElementById('draft')!==null")) as? Bool == true
@@ -214,7 +263,7 @@ extension WebsiteFullscreenChecks {
         var preparedChrome: NativeWindowChrome?
         let window: NSWindow
         print("FULLSCREEN_LAYOUT_PHASE", kind, "mount")
-        if ["layout-production", "layout-normal-production", "layout-no-motion-production", "layout-collapsed-production", "layout-single-tab-production", "layout-ready-production"].contains(kind) {
+        if ["layout-production", "layout-normal-production", "layout-no-motion-production", "layout-collapsed-production", "layout-single-tab-production", "layout-ready-production", "layout-normal-motion-production", "layout-normal-no-motion-production", "layout-normal-ready-focus-production", "layout-normal-loading-focus-production"].contains(kind) {
             app.openPrimary(owner)
             guard let primary = app.primaryOwners.first(where: { $0.value === owner })?.key else {
                 throw Failure.fixture("actual production layout window")
@@ -293,6 +342,7 @@ extension WebsiteFullscreenChecks {
         print("FULLSCREEN_LAYOUT_CHROME", kind, "ready", window.contentView.map(chromeMetrics) ?? [])
         _ = try await web.evaluateJavaScript("document.getElementById('draft').value='native layout draft';window.ownedLayoutToken=73;true")
         let document = store.documentIdentity(for: web)
+        if focusCheck { try await exerciseInitialPageFocus(store: store, web: web, window: window) }
         check(window.toolbarStyle == .unifiedCompact && window.toolbar != nil,
               "The visible browser root uses its actual native compact window chrome")
         print("FULLSCREEN_LAYOUT_INITIAL_METRICS", kind, "frame", window.frame.size, "minimum", window.minSize,
@@ -328,6 +378,99 @@ extension WebsiteFullscreenChecks {
               "Visible native resizing, sidebar changes and theming preserve the exact page and unsaved form")
         check(window.minSize.width >= 800 && window.minSize.height >= 540,
               "Sidebar and theme updates preserve the browser's usable resize limit")
+        if motionCheck { try await exerciseSidebarMotion(store: store, web: web, window: window, document: document) }
         print("FULLSCREEN_LAYOUT_CASE_COMPLETED", kind)
+    }
+
+    @available(macOS 15.4, *) @MainActor
+    private static func exerciseInitialPageFocus(store: BrowserStore, web: WKWebView, window: NSWindow) async throws {
+        // Give AppKit's initial key-view setup time to settle before testing a
+        // real arrow event in this owned app's queue. No desktop-wide input.
+        try await Task.sleep(for: .milliseconds(150))
+        let focused = (window.firstResponder as? NSView).map { $0 === web || $0.isDescendant(of: web) } ?? false
+        print("FULLSCREEN_INITIAL_FOCUS", window.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
+        check(focused, "A new browser window initially gives keyboard focus to its actual page")
+        _ = try await web.evaluateJavaScript("window.ownedInitialFocusArrow=false;window.addEventListener('keydown',event=>{if(event.key==='ArrowLeft')window.ownedInitialFocusArrow=true})")
+        let before = store.windowSidebarWidth
+        let character = String(UnicodeScalar(0xF702)!), time = ProcessInfo.processInfo.systemUptime
+        for (type, offset) in [(NSEvent.EventType.keyDown, 0.0), (.keyUp, 0.01)] {
+            guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: time + offset,
+                windowNumber: window.windowNumber, context: nil, characters: character, charactersIgnoringModifiers: character,
+                isARepeat: false, keyCode: 123) else { throw Failure.fixture("owned arrow key") }
+            NSApp.postEvent(event, atStart: false)
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        var delivered = false
+        while ContinuousClock.now < deadline {
+            delivered = (try? await web.evaluateJavaScript("window.ownedInitialFocusArrow===true")) as? Bool == true
+            if delivered { break }
+            try await Task.sleep(for: .milliseconds(12))
+        }
+        print("FULLSCREEN_INITIAL_ARROW", "delivered", delivered, "widthBefore", before ?? -1, "widthAfter", store.windowSidebarWidth ?? -1)
+        check(delivered && store.windowSidebarWidth == before,
+              "A plain initial arrow key reaches the actual document without resizing the sidebar")
+    }
+
+    @available(macOS 15.4, *) @MainActor
+    private static func exerciseSidebarMotion(store: BrowserStore, web: WKWebView, window: NSWindow,
+                                             document: AnyObject) async throws {
+        func dividers(_ view: NSView) -> [SidebarResizeHandle.Handle] {
+            if let divider = view as? SidebarResizeHandle.Handle { return [divider] }
+            return view.subviews.flatMap(dividers)
+        }
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              let root = window.contentView, let divider = dividers(root).first else {
+            throw Failure.fixture("display and divider available with system Reduce Motion off")
+        }
+        let sampler = NativeSidebarMotionSampler(); sampler.root = root; sampler.page = web; sampler.divider = divider
+        print("FULLSCREEN_MOTION_RENDER_CONTEXT", "rootLayer", root.layer != nil, "pageLayer", web.layer != nil,
+              "dividerLayer", divider.layer != nil, "reduceMotion", NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        let link = window.displayLink(target: sampler, selector: #selector(NativeSidebarMotionSampler.capture(_:)))
+        link.add(to: .main, forMode: .common)
+        defer {
+            print("FULLSCREEN_MOTION_SAMPLER_FINISHED", "samples", sampler.samples.count, "missingPresentation", sampler.missingPresentation)
+            link.invalidate()
+        }
+        try await wait("presentation-tree display samples") { sampler.samples.count >= 3 }
+        let baselineX = CGFloat((store.windowSidebarWidth ?? SidebarSizing.defaultWidth) + 8)
+        print("FULLSCREEN_MOTION_BASELINE", "page", sampler.samples.last?.pageX ?? -999, "target", baselineX)
+        try await wait("settled initial sidebar presentation") {
+            let tail = sampler.samples.suffix(3)
+            return tail.count == 3 && tail.allSatisfy { abs($0.pageX - baselineX) < 1 }
+        }
+        let enabled = store.appearance.animationsEnabled
+        for shown in [false, true, false, true] {
+            guard let first = sampler.samples.last else { throw Failure.fixture("initial presentation sample") }
+            sampler.samples.removeAll(keepingCapacity: true)
+            let sidebarWidth = store.windowSidebarWidth ?? SidebarSizing.defaultWidth
+            let target = CGFloat(shown ? sidebarWidth + 8 : 8)
+            print("FULLSCREEN_MOTION_STARTED", "enabled", enabled, "shown", shown, "from", first.pageX, "target", target)
+            store.sidebarVisible = shown
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            var settled = false
+            while ContinuousClock.now < deadline {
+                let tail = sampler.samples.suffix(3)
+                if tail.count == 3 && tail.allSatisfy({ abs($0.pageX - target) < 1 }) { settled = true; break }
+                try await Task.sleep(for: .milliseconds(12))
+            }
+            let samples = sampler.samples
+            let low = min(first.pageX, target), high = max(first.pageX, target)
+            let pageSteps = Set(samples.filter { $0.pageX > low + 1 && $0.pageX < high - 1 }.map { Int($0.pageX.rounded()) })
+            let finalDivider = shown ? CGFloat(sidebarWidth - 6) : -22
+            let dividerLow = min(first.dividerX, finalDivider), dividerHigh = max(first.dividerX, finalDivider)
+            let dividerSteps = Set(samples.filter { $0.dividerX > dividerLow + 1 && $0.dividerX < dividerHigh - 1 }.map { Int($0.dividerX.rounded()) })
+            let intervals = zip(samples, samples.dropFirst()).map { pair in pair.1.time - pair.0.time }
+            print("FULLSCREEN_MOTION_RESULT", "enabled", enabled, "shown", shown,
+                  "frames", samples.count, "pageSteps", pageSteps.count, "dividerSteps", dividerSteps.count,
+                  "maxCallbackGapMs", (intervals.max() ?? 0) * 1000, "missingPresentation", sampler.missingPresentation,
+                  "first", samples.first?.pageX ?? -999, "last", samples.last?.pageX ?? -999)
+            check(settled, "The live \(shown ? "opening" : "closing") sidebar reaches its final page geometry")
+            check(enabled ? pageSteps.count >= 3 && dividerSteps.count >= 3 : pageSteps.isEmpty && dividerSteps.isEmpty,
+                  enabled ? "The page and native divider present intermediate positions during sidebar motion" :
+                            "Disabling interface animation removes intermediate sidebar/page positions")
+            let draft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='native layout draft'&&window.ownedLayoutToken===73")) as? Bool
+            check(store.documentIdentity(for: web) === document && web.window === window && draft == true,
+                  "The actual sidebar transition preserves its exact live page, document and unsaved form")
+        }
     }
 }
