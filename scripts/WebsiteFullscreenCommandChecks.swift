@@ -61,6 +61,7 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommand(base: URL, kind: String, owned: OwnedWebsiteStores,
                                 controllers: OwnedExtensionControllers, isPrivate: Bool = false, isQuick: Bool = false) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-fullscreen-command-" + UUID().uuidString)
+        let isProfileClear = kind == "profile-clear" || kind == "peek-profile-clear"
         var protection: WebsiteProtectionService?
         if kind == "warning" {
             // A one-domain owned catalog; no target navigation or network request.
@@ -93,8 +94,7 @@ extension WebsiteFullscreenChecks {
         }
         let sourceSpace = writer.space.id
         var clearingSurvivorSpace: UUID?, clearingSurvivorProfile: UUID?
-        if kind == "profile-clear" {
-            guard !isPrivate, !isQuick else { throw Failure.fixture("normal named-profile clear fixture") }
+        if isProfileClear && !isPrivate {
             let otherProfile = try writer.createProfile(name: "Owned clearing survivor")
             try owned.register(otherProfile)
             if let controller = writer.profiles.first(where: { $0.id == otherProfile })?.extensionControllerID {
@@ -140,12 +140,19 @@ extension WebsiteFullscreenChecks {
         environment.reportError = { message, _ in outputErrors.append(message) }
         environment.reportOrphanedError = { outputErrors.append($0) }
         let app = AppDelegate(pageOutput: PageOutputCoordinator(environment: environment)), owner = app.makeOwner(writer)
+        var clearingPrivateOwner: BrowserWindowOwner?
+        var clearingPrivateKeyReads = 0
         app.normalOwner = owner // Even a broken fallback can only open this owned profile.
         defer {
+            clearingPrivateOwner?.shutdown()
             owner.shutdown(); writer.shutdown()
             if isPrivate {
                 check(keyReads == 0 && !FileManager.default.fileExists(atPath: writer.sessionURL.path),
                       "Private fullscreen \(kind) never reads a metadata key or writes a saved session")
+                if let other = clearingPrivateOwner {
+                    check(clearingPrivateKeyReads == 0 && !FileManager.default.fileExists(atPath: other.store.sessionURL.path),
+                          "The surviving private session never reads a metadata key or writes a saved session")
+                }
             }
             try? FileManager.default.removeItem(at: root)
         }
@@ -183,14 +190,29 @@ extension WebsiteFullscreenChecks {
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         var caught: Error?
         do {
-            if kind == "profile-clear" {
-                guard let otherSpace = clearingSurvivorSpace, let otherProfile = clearingSurvivorProfile else {
-                    throw Failure.fixture("owned clearing survivor profile")
+            if isProfileClear {
+                let other: BrowserStore, otherWindow: NSWindow, otherProfile: UUID
+                if isPrivate {
+                    other = BrowserStore(isPrivate: true, dataRoot: root.appendingPathComponent("private-clearing-survivor"), keyProvider: { _ in
+                        clearingPrivateKeyReads += 1; return SymmetricKey(data: Data(repeating: 91, count: 32))
+                    })
+                    other.finishOnboarding(); other.preferences.automaticUpdateChecks = false
+                    let otherOwner = app.makeOwner(other); clearingPrivateOwner = otherOwner
+                    app.openPrimary(otherOwner)
+                    guard let opened = app.primaryOwners.first(where: { $0.value === otherOwner })?.key else {
+                        throw Failure.fixture("independent private clearing survivor window")
+                    }
+                    otherWindow = opened; otherProfile = BrowserProfile.defaultID
+                } else {
+                    guard let otherSpace = clearingSurvivorSpace, let otherID = clearingSurvivorProfile else {
+                        throw Failure.fixture("owned clearing survivor profile")
+                    }
+                    app.newBrowserWindow()
+                    guard let opened = app.windows.keys.first(where: { $0 !== primaryWindow && app.primaryOwners[$0] === owner }),
+                          let openedStore = app.windows[opened] else { throw Failure.fixture("owned clearing survivor window") }
+                    other = openedStore; otherWindow = opened; otherProfile = otherID
+                    other.selectSpace(otherSpace)
                 }
-                app.newBrowserWindow()
-                guard let otherWindow = app.windows.keys.first(where: { $0 !== window && app.primaryOwners[$0] === owner }),
-                      let other = app.windows[otherWindow] else { throw Failure.fixture("owned clearing survivor window") }
-                other.selectSpace(otherSpace)
                 let survivorID = other.newTab(url: base.appendingPathComponent("page-no-media"))
                 let survivor = other.view(for: survivorID)
                 try await wait("other-profile clearing survivor ready") {
@@ -198,7 +220,14 @@ extension WebsiteFullscreenChecks {
                 }
                 _ = try await survivor.evaluateJavaScript("document.getElementById('draft').value='surviving profile clear draft';document.cookie='owned_fullscreen_clear=survivor; path=/; SameSite=Lax';localStorage.setItem('owned_fullscreen_clear','survivor');true")
                 clearingSurvivor = (other, otherWindow, survivorID, survivor, otherProfile, other.documentIdentity(for: survivor))
-                store.select(id)
+                if !isQuick { store.select(id) }
+                if kind == "peek-profile-clear" {
+                    store.openPeek(base.appendingPathComponent("page"), from: underlying)
+                    guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else {
+                        throw Failure.fixture("clearing source Peek")
+                    }
+                    web = peek
+                }
                 window.makeKeyAndOrderFront(nil)
             }
             if kind.hasPrefix("handoff") {
@@ -243,7 +272,7 @@ extension WebsiteFullscreenChecks {
                 throw error
             }
             _ = try await web.evaluateJavaScript("document.getElementById('draft').value='captured command draft';window.ownedCommandToken=41;true")
-            if kind == "profile-clear" {
+            if isProfileClear {
                 _ = try await web.evaluateJavaScript("document.cookie='owned_fullscreen_clear=target; path=/; SameSite=Lax';localStorage.setItem('owned_fullscreen_clear','target');true")
             }
             let document = store.documentIdentity(for: web)
@@ -257,26 +286,32 @@ extension WebsiteFullscreenChecks {
             check(app.outputTarget(in: presentation)?.web === web,
                   "\(kind): page-output selection retains the fullscreen source")
             switch kind {
-            case "profile-clear":
-                guard let survivor = clearingSurvivor,
-                      profile != BrowserProfile.defaultID,
-                      web.configuration.websiteDataStore.identifier == profile else {
-                    throw Failure.fixture("owned named stores for actual profile erasure")
+            case "profile-clear", "peek-profile-clear":
+                guard let survivor = clearingSurvivor else { throw Failure.fixture("independent clearing survivor") }
+                let targetStore = web.configuration.websiteDataStore
+                let otherStore = survivor.web.configuration.websiteDataStore
+                let ownedTarget = isPrivate ? (!targetStore.isPersistent && targetStore === store.privateDataStore) :
+                    (profile != BrowserProfile.defaultID && targetStore.identifier == profile)
+                guard ownedTarget else {
+                    throw Failure.fixture("owned website store for actual profile erasure")
                 }
                 let targetState = (try? await web.evaluateJavaScript("document.cookie==='owned_fullscreen_clear=target'&&localStorage.getItem('owned_fullscreen_clear')==='target'")) as? Bool
                 let otherState = (try? await survivor.web.evaluateJavaScript("document.cookie==='owned_fullscreen_clear=survivor'&&localStorage.getItem('owned_fullscreen_clear')==='survivor'")) as? Bool
-                check(targetState == true && otherState == true && survivor.profile != profile &&
-                      survivor.web.configuration.websiteDataStore.identifier == survivor.profile,
-                      "Profile clearing starts with isolated real cookies and local storage in two owned named profiles")
+                let isolated = isPrivate ? (!otherStore.isPersistent && otherStore !== targetStore) :
+                    (survivor.profile != profile && otherStore.identifier == survivor.profile)
+                check(targetState == true && otherState == true && isolated,
+                      "Profile clearing starts with isolated real cookies and local storage in two owned website stores")
                 var removalCalls = 0, safeBeforeRemoval = false, removed = false
                 try await store.clearProfileData(profile, removeData: { dataStore in
-                    guard dataStore.identifier == profile, dataStore.isPersistent else {
-                        throw Failure.fixture("refusing erasure outside the owned named profile")
+                    guard dataStore === targetStore,
+                          isPrivate ? !dataStore.isPersistent : (dataStore.isPersistent && dataStore.identifier == profile) else {
+                        throw Failure.fixture("refusing erasure outside the exact owned website store")
                     }
                     removalCalls += 1
                     safeBeforeRemoval = !presentation.isVisible && web.fullscreenState == .notInFullscreen &&
                         (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false &&
-                        store.pageStores.allSatisfy { $0.views[id] == nil && $0.primaryPeekView !== web }
+                        store.pageStores.allSatisfy { !$0.viewProfileIDs.values.contains(profile) &&
+                            !$0.peekPages.values.contains(where: { $0.profileID == profile }) }
                     check(safeBeforeRemoval,
                           "Profile clearing completes physical fullscreen retirement before actual website-data erasure")
                     await withCheckedContinuation { reply in
@@ -289,9 +324,11 @@ extension WebsiteFullscreenChecks {
                 }
                 let retired = await effect {
                     !presentation.isVisible && web.fullscreenState == .notInFullscreen &&
-                        (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false && store.views[id] == nil
+                        (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false && store.views[id] == nil &&
+                        store.pageStores.allSatisfy { !$0.peekPages.values.contains(where: { $0.web === web }) }
                 }
-                check(removalCalls == 1 && removed && safeBeforeRemoval && retired && !store.profileUnavailable(profile),
+                check(removalCalls == 1 && removed && safeBeforeRemoval && retired && !store.profileUnavailable(profile) &&
+                      primaryWindow.isVisible && (isQuick ? !window.isVisible && store.quickPage(id) == nil : window.isVisible),
                       "Profile clearing erases once, releases the old native presentation and resumes the cleared profile without recovery")
                 guard let clearedSpace = store.session.spaces.first(where: { $0.id == sourceSpace }),
                       clearedSpace.tabs.count == 1, let freshID = clearedSpace.selected,
@@ -303,8 +340,9 @@ extension WebsiteFullscreenChecks {
                     return (try? await fresh.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
                 }
                 let emptyData = (try? await fresh.evaluateJavaScript("document.cookie===''&&localStorage.getItem('owned_fullscreen_clear')===null")) as? Bool
+                let freshStore = fresh.configuration.websiteDataStore
                 check(fresh !== web && store.profileID(for: fresh) == profile &&
-                      fresh.configuration.websiteDataStore.identifier == profile && emptyData == true,
+                      (isPrivate ? !freshStore.isPersistent && freshStore === targetStore : freshStore.identifier == profile) && emptyData == true,
                       "Reopening the cleared profile actually has no prior cookie or local-storage marker")
                 let survivorData = (try? await survivor.web.evaluateJavaScript("document.getElementById('draft').value==='surviving profile clear draft'&&document.cookie==='owned_fullscreen_clear=survivor'&&localStorage.getItem('owned_fullscreen_clear')==='survivor'")) as? Bool
                 check(survivor.window.isVisible && survivor.store.views[survivor.id] === survivor.web &&
@@ -1060,12 +1098,12 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static", "suspend-static", "profile-clear"]
+        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static", "suspend-static", "profile-clear", "peek-profile-clear"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
-        let compact = (["escape", "peek-escape", "location", "find", "reader", "close", "close-window-direct", "peek-parent-close", "peek-parent-model-close", "expire-static", "peek-expire-static"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
-        let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
+        let compact = (["escape", "peek-escape", "location", "find", "reader", "close", "close-window-direct", "peek-parent-close", "peek-parent-model-close", "expire-static", "peek-expire-static", "profile-clear", "peek-profile-clear"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
+        let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static", "profile-clear", "peek-profile-clear"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
         guard ["", "primary", "private-primary", "quick"].contains(group), group.isEmpty || selected.isEmpty else {
