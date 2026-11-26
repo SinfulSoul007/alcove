@@ -8,6 +8,7 @@ import BrowserCore
 @MainActor private final class NativeSidebarMotionSampler: NSObject {
     struct Sample {
         let time: CFTimeInterval
+        let received: CFTimeInterval
         let pageX: CGFloat
         let dividerX: CGFloat
     }
@@ -20,7 +21,7 @@ import BrowserCore
     @objc func capture(_ link: CADisplayLink) {
         guard let root = root?.layer?.presentation(), let page = page?.layer?.presentation(),
               let divider = divider?.layer?.presentation() else { missingPresentation += 1; return }
-        samples.append(Sample(time: link.timestamp, pageX: root.convert(page.bounds, from: page).minX,
+        samples.append(Sample(time: link.timestamp, received: CACurrentMediaTime(), pageX: root.convert(page.bounds, from: page).minX,
                               dividerX: root.convert(divider.bounds, from: divider).minX))
     }
 }
@@ -195,7 +196,8 @@ extension WebsiteFullscreenChecks {
         }
         if kind == "layout-wide-defaults-control" { sidebarDefaults?.set(260.0, forKey: "sidebarWidth") }
         defer { sidebarDefaults?.removePersistentDomain(forName: suiteName) }
-        let motionCheck = ["layout-normal-motion-production", "layout-normal-no-motion-production"].contains(kind)
+        let sparseMotion = kind == "layout-normal-motion-sparse-production"
+        let motionCheck = sparseMotion || ["layout-normal-motion-production", "layout-normal-no-motion-production"].contains(kind)
         let focusCheck = ["layout-normal-ready-focus-production", "layout-normal-loading-focus-production",
                           "layout-private-ready-focus-production", "layout-private-loading-focus-production",
                           "layout-normal-background-focus-production"].contains(kind)
@@ -206,7 +208,7 @@ extension WebsiteFullscreenChecks {
                 else { UserDefaults.standard.removeObject(forKey: "sidebarWidth") }
             }
         }
-        let isPrivate = !(["layout-normal-production", "layout-normal-motion-production", "layout-normal-no-motion-production",
+        let isPrivate = !(["layout-normal-production", "layout-normal-motion-production", "layout-normal-no-motion-production", "layout-normal-motion-sparse-production",
                            "layout-normal-ready-focus-production", "layout-normal-loading-focus-production",
                            "layout-normal-background-focus-production"].contains(kind))
         let fixtureKey = SymmetricKey(size: .bits256)
@@ -217,7 +219,7 @@ extension WebsiteFullscreenChecks {
         store.finishOnboarding(); store.preferences.automaticUpdateChecks = false
         if motionCheck {
             var appearance = store.appearance
-            appearance.animationsEnabled = kind == "layout-normal-motion-production"
+            appearance.animationsEnabled = kind != "layout-normal-no-motion-production"
             store.appearance = appearance
         }
         if kind == "layout-no-motion-production" {
@@ -234,7 +236,7 @@ extension WebsiteFullscreenChecks {
             }
         }
         let id = store.newTab(url: base.appendingPathComponent("page-no-media"))
-        if motionCheck {
+        if motionCheck && !sparseMotion {
             // These are unloaded models, not extra WKWebViews or real sites.
             store.session.spaces[store.spaceIndex].tabs += (0..<96).map {
                 BrowserCore.Tab(title: "Owned motion row \($0)", url: "about:blank", pinned: $0 < 32)
@@ -246,7 +248,7 @@ extension WebsiteFullscreenChecks {
             }
             store.library = library
         }
-        if kind == "layout-single-tab-production" {
+        if kind == "layout-single-tab-production" || sparseMotion {
             for other in store.space.tabs.map(\.id) where other != id { store.close(other) }
         }
         let web = store.view(for: id)
@@ -267,7 +269,7 @@ extension WebsiteFullscreenChecks {
         var preparedChrome: NativeWindowChrome?
         let window: NSWindow
         print("FULLSCREEN_LAYOUT_PHASE", kind, "mount")
-        if ["layout-production", "layout-normal-production", "layout-no-motion-production", "layout-collapsed-production", "layout-single-tab-production", "layout-ready-production", "layout-normal-motion-production", "layout-normal-no-motion-production", "layout-normal-ready-focus-production", "layout-normal-loading-focus-production", "layout-private-ready-focus-production", "layout-private-loading-focus-production", "layout-normal-background-focus-production"].contains(kind) {
+        if ["layout-production", "layout-normal-production", "layout-no-motion-production", "layout-collapsed-production", "layout-single-tab-production", "layout-ready-production", "layout-normal-motion-production", "layout-normal-no-motion-production", "layout-normal-motion-sparse-production", "layout-normal-ready-focus-production", "layout-normal-loading-focus-production", "layout-private-ready-focus-production", "layout-private-loading-focus-production", "layout-normal-background-focus-production"].contains(kind) {
             app.openPrimary(owner, activate: kind != "layout-normal-background-focus-production")
             if kind == "layout-normal-background-focus-production" {
                 app.openPrimary(owner)
@@ -467,6 +469,15 @@ extension WebsiteFullscreenChecks {
         }
         let enabled = store.appearance.animationsEnabled
         for shown in [false, true, false, true] {
+            sampler.samples.removeAll(keepingCapacity: true)
+            try await Task.sleep(for: .milliseconds(300))
+            let idle = sampler.samples
+            guard idle.count >= 3 else { throw Failure.fixture("paired idle display callbacks") }
+            let idleTicks = zip(idle, idle.dropFirst()).map { $0.1.time - $0.0.time }
+            let idleDelivery = zip(idle, idle.dropFirst()).map { $0.1.received - $0.0.received }
+            print("FULLSCREEN_MOTION_IDLE", "enabled", enabled, "beforeShown", shown,
+                  "samples", idle.count, "maxDisplayTimestampGapMs", (idleTicks.max() ?? 0) * 1000,
+                  "maxDeliveryGapMs", (idleDelivery.max() ?? 0) * 1000)
             guard let first = sampler.samples.last else { throw Failure.fixture("initial presentation sample") }
             sampler.samples.removeAll(keepingCapacity: true)
             let sidebarWidth = store.windowSidebarWidth ?? SidebarSizing.defaultWidth
@@ -487,9 +498,11 @@ extension WebsiteFullscreenChecks {
             let dividerLow = min(first.dividerX, finalDivider), dividerHigh = max(first.dividerX, finalDivider)
             let dividerSteps = Set(samples.filter { $0.dividerX > dividerLow + 1 && $0.dividerX < dividerHigh - 1 }.map { Int($0.dividerX.rounded()) })
             let intervals = zip(samples, samples.dropFirst()).map { pair in pair.1.time - pair.0.time }
+            let delivery = zip(samples, samples.dropFirst()).map { pair in pair.1.received - pair.0.received }
             print("FULLSCREEN_MOTION_RESULT", "enabled", enabled, "shown", shown,
                   "frames", samples.count, "pageSteps", pageSteps.count, "dividerSteps", dividerSteps.count,
                   "maxCallbackGapMs", (intervals.max() ?? 0) * 1000, "missingPresentation", sampler.missingPresentation,
+                  "maxDeliveryGapMs", (delivery.max() ?? 0) * 1000,
                   "first", samples.first?.pageX ?? -999, "last", samples.last?.pageX ?? -999)
             check(settled, "The live \(shown ? "opening" : "closing") sidebar reaches its final page geometry")
             check(enabled ? pageSteps.count >= 3 && dividerSteps.count >= 3 : pageSteps.isEmpty && dividerSteps.isEmpty,
