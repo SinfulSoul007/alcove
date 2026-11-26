@@ -14,7 +14,18 @@ import CryptoKit
 
     var body: some View {
         Group {
-            if kind == "layout-store-sheet-control" {
+            if kind == "layout-full-sidebar-control" {
+                GeometryReader { geometry in
+                    HStack(spacing: 0) {
+                        if store.sidebarVisible {
+                            BrowserSidebar(store: store, chrome: chrome, reveal: reveal, width: 260,
+                                           windowHeight: geometry.size.height, motion: nil,
+                                           interactionBlocked: false, resizing: false).frame(width: 260)
+                        }
+                        WebPane(webView: web, store: store).padding(8)
+                    }
+                }
+            } else if kind == "layout-store-sheet-control" {
                 componentContent.sheet(item: Binding(get: {
                     store.presentedPanel == .spaces ? nil : store.presentedPanel
                 }, set: { next in
@@ -129,6 +140,12 @@ extension WebsiteFullscreenChecks {
     static func exerciseNativeLayout(base: URL, kind: String, owned: OwnedWebsiteStores,
                                      controllers: OwnedExtensionControllers) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-native-layout-" + UUID().uuidString)
+        let suiteName = "Alcove.NativeLayout." + UUID().uuidString
+        let sidebarDefaults = kind == "layout-isolated-defaults-control" ? UserDefaults(suiteName: suiteName) : nil
+        if let sidebarDefaults, let saved = UserDefaults.standard.object(forKey: "sidebarWidth") {
+            sidebarDefaults.set(saved, forKey: "sidebarWidth")
+        }
+        defer { sidebarDefaults?.removePersistentDomain(forName: suiteName) }
         let isPrivate = kind != "layout-normal-production"
         let fixtureKey = SymmetricKey(size: .bits256)
         var keyReads = 0
@@ -180,18 +197,20 @@ extension WebsiteFullscreenChecks {
                                     "layout-sidebar-row-control", "layout-sidebar-scroll-control",
                                     "layout-sidebar-saved-control", "layout-chrome-feedback-control",
                                     "layout-native-menus-control", "layout-address-controls-control",
-                                    "layout-tracking-control", "layout-store-sheet-control"].contains(kind)
+                                    "layout-tracking-control", "layout-store-sheet-control",
+                                    "layout-full-sidebar-control"].contains(kind)
             if kind == "layout-preconfigured-control" || componentControl {
                 preparedChrome = NativeWindowChrome()
                 preparedChrome?.attach(to: control)
             }
-            let browser = BrowserUI(store: store).environmentObject(app.updates)
+            let browser = BrowserUI(store: store, sidebarDefaults: sidebarDefaults).environmentObject(app.updates)
             if componentControl, let preparedChrome {
                 let component = NativeLayoutComponentRoot(store: store, chrome: preparedChrome, web: web, kind: kind)
+                    .environmentObject(app.updates)
                 let hosting = NSHostingView(rootView: component.frame(minWidth: 800, minHeight: 540))
                 hosting.safeAreaRegions = []; hosting.sizingOptions = [.minSize]
                 control.contentView = hosting
-            } else if kind == "layout-content-minimum-control" {
+            } else if ["layout-content-minimum-control", "layout-isolated-defaults-control"].contains(kind) {
                 let hosting = NSHostingView(rootView: browser.frame(minWidth: 800, minHeight: 540))
                 hosting.safeAreaRegions = []; hosting.sizingOptions = [.minSize]
                 control.contentView = hosting
