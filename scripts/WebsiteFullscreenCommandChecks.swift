@@ -704,8 +704,9 @@ extension WebsiteFullscreenChecks {
                 } else {
                     check(false, "Last-tab close remains unqualified while captured tab close fails")
                 }
-            case "close-script-sheet", "navigate-script-sheet", "peek-close-script-sheet", "peek-navigate-script-sheet":
-                let isPeek = kind.hasPrefix("peek-"), retiring = kind.hasSuffix("close-script-sheet")
+            case "close-script-sheet", "navigate-script-sheet", "peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet":
+                let isPeek = kind.hasPrefix("peek-"), replacing = kind.hasPrefix("peek-replace")
+                let retiring = kind.hasSuffix("close-script-sheet") || kind == "peek-replace-cancel-script-sheet"
                 let replacement = base.appendingPathComponent("article")
                 let survivorID = isQuick && !isPeek ? primaryID : id
                 let survivor = isQuick && !isPeek ? store.view(for: primaryID) : underlying
@@ -745,7 +746,15 @@ extension WebsiteFullscreenChecks {
                             unanswered = probe.confirmationResults.isEmpty
                             hiddenBeforePrompt = !presentation.isVisible
                             deadline = clock.now.advanced(by: .seconds(12))
-                            if retiring { closeSource() }
+                            if replacing {
+                                store.openPeek(base.appendingPathComponent("page"), from: survivor)
+                                store.openPeek(replacement, from: survivor)
+                                let stillNative = web.fullscreenState != .notInFullscreen ||
+                                    (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true
+                                check(!stillNative || sourceRegistered(),
+                                      "Peek replacement retains the old source until its real native exit completes")
+                                if retiring { closeSource() }
+                            } else if retiring { closeSource() }
                             else if isQuick {
                                 do { try store.navigateForegroundQuickPage(targetID, input: replacement.absoluteString) }
                                 catch { print("FULLSCREEN_PENDING_QUICK_NAVIGATION_ERROR", error) }
@@ -757,10 +766,13 @@ extension WebsiteFullscreenChecks {
                                 store.navigate(replacement.absoluteString)
                             }
                         }
-                        let sourceSettled = retiring ? (isPeek ? !sourceRegistered() : (store.views[targetID] == nil &&
+                        let replacementPeek = isQuick ? store.quickPeekView(id) : store.primaryPeekView
+                        let sourceSettled = retiring ? (isPeek ? !sourceRegistered() && replacementPeek == nil : (store.views[targetID] == nil &&
                             (isQuick ? store.quickPage(targetID) == nil && !window.isVisible : store.tab(targetID) == nil))) :
-                            (sourceRegistered() && web.url == replacement && !web.isLoading && web.window === window &&
-                                store.documentIdentity(for: web) !== document)
+                            (replacing ? (!sourceRegistered() && replacementPeek != nil && replacementPeek !== web &&
+                                replacementPeek?.url == replacement && replacementPeek?.isLoading == false && replacementPeek?.window === window) :
+                                (sourceRegistered() && web.url == replacement && !web.isLoading && web.window === window &&
+                                    store.documentIdentity(for: web) !== document))
                         if sourceSettled && !presentation.isVisible &&
                             web.fullscreenState == .notInFullscreen && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false &&
                             prompt?.isVisible == false && window.attachedSheet == nil && probe.confirmationResults == [false] {
@@ -803,6 +815,8 @@ extension WebsiteFullscreenChecks {
                     if retiring {
                         closeSource()
                         _ = await effect { !sourceRegistered() }
+                    } else if replacing {
+                        _ = await effect { (isQuick ? store.quickPeekView(id) : store.primaryPeekView)?.url == replacement }
                     } else { _ = await effect { web.url == replacement && !web.isLoading } }
                 }
                 let survivorDraft = try await survivor.evaluateJavaScript("document.getElementById('draft').value==='surviving sheet-close draft'") as? Bool
@@ -811,9 +825,11 @@ extension WebsiteFullscreenChecks {
                       store.profileID(for: survivor) == profile && store.documentIdentity(for: survivor) === survivorDocument && survivorDraft == true,
                       "Cancelling a source's script sheet preserves the other exact live profile/document/form")
                 if !retiring {
-                    let replacementDOM = try await web.evaluateJavaScript("document.querySelector('article')!==null&&document.getElementById('draft').value==='original'&&window.ownedCommandToken===undefined") as? Bool
-                    check(closed && sourceRegistered() && store.profileID(for: web) == profile && replacementDOM == true,
-                          "Real navigation dismisses the old script sheet and commits a fresh document in the same profile/view")
+                    let target = replacing ? (isQuick ? store.quickPeekView(id) : store.primaryPeekView) : web
+                    let replacementDOM = try await target?.evaluateJavaScript("document.querySelector('article')!==null&&document.getElementById('draft').value==='original'&&window.ownedCommandToken===undefined") as? Bool
+                    let registered = replacing ? target != nil && target !== web && !sourceRegistered() : sourceRegistered()
+                    check(closed && registered && target.map { store.profileID(for: $0) == profile } == true && replacementDOM == true,
+                          "The latest Peek replacement or navigation commits its requested fresh document in the captured profile")
                 }
             case "close-direct", "close-direct-background":
                 try await wait("owned surviving document") {
@@ -872,7 +888,7 @@ extension WebsiteFullscreenChecks {
         let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static", "suspend-static"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
-        let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet"]
+        let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
         let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []

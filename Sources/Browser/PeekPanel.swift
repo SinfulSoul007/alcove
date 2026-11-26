@@ -11,6 +11,7 @@ enum PeekContext: Hashable { case primary, quick(UUID) }
     var spaceID: UUID?
     let requestedURL: URL?
     var observations: [NSKeyValueObservation] = []
+    var retirementToken: UUID?
     init(id:UUID = UUID(),web: WKWebView, profileID: UUID, spaceID: UUID?, requestedURL: URL? = nil) {
         self.id = id;self.web = web; self.profileID = profileID; self.spaceID = spaceID; self.requestedURL = requestedURL
     }
@@ -32,13 +33,31 @@ extension BrowserStore {
             guard !profileUnavailable(activeProfileID) else { return }
             profile = activeProfileID; targetSpace = space.id; context = .primary
         }
-        closePeek(in: context)
-        let config = WKWebViewConfiguration(); config.websiteDataStore = websiteDataStore(forProfile: profile)
-        configureExtensions(config,profileID:profile)
-        let web = SplitDropWebView(frame: .zero, configuration: config)
-        let page = PeekState(web: web, profileID: profile, spaceID: targetSpace, requestedURL: url)
-        peekPages[context] = page;installPeek(page)
-        web.load(URLRequest(url: url))
+        let hadSource = source != nil
+        let sourceWasPeek = source.map { peekContext(for: $0) == context } ?? false
+        let sourceDocument = source.map { documentIdentity(for: $0) }
+        let sourcePresentation = source.map { presentationIdentity(for: $0) }
+        closePeek(in: context) { [weak self, weak source] in
+            guard let self, !self.isShuttingDown, !self.profileUnavailable(profile), self.peekPages[context] == nil else { return }
+            if hadSource && !sourceWasPeek {
+                guard let source, self.profileID(for: source) == profile,
+                      self.documentIdentity(for: source) === sourceDocument,
+                      self.presentationIdentity(for: source) === sourcePresentation else { return }
+            }
+            if let targetSpace {
+                guard self.session.spaces.contains(where: { $0.id == targetSpace && (self.isPrivate || $0.effectiveProfileID == profile) }) else { return }
+            }
+            switch context {
+            case .primary: guard self.space.id == targetSpace, self.activeProfileID == profile else { return }
+            case .quick(let parent): guard self.quickProfileID(parent) == profile else { return }
+            }
+            let config = WKWebViewConfiguration(); config.websiteDataStore = self.websiteDataStore(forProfile: profile)
+            self.configureExtensions(config, profileID: profile)
+            let web = SplitDropWebView(frame: .zero, configuration: config)
+            let page = PeekState(web: web, profileID: profile, spaceID: targetSpace, requestedURL: url)
+            self.peekPages[context] = page; self.installPeek(page)
+            web.load(URLRequest(url: url))
+        }
     }
     func installPeek(_ page:PeekState) {
         let web = page.web
@@ -58,8 +77,35 @@ extension BrowserStore {
     func closePeeks(forProfile profileID: UUID) {
         for (context, page) in peekPages where page.profileID == profileID { closePeek(in: context) }
     }
-    func closePeek(in context: PeekContext) {
-        guard let page = peekPages.removeValue(forKey: context) else { return }
+    func closePeek(in context: PeekContext, completion: (() -> Void)? = nil) {
+        guard let page = peekPages[context] else { completion?(); return }
+        let token = UUID(); page.retirementToken = token
+        if let fullscreen = (page.web as? SplitDropWebView)?.websiteFullscreen,
+           fullscreen.isBorrowed || page.web.fullscreenState != .notInFullscreen {
+            let document = documentIdentity(for: page.web), presentation = presentationIdentity(for: page.web)
+            cancelWebsitePrompts(for: page.web)
+            guard peekPages[context] === page, page.retirementToken == token,
+                  documentIdentity(for: page.web) === document, presentationIdentity(for: page.web) === presentation else { return }
+            fullscreen.exitForRetirement { [weak self, weak page] restored in
+                guard let self, let page, !self.isShuttingDown, self.peekPages[context] === page,
+                      page.retirementToken == token, page.web.navigationDelegate === self,
+                      self.documentIdentity(for: page.web) === document, self.presentationIdentity(for: page.web) === presentation else { return }
+                guard restored else {
+                    page.retirementToken = nil
+                    self.message = "Couldn’t leave fullscreen to close this preview. Exit fullscreen and try again."
+                    return
+                }
+                self.retirePeek(page, in: context)
+                completion?()
+            }
+            return
+        }
+        retirePeek(page, in: context)
+        completion?()
+    }
+    private func retirePeek(_ page: PeekState, in context: PeekContext) {
+        guard peekPages[context] === page else { return }
+        peekPages.removeValue(forKey: context)
         let closing = ClosingProfilePage(page.web,profileID:page.profileID,extensionIdentifier:extensionPopupOwners.object(forKey:page.web).map{String($0)})
         invalidateDocumentIdentity(for: page.web); BoostRuntime.forget(page.web)
         closingPages.append(closing)
