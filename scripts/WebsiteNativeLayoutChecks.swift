@@ -12,11 +12,9 @@ import CryptoKit
     let kind: String
 
     var body: some View {
-        HStack(spacing: 0) {
-            if store.sidebarVisible {
-                sidebar.frame(width: 260)
-            }
-            WebPane(webView: web, store: store).padding(8)
+        Group {
+            if kind == "layout-chrome-feedback-control" { chromeFeedback }
+            else { componentContent }
         }
         .background { store.activeTheme.surface }
         .foregroundStyle(store.activeTheme.ink)
@@ -26,9 +24,47 @@ import CryptoKit
         }
     }
 
+    private var componentContent: some View {
+        HStack(spacing: 0) {
+            if store.sidebarVisible {
+                sidebar.frame(width: 260)
+            }
+            WebPane(webView: web, store: store).padding(8)
+        }
+    }
+
+    /// Match the production feedback path: measured toolbar dimensions drive
+    /// the page clearance and two mounted pinned/collapsed navigation readers.
+    private var chromeFeedback: some View {
+        GeometryReader { _ in
+            ZStack(alignment: .leading) {
+                WebPane(webView: web, store: store).padding(8)
+                    .padding(.top, max(0, (store.sidebarVisible ? chrome.pageTopInset : max(chrome.height, chrome.pageTopInset)) - 8))
+                    .padding(.leading, store.sidebarVisible ? 260 : 0)
+                HStack {
+                    Color.clear.frame(width: max(0, chrome.leadingEdge - 17))
+                    Text("Show Sidebar"); Spacer(minLength: 0)
+                }.frame(height: store.sidebarVisible ? 0 : chrome.height).clipped()
+                    .background(NativeChromeReader(chrome: chrome))
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .opacity(store.sidebarVisible ? 0 : 1)
+                VStack {
+                    Text("Navigation").frame(height: chrome.height)
+                        .background(NativeChromeReader(chrome: chrome))
+                    Spacer(minLength: 0)
+                }.frame(width: 260)
+                    .offset(x: store.sidebarVisible ? 0 : -276)
+                    .opacity(store.sidebarVisible ? 1 : 0)
+            }
+        }
+    }
+
     @ViewBuilder private var sidebar: some View {
         let tabs = store.space.tabs.filter { !$0.url.isEmpty }
-        if kind == "layout-sidebar-row-control", let tab = tabs.first {
+        if kind == "layout-sidebar-saved-control" {
+            SidebarSavedTabs(store: store, theme: store.activeTheme, appearance: store.appearance,
+                             motion: nil, height: 120, layout: store.sidebarLists.saved, collapsed: false)
+        } else if kind == "layout-sidebar-row-control", let tab = tabs.first {
             SidebarTabRow(tab: tab, spaceID: store.space.id, store: store,
                           theme: store.activeTheme, appearance: store.appearance, motion: nil)
         } else if kind == "layout-sidebar-scroll-control" {
@@ -101,7 +137,8 @@ extension WebsiteFullscreenChecks {
             control.minSize = NSSize(width: 800, height: 540)
             control.extensionStore = store; control.extensionCommandSource = { [weak store] in store?.currentView }
             let componentControl = ["layout-web-content-control", "layout-chrome-reader-control",
-                                    "layout-sidebar-row-control", "layout-sidebar-scroll-control"].contains(kind)
+                                    "layout-sidebar-row-control", "layout-sidebar-scroll-control",
+                                    "layout-sidebar-saved-control", "layout-chrome-feedback-control"].contains(kind)
             if kind == "layout-preconfigured-control" || componentControl {
                 preparedChrome = NativeWindowChrome()
                 preparedChrome?.attach(to: control)
