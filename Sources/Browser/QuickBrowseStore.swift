@@ -213,10 +213,16 @@ extension BrowserStore {
     private func quickHasCapture(_ id: UUID) -> Bool {
         [views[id], quickPeek(id)].compactMap { $0 }.contains { $0.cameraCaptureState != .none || $0.microphoneCaptureState != .none }
     }
+    private func quickHasFullscreen(_ id: UUID) -> Bool {
+        [views[id], quickPeek(id)].compactMap { $0 }.contains {
+            $0.fullscreenState != .notInFullscreen ||
+                ($0 as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true
+        }
+    }
     private func matchesQuickArchive(_ item: QuickArchiveSnapshot, cutoff: Date) -> Bool {
         guard !isShuttingDown, !profileUnavailable(item.profileID), quickProfileID(item.id) == item.profileID,
               let page = quickPage(item.id), page.tab.url == item.url, page.lastActiveAt == item.lastActiveAt,
-              page.lastActiveAt < cutoff, item.id != focusedQuickPageID,
+              page.lastActiveAt < cutoff, item.id != focusedQuickPageID, !quickHasFullscreen(item.id),
               views[item.id]?.window?.isKeyWindow != true, views[item.id]?.window?.attachedSheet == nil,
               quickPeek(item.id)?.window?.attachedSheet == nil,
               views[item.id]?.isLoading != true, quickPeek(item.id)?.isLoading != true else { return false }
@@ -253,7 +259,7 @@ extension BrowserStore {
         let owners = isPrivate ? [BrowserProfile.defaultID] : profileLibraries.map(\.profileID)
         for owner in owners where !profileUnavailable(owner) {
             for page in quickPages(for: owner) where page.lastActiveAt < cutoff && page.id != focusedQuickPageID {
-                guard views[page.id]?.window?.isKeyWindow != true, views[page.id]?.window?.attachedSheet == nil,
+                guard !quickHasFullscreen(page.id), views[page.id]?.window?.isKeyWindow != true, views[page.id]?.window?.attachedSheet == nil,
                       quickPeek(page.id)?.window?.attachedSheet == nil,
                       views[page.id]?.isLoading != true, quickPeek(page.id)?.isLoading != true else { continue }
                 if quickHasCapture(page.id) { touchQuickPage(page.id, now: now); continue }
