@@ -81,7 +81,9 @@ The combined78-case native portion of run45760139841 is not green. All78 identit
 
 The combined failure above exposes early Peek retirement: the close path removes/blanks a view while WebKit still borrows it. The development fix retains its exact PeekState and registration, cancels its source-bound sheet, waits for physical native exit and validates document/presentation plus a per-Peek retirement token before removal. Replacing a Peek waits for that boundary, validates the captured source/profile/Space, and honors the latest replacement. A newer explicit close cancels pending replacements; an old callback cannot remove or reopen a new Peek.
 
-Eight additional actual two-replacement/close-cancel cases cover primary/Quick and regular/private contexts, bringing the default list to86. The four original pending Peek-close cases and these eight replacement controls still require native GREEN; compilation alone does not qualify the repair. Profile clear/shutdown and Quick Peek promotion remain separate unqualified lifecycle gates.
+Eight additional actual two-replacement/close-cancel cases cover primary/Quick and regular/private contexts, bringing the default list to86. Source `dd69154` passes the four original pending close cases and all eight replacement controls91/0 in [run45762474881](https://github.com/SinfulSoul007/alcove/actions/runs/45762474881). All12 unique identities complete, with owned cleanup true/true, no recovery, one false reply per dialog, all eight replacement-order checks and six private zero-key/no-session checks. Artifact15090526870 is1542 bytes, SHA-256 `2eae584512ae99a8f984dc37644a8f5dc222109d322ca092908b52f25f7a3a0e`.
+
+The [complete86-case run45763106727](https://github.com/SinfulSoul007/alcove/actions/runs/45763106727) and all ten existing Reader/chrome/prompt/window/navigation/Quick regression groups are running at the same source. The selected12 result does not qualify that combined scope. Source-only VM job967 completed with a clean `dd69154` QA checkout; the installed app is unchanged. Profile clear/shutdown and Quick Peek promotion remain separate unqualified lifecycle gates.
 
 ## Sidebar render evidence
 
