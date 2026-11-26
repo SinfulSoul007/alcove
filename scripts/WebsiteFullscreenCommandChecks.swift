@@ -184,7 +184,7 @@ extension WebsiteFullscreenChecks {
         var targetID = id
         var handoff: (store: BrowserStore, window: NSWindow, survivorID: UUID, survivor: WKWebView, document: NSUUID)?
         var clearingSurvivor: (store: BrowserStore, window: NSWindow, id: UUID, web: WKWebView, profile: UUID, document: NSUUID)?
-        if kind == "peek-escape" || kind == "peek-expire-static" || kind.hasPrefix("peek-parent-") || kind.hasPrefix("peek-") && kind.hasSuffix("script-sheet") {
+        if kind == "peek-escape" || kind == "peek-expire-static" || kind == "peek-close-primary-window-direct" || kind.hasPrefix("peek-parent-") || kind.hasPrefix("peek-") && kind.hasSuffix("script-sheet") {
             store.openPeek(base.appendingPathComponent("page"), from: underlying)
             guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else { throw Failure.fixture("command Peek") }
             web = peek
@@ -867,6 +867,39 @@ extension WebsiteFullscreenChecks {
                       "A focus change during command delivery still completes native fullscreen restoration")
                 check(exited && !store.findVisible && other.isKeyWindow,
                       "A deferred browser command neither opens UI nor steals focus after another window becomes key")
+            case "close-primary-window-direct", "peek-close-primary-window-direct":
+                guard !isQuick else { throw Failure.fixture("direct primary-window close requires a primary page") }
+                check(owner.leaseCount == 1 && !owner.isClosed && !store.isShuttingDown,
+                      "Direct primary closure starts with one live window retaining its browser owner")
+                var closedWhileNative = false
+                let closeObservation = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+                    MainActor.assumeIsolated {
+                        if presentation.isVisible || web.fullscreenState != .notInFullscreen {
+                            closedWhileNative = true
+                        }
+                    }
+                }
+                defer { NotificationCenter.default.removeObserver(closeObservation) }
+                window.performClose(nil)
+                window.performClose(nil)
+                let stillNative = presentation.isVisible || web.fullscreenState != .notInFullscreen ||
+                    (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true
+                check(!stillNative || (window.isVisible && app.windows[window] === store &&
+                      app.primaryOwners[window] === owner && !owner.isClosed && !store.isShuttingDown &&
+                      store.views[id] === underlying && (web === underlying || store.primaryPeekView === web)),
+                      "Direct primary closure retains its window, owner, parent and Peek until physical fullscreen return")
+                let closed = await effect {
+                    !window.isVisible && app.windows[window] == nil && app.primaryOwners[window] == nil &&
+                        owner.isClosed && store.isShuttingDown && owner.leaseCount == 0 &&
+                        !presentation.isVisible && web.fullscreenState == .notInFullscreen &&
+                        (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
+                }
+                check(!closedWhileNative,
+                      "The primary window's actual close notification follows native fullscreen completion")
+                check(closed && store.views.isEmpty && store.primaryPeekView == nil,
+                      "Repeated direct primary closure releases the last owner, real page and native windows without recovery")
+                check(closed && NSApp.isRunning && !app.applicationShouldTerminateAfterLastWindowClosed(NSApp),
+                      "Closing the last primary window leaves the browser application running")
             case "close-window-direct", "peek-parent-close", "peek-parent-model-close":
                 guard isQuick else { throw Failure.fixture("direct compact-window close requires Quick Browse") }
                 let survivor = store.view(for: primaryID)
@@ -1110,7 +1143,8 @@ extension WebsiteFullscreenChecks {
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close", "close-window-direct", "peek-parent-close", "peek-parent-model-close", "expire-static", "peek-expire-static", "profile-clear", "peek-profile-clear"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
-        let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static", "profile-clear", "peek-profile-clear"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 } + ["quick-profile-delete", "quick-peek-profile-delete"]
+        let primaryWindowClosure = ["close-primary-window-direct", "peek-close-primary-window-direct"]
+        let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + primaryWindowClosure + (["escape", "location", "find", "reader", "close", "suspend-static", "profile-clear", "peek-profile-clear"] + scriptDialogs + promptLifetimes + peekLifetimes + primaryWindowClosure).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 } + ["quick-profile-delete", "quick-peek-profile-delete"]
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
         guard ["", "primary", "private-primary", "quick"].contains(group), group.isEmpty || selected.isEmpty else {
