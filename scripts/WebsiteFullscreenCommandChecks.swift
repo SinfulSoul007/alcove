@@ -151,7 +151,7 @@ extension WebsiteFullscreenChecks {
         let underlying = store.view(for: id)
         var web = underlying
         var targetID = id
-        if kind == "peek-escape" {
+        if kind == "peek-escape" || kind.hasPrefix("peek-") && kind.hasSuffix("script-sheet") {
             store.openPeek(base.appendingPathComponent("page"), from: underlying)
             guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else { throw Failure.fixture("command Peek") }
             web = peek
@@ -560,10 +560,19 @@ extension WebsiteFullscreenChecks {
                 } else {
                     check(false, "Last-tab close remains unqualified while captured tab close fails")
                 }
-            case "close-script-sheet", "navigate-script-sheet":
-                let retiring = kind == "close-script-sheet", replacement = base.appendingPathComponent("article")
-                let survivorID = isQuick ? primaryID : id
-                let survivor = isQuick ? store.view(for: primaryID) : underlying
+            case "close-script-sheet", "navigate-script-sheet", "peek-close-script-sheet", "peek-navigate-script-sheet":
+                let isPeek = kind.hasPrefix("peek-"), retiring = kind.hasSuffix("close-script-sheet")
+                let replacement = base.appendingPathComponent("article")
+                let survivorID = isQuick && !isPeek ? primaryID : id
+                let survivor = isQuick && !isPeek ? store.view(for: primaryID) : underlying
+                func sourceRegistered() -> Bool {
+                    isPeek ? (isQuick ? store.quickPeekView(id) : store.primaryPeekView) === web : store.views[targetID] === web
+                }
+                func closeSource() {
+                    if isPeek {
+                        if isQuick { store.closeQuickPeek(id) } else { store.closePrimaryPeek() }
+                    } else { store.close(targetID) }
+                }
                 try await wait("owned surviving sheet-close document") {
                     (try? await survivor.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
                 }
@@ -575,7 +584,7 @@ extension WebsiteFullscreenChecks {
                 }
                 guard web.uiDelegate === store else { throw Failure.fixture("pending-script production delegate") }
                 web.uiDelegate = probe
-                defer { if store.views[targetID] === web { web.uiDelegate = store } }
+                defer { if sourceRegistered() { web.uiDelegate = store } }
                 func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
                 var prompt: NSWindow?, deadline: ContinuousClock.Instant?
                 var observed = false, unanswered = false, hiddenBeforePrompt = false
@@ -592,15 +601,15 @@ extension WebsiteFullscreenChecks {
                             unanswered = probe.confirmationResults.isEmpty
                             hiddenBeforePrompt = !presentation.isVisible
                             deadline = clock.now.advanced(by: .seconds(12))
-                            if retiring { store.close(targetID) }
+                            if retiring { closeSource() }
                             else if isQuick {
                                 do { try store.navigateForegroundQuickPage(targetID, input: replacement.absoluteString) }
                                 catch { print("FULLSCREEN_PENDING_QUICK_NAVIGATION_ERROR", error) }
                             } else { store.commandOpensNewTab = false; store.navigate(replacement.absoluteString) }
                         }
-                        let sourceSettled = retiring ? (store.views[targetID] == nil &&
-                            (isQuick ? store.quickPage(targetID) == nil && !window.isVisible : store.tab(targetID) == nil)) :
-                            (store.views[targetID] === web && web.url == replacement && !web.isLoading && web.window === window &&
+                        let sourceSettled = retiring ? (isPeek ? !sourceRegistered() : (store.views[targetID] == nil &&
+                            (isQuick ? store.quickPage(targetID) == nil && !window.isVisible : store.tab(targetID) == nil))) :
+                            (sourceRegistered() && web.url == replacement && !web.isLoading && web.window === window &&
                                 store.documentIdentity(for: web) !== document)
                         if sourceSettled && !presentation.isVisible &&
                             web.fullscreenState == .notInFullscreen && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false &&
@@ -634,7 +643,7 @@ extension WebsiteFullscreenChecks {
                       "\(kind): changing the source cancels its actual pending script sheet once and completes native exit")
                 print("FULLSCREEN_PENDING_SHEET_LIFETIME", kind, "settled", closed, "recoveryUsed", recoveryUsed,
                       "replies", probe.confirmationResults, "sheetVisible", prompt?.isVisible ?? false,
-                      "attached", window.attachedSheet != nil, "registered", store.views[targetID] === web,
+                      "attached", window.attachedSheet != nil, "registered", sourceRegistered(),
                       "state", web.fullscreenState.rawValue)
                 if let prompt, let parent = prompt.sheetParent {
                     parent.endSheet(prompt, returnCode: .alertSecondButtonReturn); prompt.orderOut(nil)
@@ -642,18 +651,18 @@ extension WebsiteFullscreenChecks {
                 if !closed {
                     _ = await effect { !probe.confirmationResults.isEmpty }
                     if retiring {
-                        store.close(targetID)
-                        _ = await effect { store.views[targetID] == nil }
+                        closeSource()
+                        _ = await effect { !sourceRegistered() }
                     } else { _ = await effect { web.url == replacement && !web.isLoading } }
                 }
                 let survivorDraft = try await survivor.evaluateJavaScript("document.getElementById('draft').value==='surviving sheet-close draft'") as? Bool
-                let browserVisible = isQuick && retiring ? primaryWindow.isVisible && !window.isVisible : window.isVisible
+                let browserVisible = isQuick && retiring && !isPeek ? primaryWindow.isVisible && !window.isVisible : window.isVisible
                 check(closed && browserVisible && NSApp.isRunning && store.views[survivorID] === survivor &&
                       store.profileID(for: survivor) == profile && store.documentIdentity(for: survivor) === survivorDocument && survivorDraft == true,
-                      "Cancelling a closing tab's script sheet preserves the other exact live profile/document/form")
+                      "Cancelling a source's script sheet preserves the other exact live profile/document/form")
                 if !retiring {
                     let replacementDOM = try await web.evaluateJavaScript("document.querySelector('article')!==null&&document.getElementById('draft').value==='original'&&window.ownedCommandToken===undefined") as? Bool
-                    check(closed && store.views[targetID] === web && store.profileID(for: web) == profile && replacementDOM == true,
+                    check(closed && sourceRegistered() && store.profileID(for: web) == profile && replacementDOM == true,
                           "Real navigation dismisses the old script sheet and commits a fresh document in the same profile/view")
                 }
             case "close-direct", "close-direct-background":
@@ -713,9 +722,14 @@ extension WebsiteFullscreenChecks {
         let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
+        let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
-        let all = regular + ["close-direct", "close-direct-background"] + promptLifetimes + (["escape", "location", "find", "reader", "close"] + scriptDialogs + promptLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
+        let all = regular + ["close-direct", "close-direct-background"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
+        let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
+        guard ["", "primary", "quick"].contains(group), group.isEmpty || selected.isEmpty else {
+            throw Failure.fixture("invalid command group or mixed selection")
+        }
         // Characterization controls are opt-in and never counted as normal
         // production-path command coverage in the full default matrix.
         // App-local events do not grant WebKit transient activation on this
@@ -725,6 +739,8 @@ extension WebsiteFullscreenChecks {
         for name in selected.isEmpty ? all : selected {
             let isPrivate = name.hasPrefix("private-"), presentation = isPrivate ? String(name.dropFirst(8)) : name
             let isQuick = presentation.hasPrefix("quick-"), kind = isQuick ? String(presentation.dropFirst(6)) : presentation
+            if group == "primary" && isQuick || group == "quick" && !isQuick { continue }
+            print("FULLSCREEN_COMMAND_CASE_STARTED", name)
             do { try await exerciseCommand(base: base, kind: kind, owned: owned, controllers: controllers, isPrivate: isPrivate, isQuick: isQuick) }
             catch { failures += 1; print("FULLSCREEN_COMMAND_CASE_ERROR", name, error) }
         }

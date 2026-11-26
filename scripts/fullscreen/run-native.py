@@ -148,7 +148,28 @@ def main():
     worker.start()
     try:
         env = dict(os.environ, ALCOVE_FULLSCREEN_FIXTURE_URL=f'http://127.0.0.1:{server.server_port}/')
-        command([str(executable)], timeout=325, env=env)
+        # Separate processes retain the same per-operation and process bounds.
+        # The expanded matrix must finish every case; a partial aggregate run
+        # cannot qualify a case it never reached. Run both groups after failure.
+        selected = bool(env.get('ALCOVE_FULLSCREEN_COMMAND_CASES', ''))
+        groups = ['diagnostic'] if selected else ['primary', 'quick']
+        failed = []
+        for group in groups:
+            group_env = dict(env)
+            if selected:
+                group_env.pop('ALCOVE_FULLSCREEN_COMMAND_GROUP', None)
+            else:
+                group_env['ALCOVE_FULLSCREEN_COMMAND_GROUP'] = group
+            print('FULLSCREEN_PROCESS_GROUP_STARTED', group, flush=True)
+            try:
+                command([str(executable)], timeout=325, env=group_env)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                failed.append(group)
+                print('FULLSCREEN_PROCESS_GROUP_FAILED', group, type(error).__name__, flush=True)
+            else:
+                print('FULLSCREEN_PROCESS_GROUP_PASSED', group, flush=True)
+        if failed:
+            raise RuntimeError('Native fullscreen groups failed: ' + ', '.join(failed))
     finally:
         server.shutdown()
         server.server_close()

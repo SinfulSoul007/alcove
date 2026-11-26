@@ -197,8 +197,14 @@ import Darwin
               let base = URL(string: input), base.host == "127.0.0.1" else {
             print("FULLSCREEN_ENVIRONMENT_UNAVAILABLE"); return 2
         }
-        if let selection = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"], !selection.isEmpty {
-            print("FULLSCREEN_SELECTION_COMMANDS_ONLY", selection)
+        let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
+        guard ["", "primary", "quick"].contains(group) else {
+            print("FULLSCREEN_INVALID_COMMAND_GROUP"); return 2
+        }
+        print("FULLSCREEN_COMMAND_GROUP", group.isEmpty ? "all" : group)
+        let selection = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"] ?? ""
+        if !selection.isEmpty || group == "quick" {
+            if !selection.isEmpty { print("FULLSCREEN_SELECTION_COMMANDS_ONLY", selection) }
             if #available(macOS 15.4, *) {
                 do { try await exerciseCommands(base: base) }
                 catch { failures += 1; print("FULLSCREEN_COMMAND_SETUP_ERROR", error) }
