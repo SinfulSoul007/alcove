@@ -20,6 +20,7 @@ enum BoostStoreCheckError: Error { case failed }
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: .borderless, backing: .buffered, defer: false)
             window.contentView = f.web; windows.append(window); return window
         }
+        try await checkBoostProcessTermination(check)
         let f = try fixture(), store = f.store
         var boost = SiteBoost(content: BoostContent(name: "Owned look", host: "127.0.0.1", appearance: BoostAppearance(background: "#123456"), javascript: "window.fixtureRan = true;"))
         boost.approvedJavaScriptHash = boost.scriptHash

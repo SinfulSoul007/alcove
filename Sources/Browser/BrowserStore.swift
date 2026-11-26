@@ -197,7 +197,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         presentationIDs.setObject(identity, forKey: web)
         return identity
     }
-    func invalidateDocumentIdentity(for web: WKWebView) {
+    func invalidateDocumentIdentity(for web: WKWebView, refreshBoosts: Bool = true) {
         fullscreenSelectionRequests.removeValue(forKey: ObjectIdentifier(web))
         cancelReader(for: web)
         cancelWebsiteProtectionTickets(for:web)
@@ -207,7 +207,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         cancelInvalidExtensionNavigations()
         extensionHosting?.sourceDocumentChanged(web)
         if boostPicker?.source.web === web { cancelBoostPicker() }
-        BoostRuntime.invalidate(web)
+        BoostRuntime.invalidate(web, refresh: refreshBoosts)
     }
     func canMoveView(_ id: UUID, profile: UUID, to destination: BrowserStore) -> Bool {
         guard let web = views[id], viewProfileIDs[id] == profile,
@@ -793,7 +793,12 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         if failure.domain == "WebKitErrorDomain" && failure.code == 102 { return }
         message = failure.localizedDescription
     }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { invalidateDocumentIdentity(for: webView); message = "This page stopped responding. Use Reload to try again." }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        // Expire pending document work without querying its terminated runtime.
+        // The next explicit navigation installs a fresh document as usual.
+        invalidateDocumentIdentity(for: webView, refreshBoosts: false)
+        message = "This page stopped responding. Use Reload to try again."
+    }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         createPopup(from: webView, configuration: configuration,requestedURL:action.request.url)
     }

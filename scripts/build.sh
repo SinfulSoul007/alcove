@@ -313,7 +313,7 @@ if [[ "${1:-}" == "boosts-input-test" ]]; then
 fi
 if [[ "${1:-}" == "boosts-website-test" ]]; then run_boosts_website_checks; exit; fi
 if [[ "${1:-}" == "boosts-store-test" ]]; then
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostStoreChecks.swift -o "$MANUAL/boosts-store-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostProcessTerminationChecks.swift scripts/BoostStoreChecks.swift -o "$MANUAL/boosts-store-checks"
     "$MANUAL/boosts-store-checks"
     exit
 fi
@@ -499,7 +499,7 @@ if [[ "${1:-}" == "test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostInputChecks.swift -o "$MANUAL/boosts-input-checks"
     "$MANUAL/boosts-input-checks"
     run_boosts_website_checks
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostStoreChecks.swift -o "$MANUAL/boosts-store-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/SiteSearchFixtures.swift scripts/BoostProcessTerminationChecks.swift scripts/BoostStoreChecks.swift -o "$MANUAL/boosts-store-checks"
     "$MANUAL/boosts-store-checks"
     xcrun swiftc "${FLAGS[@]}" -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/BoostCoreChecks.swift -o "$MANUAL/boosts-core-checks"
     "$MANUAL/boosts-core-checks"

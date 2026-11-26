@@ -64,10 +64,10 @@ enum BoostRuntimeError: LocalizedError {
     static func cancelCalls(_ page: BoostPageState) {
         for id in Array(page.jobs) { calls[id]?.finish(.failure(CancellationError())) }
     }
-    static func invalidate(_ web: WKWebView) {
+    static func invalidate(_ web: WKWebView, refresh: Bool = true) {
         guard let page = pages.object(forKey: web) else { return }
         page.generation += 1; cancelCalls(page)
-        schedule(page, auto: true)
+        if refresh { schedule(page, auto: true) }
     }
     static func navigationStarted(_ web: WKWebView) { page(for: web).navigationSerial += 1 }
     static func deferNewApproval(_ boost: SiteBoost, profileID: UUID, store: BrowserStore) {
