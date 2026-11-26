@@ -1,5 +1,6 @@
 import AppKit
 import BrowserCore
+import WebKit
 
 enum BrowserWindowGroupError: LocalizedError {
     case staleDocument
@@ -172,6 +173,8 @@ final class BrowserWindowGroup {
         let previousID = live?.windowGroupID ?? workspace.assignedWindow(for: tabID)
         guard store.extensionPopupProfileID == nil || previousID == id || allowPopupTransfer else { return false }
         if let previous = live, previous !== store {
+            guard let web = previous.views[tabID], web.fullscreenState == .notInFullscreen,
+                  (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed != true else { return false }
             guard previous.moveView(tabID, profile: profile, to: store) else { return false }
         }
         let claimed = workspace.claim(tabID, for: id)
@@ -199,6 +202,8 @@ final class BrowserWindowGroup {
         guard containsPrimary(store), let profile = spaceProfile(forTab: tabID), !store.profileUnavailable(profile),
               store.extensionPopupProfileID == nil || store.extensionPopupProfileID == profile else { return false }
         guard let live = liveStore(forTab: tabID), live !== store else { return true }
+        guard let web = live.views[tabID], web.fullscreenState == .notInFullscreen,
+              (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed != true else { return false }
         return live.canMoveView(tabID, profile: profile, to: store)
     }
 

@@ -560,7 +560,7 @@ struct BrowserUI: View {
             VStack(spacing: 14) {
                 Text(presentation == .pooled ? "This tab is open in the background" : "This tab is open in another window").font(.headline)
                 HStack {
-                    Button("Bring Tab Here") { group.claimPresentation(tabID: id, in: store) }
+                    Button("Bring Tab Here") { store.select(id) }
                     if case .elsewhere = presentation {
                         Button("Go to Window") { group.revealPresenter(tabID: id, from: store) }
                     }

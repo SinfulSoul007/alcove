@@ -221,7 +221,7 @@ extension WebsiteFullscreenChecks {
             check(app.outputTarget(in: presentation)?.web === web,
                   "\(kind): page-output selection retains the fullscreen source")
             switch kind {
-            case "handoff", "handoff-cancel", "handoff-close":
+            case "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate":
                 guard let handoff else { throw Failure.fixture("prepared handoff destination") }
                 handoff.window.makeKeyAndOrderFront(nil)
                 try await wait("handoff requesting window key") { handoff.window.isKeyWindow }
@@ -229,23 +229,40 @@ extension WebsiteFullscreenChecks {
                       (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true,
                       "Window handoff begins with the actual source still borrowed by native fullscreen")
                 handoff.store.select(id)
+                let nativeStillOwns = web.fullscreenState != .notInFullscreen || presentation.isVisible ||
+                    (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true
+                check(!nativeStillOwns || store.views[id] === web && handoff.store.views[id] == nil,
+                      "Pending window selection keeps the source registration until native fullscreen really ends")
                 if kind == "handoff-cancel" { handoff.store.select(handoff.survivorID) }
                 if kind == "handoff-close" { handoff.window.performClose(nil) }
+                if kind == "handoff-source-close" { store.close(id) }
+                let replacement = base.appendingPathComponent("article")
+                if kind == "handoff-source-navigate" { store.commandOpensNewTab = false; store.navigate(replacement.absoluteString) }
                 let destination = kind == "handoff" ? handoff.store : store
                 let expectedWindow = kind == "handoff" ? handoff.window : window
                 let transferred = await effect {
-                    web.fullscreenState == .notInFullscreen && !presentation.isVisible &&
-                        (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false &&
-                        destination.views[id] === web && web.window === expectedWindow &&
+                    guard web.fullscreenState == .notInFullscreen, !presentation.isVisible,
+                          (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false else { return false }
+                    if kind == "handoff-source-close" {
+                        return store.views[id] == nil && handoff.store.views[id] == nil && store.tab(id) == nil
+                    }
+                    if kind == "handoff-source-navigate", web.url != replacement || web.isLoading || store.documentIdentity(for: web) === document { return false }
+                    return destination.views[id] === web && web.window === expectedWindow &&
                         (kind == "handoff" ? store.views[id] == nil : handoff.store.views[id] == nil)
                 }
                 check(transferred, kind == "handoff" ?
                       "Same-profile window handoff completes native exit before moving the exact live website" :
-                      "A newer destination selection or closed window cancels the pending fullscreen handoff without losing its source")
-                let draft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41")) as? Bool
-                check(transferred && destination.profileID(for: web) == profile &&
-                      destination.documentIdentity(for: web) === document && draft == true,
-                      "Fullscreen handoff preserves the original profile, document identity and unsaved form without reloading")
+                      "A newer destination or source action safely supersedes the pending fullscreen handoff")
+                if kind == "handoff-source-navigate" {
+                    let fresh = (try? await web.evaluateJavaScript("document.querySelector('article')!==null&&document.getElementById('draft').value==='original'&&window.ownedCommandToken===undefined")) as? Bool
+                    check(transferred && destination.profileID(for: web) == profile && fresh == true,
+                          "A newer source navigation cancels handoff and commits its fresh document in the original window/profile")
+                } else if kind != "handoff-source-close" {
+                    let draft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41")) as? Bool
+                    check(transferred && destination.profileID(for: web) == profile &&
+                          destination.documentIdentity(for: web) === document && draft == true,
+                          "Fullscreen handoff preserves the original profile, document identity and unsaved form without reloading")
+                }
                 let survivorOwner = store.pageStores.first { $0.views[handoff.survivorID] === handoff.survivor }
                 let survivorDraft = (try? await handoff.survivor.evaluateJavaScript("document.getElementById('draft').value==='surviving handoff draft'")) as? Bool
                 check(survivorOwner?.profileID(for: handoff.survivor) == profile &&
@@ -857,7 +874,7 @@ extension WebsiteFullscreenChecks {
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
-        let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
+        let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
         guard ["", "primary", "quick"].contains(group), group.isEmpty || selected.isEmpty else {

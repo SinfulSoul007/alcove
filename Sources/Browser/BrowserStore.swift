@@ -183,6 +183,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var views: [UUID: WKWebView] = [:]
     var readerSessions: [ObjectIdentifier: ReaderSession] = [:]
     var websitePromptRequests: [UUID: WebsitePromptRequest] = [:]
+    private var tabSelectionGeneration = UUID()
+    private var fullscreenSelectionRequests: [ObjectIdentifier: UUID] = [:]
     private let documentIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     private let presentationIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     func documentIdentity(for web: WKWebView) -> NSUUID {
@@ -196,6 +198,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return identity
     }
     func invalidateDocumentIdentity(for web: WKWebView) {
+        fullscreenSelectionRequests.removeValue(forKey: ObjectIdentifier(web))
         cancelReader(for: web)
         cancelWebsiteProtectionTickets(for:web)
         documentIDs.setObject(NSUUID(), forKey: web)
@@ -239,6 +242,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return (web, icon)
     }
     func transferDocumentBindings(for web: WKWebView, to destination: BrowserStore) {
+        fullscreenSelectionRequests.removeValue(forKey: ObjectIdentifier(web))
         cancelReader(for: web)
         cancelWebsiteProtectionTickets(for:web)
         cancelWebsitePrompts(for: web)
@@ -293,6 +297,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func focusPane(_ id: UUID) {
         guard visiblePaneIDs.contains(id), (windowGroup?.presentation(tabID: id, in: self) ?? .owned) == .owned else { return }
         let previous = focusedID
+        if previous != id { tabSelectionGeneration = UUID() }
         activePaneID = id
         if focusedID != previous {
             dismissCommand()
@@ -377,6 +382,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
+        tabSelectionGeneration = UUID(); fullscreenSelectionRequests.removeAll()
         cancelAllWebsitePrompts()
         closeExtensionManagers()
         cancelRecentTabSwitcher()
@@ -392,6 +398,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func select(_ id: UUID) {
         guard session.spaces[spaceIndex].tabs.contains(where: { $0.id == id }) else { return }
+        tabSelectionGeneration = UUID()
+        if deferFullscreenSelection(id) { return }
         if focusedID != id { dismissCommand(); cancelRecentTabSwitcher() }
         if let windowGroup, !windowGroup.claimPresentation(tabID: id, in: self) { return }
         if splitLayout?.tabIDs.contains(id) == true {
@@ -403,6 +411,41 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         recordTabVisit(id)
         save()
     }
+    private func deferFullscreenSelection(_ id: UUID) -> Bool {
+        guard let group = windowGroup, let destinationID = windowGroupID, group.containsPrimary(self),
+              let source = group.stores.first(where: { $0 !== self && $0.views[id] != nil }), let web = source.views[id],
+              let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen,
+              fullscreen.isBorrowed || web.fullscreenState != .notInFullscreen,
+              let profile = source.profileID(for: web), source.canMoveView(id, profile: profile, to: self) else { return false }
+        let generation = tabSelectionGeneration, spaceID = space.id, key = ObjectIdentifier(web)
+        let document = source.documentIdentity(for: web), presentation = source.presentationIdentity(for: web)
+        source.cancelWebsitePrompts(for: web)
+        guard source.views[id] === web, source.documentIdentity(for: web) === document,
+              source.presentationIdentity(for: web) === presentation else { return true }
+        // The newest destination wins; the source stays registered until
+        // WebKit has physically returned its borrowed view.
+        source.fullscreenSelectionRequests[key] = generation
+        fullscreen.exitForRetirement { [weak self, weak source, weak web, weak group] restored in
+            guard let source else { return }
+            defer {
+                if source.fullscreenSelectionRequests[key] == generation { source.fullscreenSelectionRequests.removeValue(forKey: key) }
+            }
+            guard let self, let web, let group, !self.isShuttingDown,
+                  self.tabSelectionGeneration == generation, source.fullscreenSelectionRequests[key] == generation,
+                  self.windowGroup === group, source.windowGroup === group, self.windowGroupID == destinationID,
+                  group.containsPrimary(self), self.space.id == spaceID,
+                  source.views[id] === web, source.profileID(for: web) == profile,
+                  source.documentIdentity(for: web) === document, source.presentationIdentity(for: web) === presentation,
+                  self.profileID(for: id) == profile, !self.profileUnavailable(profile) else { return }
+            guard restored else {
+                self.message = "Couldn’t leave fullscreen to move this tab. Exit fullscreen and try again."
+                return
+            }
+            source.fullscreenSelectionRequests.removeValue(forKey: key)
+            self.select(id)
+        }
+        return true
+    }
     private func recordTabVisit(_ id: UUID) {
         guard (windowGroup?.presentation(tabID: id, in: self) ?? .owned) == .owned else { return }
         accessOrder.removeAll { $0 == id }; accessOrder.append(id)
@@ -411,6 +454,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
 
     func selectSpace(_ id: UUID, recordingVisit: Bool = true) {
         guard session.spaces.contains(where: { $0.id == id && (extensionPopupProfileID == nil || $0.effectiveProfileID == extensionPopupProfileID) }) else { return }
+        tabSelectionGeneration = UUID()
         let switching = session.selectedSpace != id
         if switching { dismissCommand(); cancelRecentTabSwitcher() }
         closePrimaryPeek()
@@ -438,6 +482,9 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return tab.id
     }
     func close(_ id: UUID) {
+        for owner in pageStores {
+            if let web = owner.views[id] { owner.fullscreenSelectionRequests.removeValue(forKey: ObjectIdentifier(web)) }
+        }
         if let presenter = pageStores.first(where: { $0.views[id] != nil }), let web = presenter.views[id],
            let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen,
            fullscreen.isBorrowed || web.fullscreenState != .notInFullscreen {
@@ -543,6 +590,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func showCommand(new: Bool = false) {
         guard !awaitingInitialMetadata, !isShuttingDown,
               extensionPopupProfileID == nil || space.effectiveProfileID == extensionPopupProfileID else { return }
+        tabSelectionGeneration = UUID()
         commandFocusRequest += 1
         commandOpensNewTab = new
         commandSiteSearch = nil; commandError = nil; commandContext = searchInputContext()
@@ -576,6 +624,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         }
     }
     func loadWebsite(_ web: WKWebView, to url: URL) {
+        fullscreenSelectionRequests.removeValue(forKey: ObjectIdentifier(web))
         let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen
         let profile = profileID(for: web), document = documentIdentity(for: web), presentation = presentationIdentity(for: web)
         let needsExit = fullscreen?.isBorrowed == true || web.fullscreenState != .notInFullscreen
