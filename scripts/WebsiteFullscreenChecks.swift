@@ -16,9 +16,10 @@ import Darwin
         print("\(value ? "PASS" : "FAIL"): \(label)")
     }
 
-    @MainActor static func wait(_ label: String, _ condition: @escaping @MainActor () async throws -> Bool) async throws {
+    @MainActor static func wait(_ label: String, deadline suppliedDeadline: ContinuousClock.Instant? = nil,
+                               _ condition: @escaping @MainActor () async throws -> Bool) async throws {
         let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(12))
+        let deadline = suppliedDeadline ?? clock.now.advanced(by: .seconds(12))
         while clock.now < deadline {
             if try await condition() { return }
             try await Task.sleep(for: .milliseconds(20))
@@ -35,18 +36,26 @@ import Darwin
     }
 
     @MainActor static func enter(_ web: WKWebView, target: String) async throws {
-        _ = try await web.callAsyncJavaScript("""
+        let deadline = ContinuousClock.now.advanced(by: .seconds(12))
+        do {
+            // Window ordering and WebKit's visibility notification are asynchronous.
+            // Keep visibility and entry inside the same existing 12-second budget.
+            try await wait("visible owned fullscreen document", deadline: deadline) {
+                guard web.window?.isVisible == true, web.bounds.width > 0, web.bounds.height > 0 else { return false }
+                return (try await web.evaluateJavaScript("document.visibilityState === 'visible'")) as? Bool == true
+            }
+            _ = try await web.callAsyncJavaScript("""
             window.ownedFullscreenResult = 'requesting';
             document.getElementById(target).requestFullscreen()
                 .then(() => window.ownedFullscreenResult = 'entered')
                 .catch(error => window.ownedFullscreenResult = error.name + ': ' + error.message);
             return true;
             """, arguments: ["target": target], in: nil, contentWorld: .page)
-        do {
-            try await wait("genuine \(target) fullscreen") { web.fullscreenState == .inFullscreen }
+            try await wait("genuine \(target) fullscreen", deadline: deadline) { web.fullscreenState == .inFullscreen }
         } catch {
             print("FULLSCREEN_ENTRY_FAILURE", target, "state", web.fullscreenState.rawValue,
-                  "page", (try? await web.evaluateJavaScript("window.ownedFullscreenResult")) ?? "unavailable")
+                  "windowVisible", web.window?.isVisible == true,
+                  "page", (try? await web.evaluateJavaScript("JSON.stringify({result:window.ownedFullscreenResult,visibility:document.visibilityState})")) ?? "unavailable")
             throw error
         }
     }
