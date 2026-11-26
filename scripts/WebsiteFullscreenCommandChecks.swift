@@ -92,6 +92,17 @@ extension WebsiteFullscreenChecks {
             }
         }
         let sourceSpace = writer.space.id
+        var clearingSurvivorSpace: UUID?, clearingSurvivorProfile: UUID?
+        if kind == "profile-clear" {
+            guard !isPrivate, !isQuick else { throw Failure.fixture("normal named-profile clear fixture") }
+            let otherProfile = try writer.createProfile(name: "Owned clearing survivor")
+            try owned.register(otherProfile)
+            if let controller = writer.profiles.first(where: { $0.id == otherProfile })?.extensionControllerID {
+                try controllers.register(controller)
+            }
+            clearingSurvivorProfile = otherProfile; clearingSurvivorSpace = writer.space.id
+            writer.selectSpace(sourceSpace)
+        }
         var nextSpace: UUID?
         if kind == "next-space" {
             nextSpace = try writer.createSpace(name: "Owned next fullscreen Space", profileID: profile)
@@ -158,6 +169,7 @@ extension WebsiteFullscreenChecks {
         var web = underlying
         var targetID = id
         var handoff: (store: BrowserStore, window: NSWindow, survivorID: UUID, survivor: WKWebView, document: NSUUID)?
+        var clearingSurvivor: (store: BrowserStore, window: NSWindow, id: UUID, web: WKWebView, profile: UUID, document: NSUUID)?
         if kind == "peek-escape" || kind == "peek-expire-static" || kind.hasPrefix("peek-parent-") || kind.hasPrefix("peek-") && kind.hasSuffix("script-sheet") {
             store.openPeek(base.appendingPathComponent("page"), from: underlying)
             guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else { throw Failure.fixture("command Peek") }
@@ -171,6 +183,23 @@ extension WebsiteFullscreenChecks {
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         var caught: Error?
         do {
+            if kind == "profile-clear" {
+                guard let otherSpace = clearingSurvivorSpace, let otherProfile = clearingSurvivorProfile else {
+                    throw Failure.fixture("owned clearing survivor profile")
+                }
+                app.newBrowserWindow()
+                guard let otherWindow = app.windows.keys.first(where: { $0 !== window && app.primaryOwners[$0] === owner }),
+                      let other = app.windows[otherWindow] else { throw Failure.fixture("owned clearing survivor window") }
+                other.selectSpace(otherSpace)
+                let survivorID = other.newTab(url: base.appendingPathComponent("page-no-media"))
+                let survivor = other.view(for: survivorID)
+                try await wait("other-profile clearing survivor ready") {
+                    (try? await survivor.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
+                }
+                _ = try await survivor.evaluateJavaScript("document.getElementById('draft').value='surviving profile clear draft';document.cookie='owned_fullscreen_clear=survivor; path=/; SameSite=Lax';localStorage.setItem('owned_fullscreen_clear','survivor');true")
+                clearingSurvivor = (other, otherWindow, survivorID, survivor, otherProfile, other.documentIdentity(for: survivor))
+                window.makeKeyAndOrderFront(nil)
+            }
             if kind.hasPrefix("handoff") {
                 app.newBrowserWindow()
                 guard let destinationWindow = app.windows.keys.first(where: { $0 !== window && app.primaryOwners[$0] === owner }),
@@ -213,6 +242,9 @@ extension WebsiteFullscreenChecks {
                 throw error
             }
             _ = try await web.evaluateJavaScript("document.getElementById('draft').value='captured command draft';window.ownedCommandToken=41;true")
+            if kind == "profile-clear" {
+                _ = try await web.evaluateJavaScript("document.cookie='owned_fullscreen_clear=target; path=/; SameSite=Lax';localStorage.setItem('owned_fullscreen_clear','target');true")
+            }
             let document = store.documentIdentity(for: web)
             if kind == "no-media" { try await enterWithOwnedClick(web, window: window) }
             else { try await enter(web, target: "element") }
@@ -224,6 +256,60 @@ extension WebsiteFullscreenChecks {
             check(app.outputTarget(in: presentation)?.web === web,
                   "\(kind): page-output selection retains the fullscreen source")
             switch kind {
+            case "profile-clear":
+                guard let survivor = clearingSurvivor,
+                      profile != BrowserProfile.defaultID,
+                      web.configuration.websiteDataStore.identifier == profile else {
+                    throw Failure.fixture("owned named stores for actual profile erasure")
+                }
+                let targetState = (try? await web.evaluateJavaScript("document.cookie==='owned_fullscreen_clear=target'&&localStorage.getItem('owned_fullscreen_clear')==='target'")) as? Bool
+                let otherState = (try? await survivor.web.evaluateJavaScript("document.cookie==='owned_fullscreen_clear=survivor'&&localStorage.getItem('owned_fullscreen_clear')==='survivor'")) as? Bool
+                check(targetState == true && otherState == true && survivor.profile != profile &&
+                      survivor.web.configuration.websiteDataStore.identifier == survivor.profile,
+                      "Profile clearing starts with isolated real cookies and local storage in two owned named profiles")
+                var removalCalls = 0, safeBeforeRemoval = false, removed = false
+                try await store.clearProfileData(profile, removeData: { dataStore in
+                    guard dataStore.identifier == profile, dataStore.isPersistent else {
+                        throw Failure.fixture("refusing erasure outside the owned named profile")
+                    }
+                    removalCalls += 1
+                    safeBeforeRemoval = !presentation.isVisible && web.fullscreenState == .notInFullscreen &&
+                        (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false &&
+                        store.pageStores.allSatisfy { $0.views[id] == nil && $0.primaryPeekView !== web }
+                    check(safeBeforeRemoval,
+                          "Profile clearing completes physical fullscreen retirement before actual website-data erasure")
+                    await withCheckedContinuation { reply in
+                        dataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) { reply.resume() }
+                    }
+                    removed = true
+                })
+                if let controller = store.profiles.first(where: { $0.id == profile })?.extensionControllerID {
+                    try controllers.register(controller)
+                }
+                let retired = await effect {
+                    !presentation.isVisible && web.fullscreenState == .notInFullscreen &&
+                        (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false && store.views[id] == nil
+                }
+                check(removalCalls == 1 && removed && safeBeforeRemoval && retired && !store.profileUnavailable(profile),
+                      "Profile clearing erases once, releases the old native presentation and resumes the cleared profile without recovery")
+                guard let clearedSpace = store.session.spaces.first(where: { $0.id == sourceSpace }),
+                      clearedSpace.tabs.count == 1, let freshID = clearedSpace.selected,
+                      clearedSpace.tabs.first?.url.isEmpty == true else { throw Failure.fixture("cleared profile's blank replacement") }
+                let fresh = store.view(for: freshID)
+                fresh.load(URLRequest(url: base.appendingPathComponent("page-no-media")))
+                try await wait("cleared profile fresh website document") {
+                    guard !fresh.isLoading else { return false }
+                    return (try? await fresh.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
+                }
+                let emptyData = (try? await fresh.evaluateJavaScript("document.cookie===''&&localStorage.getItem('owned_fullscreen_clear')===null")) as? Bool
+                check(fresh !== web && store.profileID(for: fresh) == profile &&
+                      fresh.configuration.websiteDataStore.identifier == profile && emptyData == true,
+                      "Reopening the cleared profile actually has no prior cookie or local-storage marker")
+                let survivorData = (try? await survivor.web.evaluateJavaScript("document.getElementById('draft').value==='surviving profile clear draft'&&document.cookie==='owned_fullscreen_clear=survivor'&&localStorage.getItem('owned_fullscreen_clear')==='survivor'")) as? Bool
+                check(survivor.window.isVisible && survivor.store.views[survivor.id] === survivor.web &&
+                      survivor.store.profileID(for: survivor.web) == survivor.profile &&
+                      survivor.store.documentIdentity(for: survivor.web) === survivor.document && survivorData == true,
+                      "Clearing the fullscreen profile preserves the other profile's exact live document, form, cookie and local storage")
             case "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate":
                 guard let handoff else { throw Failure.fixture("prepared handoff destination") }
                 handoff.window.makeKeyAndOrderFront(nil)
@@ -973,7 +1059,7 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static", "suspend-static"]
+        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static", "suspend-static", "profile-clear"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
