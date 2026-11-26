@@ -556,30 +556,58 @@ extension WebsiteFullscreenChecks {
                 guard web.uiDelegate === store else { throw Failure.fixture("pending-script production delegate") }
                 web.uiDelegate = probe
                 defer { if store.views[targetID] === web { web.uiDelegate = store } }
-                _ = try await web.callAsyncJavaScript("setTimeout(()=>confirm(marker),0);return true;",
-                    arguments: ["marker": marker], in: nil, contentWorld: .page)
                 func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-                var prompt: NSWindow?
-                let shown = await effect {
-                    guard let sheet = window.attachedSheet, sheet.isVisible, let content = sheet.contentView,
-                          descendants(content).contains(where: { ($0 as? NSTextField)?.stringValue == marker }) else { return false }
-                    prompt = sheet; return true
+                var prompt: NSWindow?, deadline: ContinuousClock.Instant?
+                var observed = false, unanswered = false, hiddenBeforePrompt = false
+                var closedBeforeRecovery = false, recoveryUsed = false
+                let clock = ContinuousClock()
+                // A real JS dialog can hold even the initiating evaluation's
+                // reply. Observe/close in AppKit's common run-loop modes.
+                let timer = Timer(timeInterval: 0.02, repeats: true) { timer in
+                    MainActor.assumeIsolated {
+                        if !observed {
+                            guard let sheet = window.attachedSheet, sheet.isVisible, let content = sheet.contentView,
+                                  descendants(content).contains(where: { ($0 as? NSTextField)?.stringValue == marker }) else { return }
+                            prompt = sheet; observed = true
+                            unanswered = probe.confirmationResults.isEmpty
+                            hiddenBeforePrompt = !presentation.isVisible
+                            deadline = clock.now.advanced(by: .seconds(12))
+                            store.close(targetID)
+                        }
+                        if store.views[targetID] == nil && store.tab(targetID) == nil && !presentation.isVisible &&
+                            web.fullscreenState == .notInFullscreen && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false &&
+                            prompt?.isVisible == false && window.attachedSheet == nil && probe.confirmationResults == [false] {
+                            closedBeforeRecovery = true; timer.invalidate()
+                        } else if let deadline, clock.now >= deadline {
+                            // Snapshot failure before ending our owned sheet.
+                            // Recovery must never make the assertion pass.
+                            recoveryUsed = true; timer.invalidate()
+                            if let prompt, let parent = prompt.sheetParent {
+                                parent.endSheet(prompt, returnCode: .alertSecondButtonReturn); prompt.orderOut(nil)
+                            }
+                        }
+                    }
                 }
-                check(shown && probe.confirmationResults.isEmpty && !presentation.isVisible,
+                RunLoop.main.add(timer, forMode: .common)
+                defer { timer.invalidate() }
+                do {
+                    _ = try await web.callAsyncJavaScript("setTimeout(()=>confirm(marker),0);return true;",
+                        arguments: ["marker": marker], in: nil, contentWorld: .page)
+                } catch {
+                    guard observed else { throw error }
+                    print("FULLSCREEN_PENDING_SHEET_EVALUATION_ENDED", error)
+                }
+                let settled = await effect { closedBeforeRecovery || recoveryUsed }
+                timer.invalidate()
+                let closed = settled && closedBeforeRecovery
+                check(observed && unanswered && hiddenBeforePrompt,
                       "An actual unanswered page confirmation belongs to its captured browser window after fullscreen hides")
-                store.close(targetID)
-                let closed = await effect {
-                    store.views[targetID] == nil && store.tab(targetID) == nil && !presentation.isVisible &&
-                        web.fullscreenState == .notInFullscreen && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false &&
-                        prompt?.isVisible == false && window.attachedSheet == nil && probe.confirmationResults == [false]
-                }
-                check(closed && prompt?.isVisible == false && window.attachedSheet == nil && probe.confirmationResults == [false],
+                check(closed,
                       "Closing a fullscreen tab cancels its actual pending script sheet once before retiring the page")
-                print("FULLSCREEN_PENDING_SHEET_CLOSE", "closed", closed, "replies", probe.confirmationResults,
-                      "sheetVisible", prompt?.isVisible ?? false, "attached", window.attachedSheet != nil,
-                      "registered", store.views[targetID] === web, "state", web.fullscreenState.rawValue)
-                // Explicit recovery follows the observed outcome and cannot
-                // satisfy the closure/cancellation assertions above.
+                print("FULLSCREEN_PENDING_SHEET_CLOSE", "closed", closed, "recoveryUsed", recoveryUsed,
+                      "replies", probe.confirmationResults, "sheetVisible", prompt?.isVisible ?? false,
+                      "attached", window.attachedSheet != nil, "registered", store.views[targetID] === web,
+                      "state", web.fullscreenState.rawValue)
                 if let prompt, let parent = prompt.sheetParent {
                     parent.endSheet(prompt, returnCode: .alertSecondButtonReturn); prompt.orderOut(nil)
                 }
