@@ -196,6 +196,7 @@ extension WebsiteFullscreenChecks {
         }
         if kind == "layout-wide-defaults-control" { sidebarDefaults?.set(260.0, forKey: "sidebarWidth") }
         defer { sidebarDefaults?.removePersistentDomain(forName: suiteName) }
+        let resizeCheck = kind == "layout-normal-resize-production"
         let sparseMotion = kind == "layout-normal-motion-sparse-production"
         let motionCheck = sparseMotion || ["layout-normal-motion-production", "layout-normal-no-motion-production"].contains(kind)
         let focusCheck = ["layout-normal-ready-focus-production", "layout-normal-loading-focus-production",
@@ -208,7 +209,7 @@ extension WebsiteFullscreenChecks {
                 else { UserDefaults.standard.removeObject(forKey: "sidebarWidth") }
             }
         }
-        let isPrivate = !(["layout-normal-production", "layout-normal-motion-production", "layout-normal-no-motion-production", "layout-normal-motion-sparse-production",
+        let isPrivate = !(["layout-normal-production", "layout-normal-motion-production", "layout-normal-no-motion-production", "layout-normal-motion-sparse-production", "layout-normal-resize-production",
                            "layout-normal-ready-focus-production", "layout-normal-loading-focus-production",
                            "layout-normal-background-focus-production"].contains(kind))
         let fixtureKey = SymmetricKey(size: .bits256)
@@ -257,7 +258,7 @@ extension WebsiteFullscreenChecks {
                   "Normal native layout uses its registered disposable named profile")
         }
         if ["layout-ready-production", "layout-normal-ready-focus-production", "layout-private-ready-focus-production",
-            "layout-normal-background-focus-production"].contains(kind) || motionCheck {
+            "layout-normal-background-focus-production"].contains(kind) || motionCheck || resizeCheck {
             try await wait("owned page ready before browser UI") {
                 guard !web.isLoading else { return false }
                 return (try? await web.evaluateJavaScript("document.readyState==='complete'&&document.getElementById('draft')!==null")) as? Bool == true
@@ -269,7 +270,7 @@ extension WebsiteFullscreenChecks {
         var preparedChrome: NativeWindowChrome?
         let window: NSWindow
         print("FULLSCREEN_LAYOUT_PHASE", kind, "mount")
-        if ["layout-production", "layout-normal-production", "layout-no-motion-production", "layout-collapsed-production", "layout-single-tab-production", "layout-ready-production", "layout-normal-motion-production", "layout-normal-no-motion-production", "layout-normal-motion-sparse-production", "layout-normal-ready-focus-production", "layout-normal-loading-focus-production", "layout-private-ready-focus-production", "layout-private-loading-focus-production", "layout-normal-background-focus-production"].contains(kind) {
+        if ["layout-production", "layout-normal-production", "layout-no-motion-production", "layout-collapsed-production", "layout-single-tab-production", "layout-ready-production", "layout-normal-motion-production", "layout-normal-no-motion-production", "layout-normal-motion-sparse-production", "layout-normal-resize-production", "layout-normal-ready-focus-production", "layout-normal-loading-focus-production", "layout-private-ready-focus-production", "layout-private-loading-focus-production", "layout-normal-background-focus-production"].contains(kind) {
             app.openPrimary(owner, activate: kind != "layout-normal-background-focus-production")
             if kind == "layout-normal-background-focus-production" {
                 app.openPrimary(owner)
@@ -390,6 +391,7 @@ extension WebsiteFullscreenChecks {
         check(window.minSize.width >= 800 && window.minSize.height >= 540,
               "Sidebar and theme updates preserve the browser's usable resize limit")
         if motionCheck { try await exerciseSidebarMotion(store: store, web: web, window: window, document: document) }
+        if resizeCheck { try await exerciseLiveSidebarResize(store: store, web: web, window: window, document: document) }
         print("FULLSCREEN_LAYOUT_CASE_COMPLETED", kind)
     }
 
@@ -433,6 +435,80 @@ extension WebsiteFullscreenChecks {
               window.makeFirstResponder(divider) else { throw Failure.fixture("intentional existing-window divider focus") }
         app.openPrimary(owner)
         check(window.firstResponder === divider, "Returning to an existing window preserves its intentionally focused control")
+        window.makeFirstResponder(web)
+    }
+
+    @available(macOS 15.4, *) @MainActor
+    private static func exerciseLiveSidebarResize(store: BrowserStore, web: WKWebView, window: NSWindow,
+                                                  document: AnyObject) async throws {
+        func handles(_ view: NSView) -> [SidebarResizeHandle.Handle] {
+            if let handle = view as? SidebarResizeHandle.Handle { return [handle] }
+            return view.subviews.flatMap(handles)
+        }
+        guard let root = window.contentView else { throw Failure.fixture("live sidebar resize root") }
+        try await wait("actual mounted sidebar resize control") { handles(root).count == 1 }
+        guard let handle = handles(root).first else { throw Failure.fixture("actual sidebar resize handle") }
+        func width() -> Double { store.windowSidebarWidth ?? SidebarSizing.defaultWidth }
+        func pageX() -> Double { root.convert(web.bounds, from: web).minX }
+        func mouse(_ type: NSEvent.EventType, _ point: NSPoint, clicks: Int = 1) throws {
+            guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: clicks, pressure: type == .leftMouseUp ? 0 : 1) else {
+                throw Failure.fixture("owned sidebar mouse event")
+            }
+            NSApp.postEvent(event, atStart: false)
+        }
+        func key(_ code: UInt16, _ characters: String) throws {
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                    context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                    isARepeat: false, keyCode: code) else { throw Failure.fixture("owned sidebar keyboard event") }
+                NSApp.postEvent(event, atStart: false)
+            }
+        }
+        func center() -> NSPoint { handle.convert(NSPoint(x: handle.bounds.midX, y: handle.bounds.midY), to: nil) }
+        func beginDrag(_ delta: Double) async throws -> NSPoint {
+            let origin = center(), before = width()
+            try mouse(.leftMouseDown, origin)
+            try await wait("real sidebar mouse-down focus") { window.firstResponder === handle }
+            let end = NSPoint(x: origin.x + delta, y: origin.y)
+            try mouse(.leftMouseDragged, end)
+            let target = SidebarSizing.width(saved: before + delta, windowWidth: root.bounds.width)
+            try await wait("live viewport follows actual divider drag") { abs(pageX() - target - 8) < 1 }
+            return end
+        }
+        window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        try await wait("key window for live sidebar drag") { window.isKeyWindow }
+        try await wait("settled visible sidebar before real drag") { abs(pageX() - width() - 8) < 1 }
+        for (delta, expected) in [(1000.0, 360.0), (-1000.0, 196.0), (124.0, 320.0)] {
+            let end = try await beginDrag(delta)
+            try mouse(.leftMouseUp, end)
+            let committed = await effect { width() == expected && abs(pageX() - expected - 8) < 1 }
+            print("FULLSCREEN_SIDEBAR_DRAG", "expected", expected, "saved", width(), "pageX", pageX())
+            check(committed, "Actual sidebar dragging commits its bounded width and resizes the live website to \(Int(expected)) points")
+        }
+        let end = try await beginDrag(-80)
+        try key(53, "\u{1b}")
+        let cancelled = await effect { width() == 320 && abs(pageX() - 328) < 1 }
+        try mouse(.leftMouseUp, end)
+        check(cancelled, "Escape cancels a live sidebar drag and restores its saved width and actual viewport")
+        let decremented = handle.accessibilityPerformDecrement()
+        let smaller = await effect { width() == 308 && abs(pageX() - 316) < 1 }
+        let incremented = handle.accessibilityPerformIncrement()
+        let larger = await effect { width() == 320 && abs(pageX() - 328) < 1 }
+        check(decremented && smaller && incremented && larger,
+              "The actual accessibility resize actions update the saved width and live website")
+        try key(124, String(UnicodeScalar(0xF703)!))
+        check(await effect { width() == 332 && abs(pageX() - 340) < 1 },
+              "A focused divider's real ArrowRight event resizes its actual browser window")
+        let resetPoint = center()
+        try mouse(.leftMouseDown, resetPoint, clicks: 2); try mouse(.leftMouseUp, resetPoint, clicks: 2)
+        check(await effect { width() == 236 && abs(pageX() - 244) < 1 },
+              "Double-clicking the live divider restores the default sidebar width")
+        let draft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='native layout draft'&&window.ownedLayoutToken===73")) as? Bool
+        check(store.documentIdentity(for: web) === document && web.window === window && draft == true,
+              "Mouse, keyboard and accessibility resizing preserve the exact live document and unsaved form")
         window.makeFirstResponder(web)
     }
 
