@@ -14,7 +14,11 @@ import CryptoKit
 
     var body: some View {
         Group {
-            if ["layout-progress-control", "layout-content-frame-control"].contains(kind) {
+            if kind == "layout-ignored-safe-area-control" {
+                GeometryReader { _ in
+                    componentContent.frame(maxWidth: .infinity, maxHeight: .infinity).ignoresSafeArea()
+                }
+            } else if ["layout-progress-control", "layout-content-frame-control"].contains(kind) {
                 VStack(spacing: 0) {
                     Color.clear.frame(height: max(0, chrome.pageTopInset - 8))
                     if kind == "layout-progress-control" {
@@ -97,7 +101,16 @@ import CryptoKit
 
     @ViewBuilder private var sidebar: some View {
         let tabs = store.space.tabs.filter { !$0.url.isEmpty }
-        if kind == "layout-native-menus-control" {
+        if kind == "layout-resize-grip-control" {
+            Color.clear.overlay(alignment: .trailing) {
+                SidebarResizeHandle(interactionEnabled: store.sidebarVisible, width: 260,
+                                    canInteract: { store.sidebarVisible },
+                                    onBegin: { reveal.beginResize() }, onDrag: { _ in },
+                                    onEnd: { reveal.endResize() }, onCancel: { reveal.endResize() },
+                                    onReset: {}, onSetWidth: { _ in },
+                                    onFocusChange: { reveal.setKeyboardFocus($0) }).frame(width: 6)
+            }
+        } else if kind == "layout-native-menus-control" {
             HStack {
                 Menu {
                     Button("Manage Spaces…") { store.showSpacesManager() }
@@ -211,7 +224,8 @@ extension WebsiteFullscreenChecks {
                                     "layout-native-menus-control", "layout-address-controls-control",
                                     "layout-tracking-control", "layout-store-sheet-control",
                                     "layout-full-sidebar-control", "layout-progress-control",
-                                    "layout-content-frame-control"].contains(kind)
+                                    "layout-content-frame-control", "layout-resize-grip-control",
+                                    "layout-ignored-safe-area-control"].contains(kind)
             if kind == "layout-preconfigured-control" || componentControl {
                 preparedChrome = NativeWindowChrome()
                 preparedChrome?.attach(to: control)
@@ -252,11 +266,13 @@ extension WebsiteFullscreenChecks {
               "animations", store.appearance.animationsEnabled, "sidebar", store.sidebarVisible)
         print("FULLSCREEN_LAYOUT_PHASE", kind, "show")
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        print("FULLSCREEN_LAYOUT_FOCUS", kind, "show", window.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
         try await wait("visible native layout source") {
             guard window.isVisible, web.window === window else { return false }
             return (try? await web.evaluateJavaScript("document.visibilityState==='visible'&&document.getElementById('draft')!==null")) as? Bool == true
         }
         print("FULLSCREEN_LAYOUT_PHASE", kind, "ready")
+        print("FULLSCREEN_LAYOUT_FOCUS", kind, "ready", window.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
         _ = try await web.evaluateJavaScript("document.getElementById('draft').value='native layout draft';window.ownedLayoutToken=73;true")
         let document = store.documentIdentity(for: web)
         check(window.toolbarStyle == .unifiedCompact && window.toolbar != nil,
