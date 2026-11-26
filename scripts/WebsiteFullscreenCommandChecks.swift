@@ -173,6 +173,18 @@ extension WebsiteFullscreenChecks {
                 }
                 return (try? await web.evaluateJavaScript("document.getElementById('video')?.readyState>=2")) as? Bool == true
             }
+            do {
+                try await wait("owned command window and document visible") {
+                    guard NSApp.isActive, window.isVisible, window.isKeyWindow, window.isOnActiveSpace,
+                          web.window === window, !web.isHiddenOrHasHiddenAncestor else { return false }
+                    return (try? await web.evaluateJavaScript("document.visibilityState==='visible'")) as? Bool == true
+                }
+            } catch {
+                print("FULLSCREEN_COMMAND_VISIBILITY_FAILURE", kind, "key", window.isKeyWindow,
+                      "active", NSApp.isActive, "visible", window.isVisible, "activeSpace", window.isOnActiveSpace,
+                      "document", (try? await web.evaluateJavaScript("document.visibilityState")) ?? "unavailable")
+                throw error
+            }
             _ = try await web.evaluateJavaScript("document.getElementById('draft').value='captured command draft';window.ownedCommandToken=41;true")
             let document = store.documentIdentity(for: web)
             if kind == "no-media" { try await enterWithOwnedClick(web, window: window) }
