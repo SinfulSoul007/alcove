@@ -14,6 +14,7 @@ import WebKit
 }
 
 @MainActor func checkWebsiteProcessRecovery(_ check: (Bool, String) -> Void) async throws {
+    try checkWebsiteNavigationNotices(check)
     func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
     for privateMode in [false, true] {
         let fixture = try SiteSearchStoreFixture(isPrivate: privateMode)
@@ -118,4 +119,62 @@ import WebKit
     newButton?.performClick(nil)
     check(newButton != nil && web.reloadCount == 1 && second.store.websiteProcessRecovery(for: web) == nil,
           "The moved page's native Reload targets its new owner exactly once")
+}
+
+@MainActor private func checkWebsiteNavigationNotices(_ check: (Bool, String) -> Void) throws {
+    for privateMode in [false, true] {
+        let fixture = try SiteSearchStoreFixture(isPrivate: privateMode)
+        defer { fixture.close() }
+        let store = fixture.store, web = fixture.web, id = store.selectedID!
+        let otherID = store.newTab()
+        let other = fixture.anotherWeb(otherID)
+        store.flush()
+        let saved = privateMode ? nil : try Data(contentsOf: store.sessionURL)
+        let scope = privateMode ? "Private" : "Normal"
+        let text = "Owned \(scope) connection failure"
+        let failure = NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost,
+                              userInfo: [NSLocalizedDescriptionKey: text])
+        func fail() {
+            store.message = nil
+            store.webView(web, didStartProvisionalNavigation: nil)
+            store.webView(web, didFailProvisionalNavigation: nil, withError: failure)
+        }
+        fail()
+        check(store.message == text, "\(scope) provisional failure still reports its connection error")
+        store.webView(web, didStartProvisionalNavigation: nil)
+        check(store.message == nil, "\(scope) a new navigation removes its source's obsolete connection error")
+
+        store.webView(web, didFail: nil, withError: failure)
+        check(store.message == text, "\(scope) committed navigation failure still reports its error")
+        store.webView(web, didCommit: nil)
+        check(store.message == nil, "\(scope) replacement document removes its source's committed error")
+
+        fail()
+        store.webView(other, didStartProvisionalNavigation: nil)
+        check(store.message == text, "\(scope) another page's navigation cannot dismiss this connection error")
+        store.webView(web, didStartProvisionalNavigation: nil)
+        check(store.message == nil, "\(scope) only the failing page expires its own connection error")
+
+        fail(); store.message = "Owned unrelated saving notice"
+        store.webView(web, didStartProvisionalNavigation: nil)
+        check(store.message == "Owned unrelated saving notice", "\(scope) navigation preserves a newer unrelated notice")
+        fail(); store.message = text
+        store.webView(web, didStartProvisionalNavigation: nil)
+        check(store.message == text, "\(scope) a separately published identical notice is not mistaken for the old page error")
+
+        fail(); store.webViewWebContentProcessDidTerminate(web)
+        check(store.message == nil && store.websiteProcessRecovery(for: web) != nil,
+              "\(scope) process recovery expires its own obsolete connection error")
+        fail(); store.discardView(id)
+        check(store.message == nil, "\(scope) discarding a failed page expires its connection error")
+        store.message = "Owned unrelated notice after close"
+        store.webView(web, didFailProvisionalNavigation: nil, withError: failure)
+        check(store.message == "Owned unrelated notice after close", "\(scope) a retired page's late failure cannot replace another notice")
+        if privateMode {
+            check(fixture.reads.count == 0 && !FileManager.default.fileExists(atPath: store.sessionURL.path),
+                  "Private navigation notices never request keys or save session data")
+        } else {
+            check(try Data(contentsOf: store.sessionURL) == saved, "Normal navigation notices remain transient")
+        }
+    }
 }

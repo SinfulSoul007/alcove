@@ -95,8 +95,9 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             if windowGroupID != nil && extensionPopupProfileID == nil { save() }
         }
     }
-    @Published var message: String? { didSet { boostFailureNotice = nil } }
+    @Published var message: String? { didSet { boostFailureNotice = nil; navigationFailureNotice = nil } }
     var boostFailureNotice: BoostFailureNotice?
+    var navigationFailureNotice: WebsiteNavigationNotice?
     @Published var revision = 0 {didSet {extensionBrowserStateChanged()}}
     @Published var profiles: [BrowserProfile] = [.defaultProfile] {
         didSet { windowGroup?.sharedFieldDidChange(.profiles, from: self) }
@@ -201,6 +202,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func invalidateDocumentIdentity(for web: WKWebView, refreshBoosts: Bool = true) {
         BoostRuntime.dismissFailure(for: web, store: self)
+        dismissNavigationFailure(for: web)
         clearWebsiteProcessRecovery(for: web)
         fullscreenSelectionRequests.removeValue(forKey: ObjectIdentifier(web))
         cancelReader(for: web)
@@ -247,6 +249,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func transferDocumentBindings(for web: WKWebView, to destination: BrowserStore) {
         BoostRuntime.dismissFailure(for: web, store: self)
+        dismissNavigationFailure(for: web)
         fullscreenSelectionRequests.removeValue(forKey: ObjectIdentifier(web))
         cancelReader(for: web)
         cancelWebsiteProtectionTickets(for:web)
@@ -807,7 +810,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         if failure.domain == NSURLErrorDomain && failure.code == NSURLErrorCancelled { return }
         // WebKit interrupts the provisional frame when its policy turns navigation into a download.
         if failure.domain == "WebKitErrorDomain" && failure.code == 102 { return }
-        message = failure.localizedDescription
+        reportNavigationFailure(failure, from: webView)
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard !isShuttingDown, webView.navigationDelegate === self,

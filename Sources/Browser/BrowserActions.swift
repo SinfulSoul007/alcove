@@ -186,7 +186,7 @@ extension BrowserStore {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { BoostRuntime.navigationStarted(webView); invalidateDocumentIdentity(for: webView) }
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { invalidateDocumentIdentity(for: webView); revision += 1 }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        if (error as NSError).code != NSURLErrorCancelled { message = error.localizedDescription }; revision += 1
+        if (error as NSError).code != NSURLErrorCancelled { reportNavigationFailure(error, from: webView) }; revision += 1
     }
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
         guard frame.webView === webView else { completionHandler(nil); return }
