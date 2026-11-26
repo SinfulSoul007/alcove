@@ -37,6 +37,7 @@ extension BrowserStore {
         let sourceWasPeek = source.map { peekContext(for: $0) == context } ?? false
         let sourceDocument = source.map { documentIdentity(for: $0) }
         let sourcePresentation = source.map { presentationIdentity(for: $0) }
+        let destinationSpace = space.id, destinationProfile = activeProfileID
         closePeek(in: context) { [weak self, weak source] in
             guard let self, !self.isShuttingDown, !self.profileUnavailable(profile), self.peekPages[context] == nil else { return }
             if hadSource && !sourceWasPeek {
@@ -48,7 +49,7 @@ extension BrowserStore {
                 guard self.session.spaces.contains(where: { $0.id == targetSpace && (self.isPrivate || $0.effectiveProfileID == profile) }) else { return }
             }
             switch context {
-            case .primary: guard self.space.id == targetSpace, self.activeProfileID == profile else { return }
+            case .primary: guard self.space.id == destinationSpace, self.activeProfileID == destinationProfile else { return }
             case .quick(let parent): guard self.quickProfileID(parent) == profile else { return }
             }
             let config = WKWebViewConfiguration(); config.websiteDataStore = self.websiteDataStore(forProfile: profile)
