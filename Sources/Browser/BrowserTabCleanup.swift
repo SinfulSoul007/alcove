@@ -52,6 +52,7 @@ extension BrowserStore {
 
     private var suspensionExclusions: Set<UUID> {
         var protected = pendingTabSuspensionExclusions ?? []
+        protected.formUnion(fullscreenPageIDs)
         protected.formUnion(visiblePaneIDs)
         protected.formUnion(splitGroups.flatMap(\.tabIDs))
         if let windowGroup { protected.formUnion(windowGroup.protectedPaneIDs) }
@@ -144,9 +145,21 @@ extension BrowserStore {
 
     private var archiveExclusions: Set<UUID> {
         var protected = Set(session.spaces.compactMap(\.selected))
+        protected.formUnion(fullscreenPageIDs)
         protected.formUnion(splitGroups.flatMap(\.tabIDs))
         if let windowGroup { protected.formUnion(windowGroup.protectedPaneIDs) }
         return protected
+    }
+
+    /// Fullscreen may have no playing media. Recheck both eligibility and
+    /// delivery, while preserving the separate explicit Clear Today path.
+    private var fullscreenPageIDs: Set<UUID> {
+        Set(pageStores.flatMap { store in
+            store.views.compactMap { id, web in
+                web.fullscreenState != .notInFullscreen ||
+                    (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true ? id : nil
+            }
+        })
     }
 
     private func cleanupTabs(in spaces: [Space], where isEligible: (BrowserCore.Tab) -> Bool) -> [CleanupTab] {

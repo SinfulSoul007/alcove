@@ -236,10 +236,20 @@ extension WebsiteFullscreenChecks {
                 check(retained && store.profileID(for: web) == profile && store.documentIdentity(for: web) === document && draft == true,
                       "Automatic archive preserves the exact fullscreen view/profile/document and unsaved form")
                 if retained {
-                    store.select(id)
-                    try await leave(web)
-                    let restored = await effect { web.window === window && !presentation.isVisible }
-                    check(restored, "The protected static page returns to its original browser host after exiting fullscreen")
+                    let otherDocument = store.documentIdentity(for: other)
+                    _ = try await other.evaluateJavaScript("document.getElementById('draft').value='surviving explicit-clear draft';true")
+                    store.update(otherID) { $0.pinned = true }
+                    store.clearTodayTabs()
+                    let cleared = await effect {
+                        store.tab(id) == nil && store.views[id] == nil && !presentation.isVisible &&
+                            web.fullscreenState == .notInFullscreen &&
+                            (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
+                    }
+                    check(cleared, "Explicit Clear Today exits fullscreen and closes the same static page protected from automatic archive")
+                    let otherDraft = (try? await other.evaluateJavaScript("document.getElementById('draft').value==='surviving explicit-clear draft'")) as? Bool
+                    check(cleared && window.isVisible && store.views[otherID] === other &&
+                          store.documentIdentity(for: other) === otherDocument && store.profileID(for: other) == profile && otherDraft == true,
+                          "Explicit fullscreen cleanup preserves its pinned survivor's exact profile/document/form")
                 }
             case "no-media":
                 check(app.handleEscape(in: presentation), "Escape handles an ordinary page's native fullscreen presentation")
