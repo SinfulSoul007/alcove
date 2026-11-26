@@ -30,13 +30,14 @@ import CryptoKit
                 .background(store.activeTheme.isDark ? Color(red: 0.095, green: 0.09, blue: 0.12) : .white)
                 .clipShape(RoundedRectangle(cornerRadius: store.appearance.cornerRadius))
                 .padding(8).padding(.leading, store.sidebarVisible ? 260 : 0)
-            } else if kind == "layout-full-sidebar-control" {
+            } else if ["layout-full-sidebar-control", "layout-full-sidebar-narrow-control"].contains(kind) {
                 GeometryReader { geometry in
+                    let width = kind == "layout-full-sidebar-narrow-control" ? 236.0 : 260.0
                     HStack(spacing: 0) {
                         if store.sidebarVisible {
-                            BrowserSidebar(store: store, chrome: chrome, reveal: reveal, width: 260,
+                            BrowserSidebar(store: store, chrome: chrome, reveal: reveal, width: width,
                                            windowHeight: geometry.size.height, motion: nil,
-                                           interactionBlocked: false, resizing: false).frame(width: 260)
+                                           interactionBlocked: false, resizing: false).frame(width: width)
                         }
                         WebPane(webView: web, store: store).padding(8)
                     }
@@ -166,10 +167,11 @@ extension WebsiteFullscreenChecks {
                                      controllers: OwnedExtensionControllers) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-native-layout-" + UUID().uuidString)
         let suiteName = "Alcove.NativeLayout." + UUID().uuidString
-        let sidebarDefaults = kind == "layout-isolated-defaults-control" ? UserDefaults(suiteName: suiteName) : nil
+        let sidebarDefaults = ["layout-isolated-defaults-control", "layout-wide-defaults-control"].contains(kind) ? UserDefaults(suiteName: suiteName) : nil
         if let sidebarDefaults, let saved = UserDefaults.standard.object(forKey: "sidebarWidth") {
             sidebarDefaults.set(saved, forKey: "sidebarWidth")
         }
+        if kind == "layout-wide-defaults-control" { sidebarDefaults?.set(260.0, forKey: "sidebarWidth") }
         defer { sidebarDefaults?.removePersistentDomain(forName: suiteName) }
         let isPrivate = kind != "layout-normal-production"
         let fixtureKey = SymmetricKey(size: .bits256)
@@ -232,7 +234,8 @@ extension WebsiteFullscreenChecks {
                                     "layout-tracking-control", "layout-store-sheet-control",
                                     "layout-full-sidebar-control", "layout-progress-control",
                                     "layout-content-frame-control", "layout-resize-grip-control",
-                                    "layout-ignored-safe-area-control", "layout-conditional-progress-control"].contains(kind)
+                                    "layout-ignored-safe-area-control", "layout-conditional-progress-control",
+                                    "layout-full-sidebar-narrow-control"].contains(kind)
             if kind == "layout-preconfigured-control" || componentControl {
                 preparedChrome = NativeWindowChrome()
                 preparedChrome?.attach(to: control)
@@ -244,7 +247,7 @@ extension WebsiteFullscreenChecks {
                 let hosting = NSHostingView(rootView: component.frame(minWidth: 800, minHeight: 540))
                 hosting.safeAreaRegions = []; hosting.sizingOptions = [.minSize]
                 control.contentView = hosting
-            } else if ["layout-content-minimum-control", "layout-isolated-defaults-control"].contains(kind) {
+            } else if ["layout-content-minimum-control", "layout-isolated-defaults-control", "layout-wide-defaults-control"].contains(kind) {
                 let hosting = NSHostingView(rootView: browser.frame(minWidth: 800, minHeight: 540))
                 hosting.safeAreaRegions = []; hosting.sizingOptions = [.minSize]
                 control.contentView = hosting
@@ -273,13 +276,21 @@ extension WebsiteFullscreenChecks {
               "animations", store.appearance.animationsEnabled, "sidebar", store.sidebarVisible)
         print("FULLSCREEN_LAYOUT_PHASE", kind, "show")
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        func chromeMetrics(_ view: NSView) -> [String] {
+            if let reader = view as? NativeChromeReader.Host {
+                return ["height=\(reader.chrome.height),leading=\(reader.chrome.leadingEdge),inset=\(reader.chrome.pageTopInset)"]
+            }
+            return view.subviews.flatMap(chromeMetrics)
+        }
         print("FULLSCREEN_LAYOUT_FOCUS", kind, "show", window.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
+        print("FULLSCREEN_LAYOUT_CHROME", kind, "show", window.contentView.map(chromeMetrics) ?? [])
         try await wait("visible native layout source") {
             guard window.isVisible, web.window === window else { return false }
             return (try? await web.evaluateJavaScript("document.visibilityState==='visible'&&document.getElementById('draft')!==null")) as? Bool == true
         }
         print("FULLSCREEN_LAYOUT_PHASE", kind, "ready")
         print("FULLSCREEN_LAYOUT_FOCUS", kind, "ready", window.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
+        print("FULLSCREEN_LAYOUT_CHROME", kind, "ready", window.contentView.map(chromeMetrics) ?? [])
         _ = try await web.evaluateJavaScript("document.getElementById('draft').value='native layout draft';window.ownedLayoutToken=73;true")
         let document = store.documentIdentity(for: web)
         check(window.toolbarStyle == .unifiedCompact && window.toolbar != nil,
