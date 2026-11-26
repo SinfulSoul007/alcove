@@ -5,6 +5,42 @@ import CryptoKit
 import QuartzCore
 import BrowserCore
 
+/// Observe only this fixture's public AppKit state; never change its focus or layout.
+@MainActor private final class NativeInitialFocusObservation {
+    private weak var window: NSWindow?
+    private weak var web: WKWebView?
+    private var observations: [NSObjectProtocol] = []
+    private var hosts: [ObjectIdentifier: Int] = [:]
+    private var previous = ""
+
+    init(window: NSWindow, web: WKWebView) {
+        self.window = window; self.web = web
+        for name in [NSWindow.didUpdateNotification, NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            observations.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] note in
+                MainActor.assumeIsolated { self?.capture(note.name.rawValue) }
+            })
+        }
+        capture("mounted")
+    }
+    func capture(_ phase: String) {
+        guard let window, let web else { return }
+        let host: Int
+        if let parent = web.superview {
+            let key = ObjectIdentifier(parent)
+            if hosts[key] == nil { hosts[key] = hosts.count + 1 }
+            host = hosts[key]!
+        } else { host = 0 }
+        let pageFocused = (window.firstResponder as? NSView).map { $0 === web || $0.isDescendant(of: web) } ?? false
+        let signature = "key=\(window.isKeyWindow) pageFocused=\(pageFocused) neutral=\(window.firstResponder === window) host=\(host) inWindow=\(web.window === window) loading=\(web.isLoading)"
+        guard signature != previous else { return }
+        previous = signature
+        print("INITIAL_FOCUS_LIFECYCLE", phase, signature)
+    }
+    func stop() {
+        observations.forEach(NotificationCenter.default.removeObserver); observations.removeAll()
+    }
+}
+
 @MainActor private final class NativeSidebarMotionSampler: NSObject {
     struct Sample {
         let time: CFTimeInterval
@@ -337,6 +373,8 @@ extension WebsiteFullscreenChecks {
             try? FileManager.default.removeItem(at: root)
             withExtendedLifetime(preparedChrome) {}
         }
+        let focusObservation = focusCheck ? NativeInitialFocusObservation(window: window, web: web) : nil
+        defer { focusObservation?.stop() }
         print("FULLSCREEN_LAYOUT_CONTEXT", kind, "private", isPrivate, "tabs", store.space.tabs.count,
               "animations", store.appearance.animationsEnabled, "sidebar", store.sidebarVisible)
         print("FULLSCREEN_LAYOUT_PHASE", kind, "show")
@@ -354,6 +392,7 @@ extension WebsiteFullscreenChecks {
             return (try? await web.evaluateJavaScript("document.visibilityState==='visible'&&document.getElementById('draft')!==null")) as? Bool == true
         }
         print("FULLSCREEN_LAYOUT_PHASE", kind, "ready")
+        focusObservation?.capture("ready")
         print("FULLSCREEN_LAYOUT_FOCUS", kind, "ready", window.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
         print("FULLSCREEN_LAYOUT_CHROME", kind, "ready", window.contentView.map(chromeMetrics) ?? [])
         _ = try await web.evaluateJavaScript("document.getElementById('draft').value='native layout draft';window.ownedLayoutToken=73;true")
