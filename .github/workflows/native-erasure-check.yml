@@ -43,6 +43,10 @@ on:
         description: Run existing profile persistence, lifecycle and real website-data regressions
         type: boolean
         default: false
+      extension_regressions:
+        description: Run existing extension window, command and private-association regressions
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -183,6 +187,24 @@ jobs:
           set -o pipefail
           mkdir -p .build/fullscreen
           caffeinate -is scripts/build.sh website-test 2>&1 | tee .build/fullscreen/profile-website.log
+      - name: Verify existing extension window ownership
+        if: ${{ always() && inputs.extension_regressions }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh extension-multi-window-test 2>&1 | tee .build/fullscreen/extension-windows.log
+      - name: Verify existing extension commands and editing precedence
+        if: ${{ always() && inputs.extension_regressions }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh extension-command-test 2>&1 | tee .build/fullscreen/extension-commands.log
+      - name: Verify existing private extension association
+        if: ${{ always() && inputs.extension_regressions }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh extension-private-test 2>&1 | tee .build/fullscreen/extension-private.log
       - name: Preserve the bounded native result
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

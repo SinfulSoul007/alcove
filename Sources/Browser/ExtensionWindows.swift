@@ -49,7 +49,16 @@ struct NativeExtensionWindowKey:Hashable {let storeID:UUID,profileID:UUID,window
         return (store,window)
     }
     var isFocusedInClient:Bool {
-        guard let store,!store.isShuttingDown,store.extensionWindows[reference.kind] === reference,reference.window?.isKeyWindow == true else {return false}
+        guard let store,!store.isShuttingDown,store.extensionWindows[reference.kind] === reference,
+              let window = reference.window else {return false}
+        if !window.isKeyWindow {
+            guard let key = NSApp.keyWindow else {return false}
+            let pages = Array(store.views.values) + store.peekPages.values.map(\.web)
+            guard pages.contains(where: { web in
+                guard let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen else {return false}
+                return fullscreen.currentSource === web && fullscreen.logicalWindow === window && fullscreen.matches(key)
+            }) else {return false}
+        }
         if reference.kind == .primary,!store.isPrivate {return store.activeProfileID == key.profileID}
         return true
     }

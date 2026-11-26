@@ -124,6 +124,7 @@ import BrowserCore
     var nativeTabs:[NativeExtensionTabKey:NativeExtensionTab] = [:]
     var tabsByView:[ObjectIdentifier:NativeExtensionTab] = [:]
     var synchronization:Task<Void,Never>?
+    private var focusObservers:[NSObjectProtocol] = []
     var permissionPrompt = NativeExtensionPermissionPrompt.live
     var permissionRequestTimeout:Duration = .seconds(60)
     var permissionTickets:[UUID:NativeExtensionPermissionTicket] = [:]
@@ -131,7 +132,18 @@ import BrowserCore
     var actionPresenter = NativeExtensionActionPresenter.live
     var actionPreparationTimeout:Duration = .seconds(15)
     var actionJobs:[UUID:NativeExtensionActionJob] = [:]
-    init(owner:BrowserStore) {self.owner = owner}
+    init(owner:BrowserStore) {
+        self.owner = owner
+        super.init()
+        // Website fullscreen owns a separate WebKit window. Observe this app's
+        // key-window changes as well as registered browser-window changes.
+        for name in [NSWindow.didBecomeKeyNotification,NSWindow.didResignKeyNotification] {
+            focusObservers.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main) { [weak self] _ in
+                MainActor.assumeIsolated {self?.browserStateChanged()}
+            })
+        }
+    }
+    deinit {for observer in focusObservers {NotificationCenter.default.removeObserver(observer)}}
     private func currentOwner(_ id:UUID) throws -> (BrowserStore,BrowserProfile) {
         guard let owner, !owner.isShuttingDown else {throw ExtensionHostError.closed}
         guard !owner.isPrivate, !owner.awaitingInitialMetadata, owner.vault != nil,
@@ -308,6 +320,8 @@ import BrowserCore
         context.hasAccessToPrivateData = grant.allowPrivate && BrowserExtensionCompatibility.privateAccessIssue(for:record)==nil
     }
     func shutdown() {
+        for observer in focusObservers {NotificationCenter.default.removeObserver(observer)}
+        focusObservers.removeAll()
         cancelActionJobs()
         cancelPermissionRequests()
         synchronization?.cancel();synchronization = nil

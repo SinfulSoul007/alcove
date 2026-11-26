@@ -1202,7 +1202,7 @@ extension WebsiteFullscreenChecks {
         web: WKWebView, window: NSWindow, presentation: NSWindow, sourceURL: URL,
         windowType: String, document: NSUUID) async throws {
         var last: [String: Any] = [:]
-        func focused(_ expected: Bool, event: Bool = false) async -> Bool {
+        func focused(_ expected: Bool, afterEvents: Int? = nil) async -> Bool {
             do {
                 try await wait("actual extension focus API") {
                     guard let state = try await options.callAsyncJavaScript("""
@@ -1212,6 +1212,7 @@ extension WebsiteFullscreenChecks {
                         return {windowCount:windows.length,targets:targets.length,targetId:target?.id ?? -2,
                             focused:target?.focused === true,focusedCount:windows.filter(w => w.focused).length,
                             activeSource:target?.tabs?.some(t => t.active && t.url === url) === true,
+                            eventCount:window.ownedFocusEvents?.length ?? 0,
                             lastEvent:window.ownedFocusEvents?.at(-1) ?? -2};
                         """, arguments: ["type": windowType, "url": sourceURL.absoluteString],
                         in: nil, contentWorld: .page) as? [String: Any] else {
@@ -1220,9 +1221,10 @@ extension WebsiteFullscreenChecks {
                     last = state
                     let id = (state["targetId"] as? NSNumber)?.intValue
                     let lastEvent = (state["lastEvent"] as? NSNumber)?.intValue
+                    let eventCount = (state["eventCount"] as? NSNumber)?.intValue ?? 0
                     return state["targets"] as? Int == 1 && state["activeSource"] as? Bool == true &&
                         state["focused"] as? Bool == expected && state["focusedCount"] as? Int == (expected ? 1 : 0) &&
-                        (!event || lastEvent == (expected ? id : -1))
+                        (afterEvents == nil || (eventCount > afterEvents! && lastEvent == (expected ? id : -1)))
                 }
                 return true
             } catch { return false }
@@ -1238,14 +1240,16 @@ extension WebsiteFullscreenChecks {
         other.isReleasedWhenClosed = false; other.title = "Owned extension focus control"
         other.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 280))
         defer { other.contentView = nil; other.close() }
+        let beforeOther = (last["eventCount"] as? NSNumber)?.intValue ?? 0
         other.makeKeyAndOrderFront(nil)
         try await wait("alternate extension focus control is key") { other.isKeyWindow }
-        let unfocused = await focused(false, event: true)
+        let unfocused = await focused(false, afterEvents: beforeOther)
         print("FULLSCREEN_EXTENSION_FOCUS", "phase", "other", "type", windowType, "state", last)
         check(unfocused, "Actual extension focus state and onFocusChanged report no browser window when an unrelated window is key")
+        let beforeReturn = (last["eventCount"] as? NSNumber)?.intValue ?? 0
         presentation.makeKeyAndOrderFront(nil)
         try await wait("native fullscreen regains key") { presentation.isKeyWindow }
-        let refocused = await focused(true, event: true)
+        let refocused = await focused(true, afterEvents: beforeReturn)
         print("FULLSCREEN_EXTENSION_FOCUS", "phase", "returned", "type", windowType, "state", last)
         check(refocused, "Returning to native fullscreen delivers the real extension focus event for the same logical browser window")
         try await leave(web)
