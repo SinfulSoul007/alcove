@@ -76,6 +76,7 @@ extension WebsiteFullscreenChecks {
         let root = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_QUIT_ROOT"].map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("alcove-fullscreen-command-" + UUID().uuidString)
         let isProfileClear = kind == "profile-clear" || kind == "peek-profile-clear"
+        let extensionPeek = ["peek-extension-focus", "peek-extension-focus-request"].contains(kind)
         var protection: WebsiteProtectionService?
         if kind == "warning" {
             // A one-domain owned catalog; no target navigation or network request.
@@ -108,7 +109,7 @@ extension WebsiteFullscreenChecks {
         }
         let sourceSpace = writer.space.id
         var fullscreenExtensionID: UUID?
-        if ["extension-focus", "extension-focus-request", "extension-close", "extension-close-disable", "extension-close-revoke"].contains(kind) {
+        if extensionPeek || ["extension-focus", "extension-focus-request", "extension-close", "extension-close-disable", "extension-close-revoke"].contains(kind) {
             guard !isPrivate else { throw Failure.fixture("normal owned extension focus baseline") }
             let source = root.appendingPathComponent("focus-extension")
             try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
@@ -203,6 +204,8 @@ extension WebsiteFullscreenChecks {
         let underlying = store.view(for: id)
         var web = underlying
         var fullscreenExtensionOptions: WKWebView?
+        var extensionSourceURL = sourceURL
+        var extensionPeekParent: (web: WKWebView, document: NSUUID)?
         var targetID = id
         var handoff: (store: BrowserStore, window: NSWindow, survivorID: UUID, survivor: WKWebView, document: NSUUID)?
         var clearingSurvivor: (store: BrowserStore, window: NSWindow, id: UUID, web: WKWebView, profile: UUID, document: NSUUID)?
@@ -289,6 +292,19 @@ extension WebsiteFullscreenChecks {
                 store.select(primaryID)
                 window.makeKeyAndOrderFront(nil)
             }
+            if extensionPeek {
+                try await wait("extension Peek parent document") {
+                    (try? await underlying.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
+                }
+                _ = try await underlying.evaluateJavaScript("document.getElementById('draft').value='extension Peek parent';window.ownedExtensionPeekParent=53;true")
+                extensionPeekParent = (underlying, store.documentIdentity(for: underlying))
+                extensionSourceURL = URL(string: "page#owned-extension-peek", relativeTo: base)!.absoluteURL
+                store.openPeek(extensionSourceURL, from: underlying)
+                guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else {
+                    throw Failure.fixture("real extension fullscreen Peek")
+                }
+                web = peek
+            }
             try await wait("real browser website host") { web.window === window && web.superview is EdgeToEdgeWebHost }
             guard let commandHost = web.superview as? EdgeToEdgeWebHost else { throw Failure.fixture("original command host") }
             try await wait("command source decoded") {
@@ -323,7 +339,7 @@ extension WebsiteFullscreenChecks {
                         const targets = windows.filter(w => w.type === type && w.tabs?.some(t => t.url === url));
                         return targets.length === 1 && targets[0].focused === true &&
                             targets[0].tabs.some(t => t.active && t.url === url);
-                        """, arguments: ["type": isQuick ? "popup" : "normal", "url": sourceURL.absoluteString],
+                        """, arguments: ["type": isQuick ? "popup" : "normal", "url": extensionSourceURL.absoluteString],
                         in: nil, contentWorld: .page)) as? Bool == true
                 }
                 print("FULLSCREEN_EXTENSION_FOCUS_CONTROL", "ready", true, "quick", isQuick)
@@ -342,18 +358,18 @@ extension WebsiteFullscreenChecks {
             check(app.outputTarget(in: presentation)?.web === web,
                   "\(kind): page-output selection retains the fullscreen source")
             switch kind {
-            case "extension-focus":
+            case "extension-focus", "peek-extension-focus":
                 guard let options = fullscreenExtensionOptions else { throw Failure.fixture("owned installed focus extension") }
                 try await exerciseFullscreenExtensionFocus(options: options, store: store, web: web, window: window,
-                    presentation: presentation, sourceURL: sourceURL, windowType: isQuick ? "popup" : "normal", document: document)
-            case "extension-focus-request", "extension-close", "extension-close-disable", "extension-close-revoke":
+                    presentation: presentation, sourceURL: extensionSourceURL, windowType: isQuick ? "popup" : "normal", document: document)
+            case "extension-focus-request", "peek-extension-focus-request", "extension-close", "extension-close-disable", "extension-close-revoke":
                 guard let options = fullscreenExtensionOptions, !kind.hasPrefix("extension-close") || isQuick else {
                     throw Failure.fixture("owned extension window action")
                 }
                 let cancellation = ["extension-close-disable", "extension-close-revoke"].contains(kind)
                     ? fullscreenExtensionID.map { (id: $0, profile: profile, revoke: kind == "extension-close-revoke") } : nil
                 try await exerciseFullscreenExtensionWindowAction(options: options, app: app, owner: owner,
-                    store: store, web: web, window: window, presentation: presentation, sourceURL: sourceURL,
+                    store: store, web: web, window: window, presentation: presentation, sourceURL: extensionSourceURL,
                     sourceID: id, primaryID: primaryID, windowType: isQuick ? "popup" : "normal",
                     document: document, removing: kind.hasPrefix("extension-close"), cancellation: cancellation)
             case "quit", "peek-quit":
@@ -1187,6 +1203,13 @@ extension WebsiteFullscreenChecks {
                 if let alternate { check(closed && alternate.isKeyWindow, "Closing a fullscreen tab from another window preserves the requesting window's focus") }
             default: throw Failure.fixture("unknown native command")
             }
+            if let parent = extensionPeekParent {
+                let retained = (try? await parent.web.evaluateJavaScript("document.getElementById('draft').value==='extension Peek parent'&&window.ownedExtensionPeekParent===53")) as? Bool
+                check(store.views[id] === parent.web && store.documentIdentity(for: parent.web) === parent.document &&
+                      store.profileID(for: parent.web) == profile && retained == true &&
+                      (isQuick ? store.quickPeekView(id) : store.primaryPeekView) === web,
+                      "Extension fullscreen Peek focus preserves its separate parent document and unsaved form")
+            }
             }
         } catch { caught = error }
 
@@ -1490,7 +1513,7 @@ extension WebsiteFullscreenChecks {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
         let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static", "suspend-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"]
-        let extensionFocusCases = ["extension-focus", "quick-extension-focus", "extension-focus-request", "quick-extension-focus-request", "quick-extension-close", "quick-extension-close-disable", "quick-extension-close-revoke"]
+        let extensionFocusCases = ["extension-focus", "quick-extension-focus", "extension-focus-request", "quick-extension-focus-request", "quick-extension-close", "quick-extension-close-disable", "quick-extension-close-revoke", "peek-extension-focus", "quick-peek-extension-focus", "peek-extension-focus-request", "quick-peek-extension-focus-request"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
