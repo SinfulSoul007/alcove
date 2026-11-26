@@ -33,7 +33,7 @@ import WebKit
         // engine, website, media or real crash is needed for this boundary.
         try await Task.sleep(for: .milliseconds(50))
         let scope = (privateMode ? "Private" : "Normal") + (queuedRefresh ? " with a queued refresh" : "")
-        check(store.message == "This page stopped responding. Use Reload to try again.",
+        check(store.websiteProcessRecovery(for: web) != nil && store.message == nil,
               "\(scope) page-process recovery keeps its useful reload message")
         check(web.queryCount == 0,
               "\(scope) terminated document receives no new Boost queries")

@@ -15,6 +15,8 @@ class EdgeToEdgeWebHost: NSView {
     private var recovery:ExtensionRecoveryBanner?
     private var protection:WebsiteProtectionOverlay?
     private var reader: ReaderOverlay?
+    private var processRecovery: WebsiteProcessRecoveryOverlay?
+    private weak var processRecoveryWebView: WKWebView?
     private weak var readerWebView: WKWebView?
     private weak var protectionWebView:WKWebView?
     private weak var recoveryWebView: WKWebView?
@@ -26,6 +28,9 @@ class EdgeToEdgeWebHost: NSView {
     }
     func removeContent(_ webView: WKWebView) {
         removeReader(for: webView)
+        if processRecoveryWebView === webView {
+            processRecovery?.removeFromSuperview(); processRecovery = nil; processRecoveryWebView = nil
+        }
         if protectionWebView === webView {protection?.removeFromSuperview();protection=nil;protectionWebView=nil}
         if webView.superview === self { webView.removeFromSuperview() }
         if recoveryWebView === webView {
@@ -49,6 +54,8 @@ class EdgeToEdgeWebHost: NSView {
     }
     func layoutRecovery() {
         reader?.frame = bounds
+        processRecovery?.frame = bounds
+        processRecovery?.layoutSubtreeIfNeeded()
         protection?.frame=bounds
         protection?.layoutSubtreeIfNeeded()
         guard let recovery,!recovery.isHidden else {return}
@@ -60,6 +67,18 @@ class EdgeToEdgeWebHost: NSView {
         let overlay=protection ?? WebsiteProtectionOverlay(frame:bounds);protection=overlay;protectionWebView=webView
         if overlay.superview !== self {addSubview(overlay)}
         overlay.frame=bounds;overlay.autoresizingMask=[.width,.height];overlay.bind(store:store,web:webView)
+    }
+    func setProcessRecovery(store: BrowserStore, webView: WKWebView) {
+        guard let recovery = store.websiteProcessRecovery(for: webView) else {
+            processRecovery?.removeFromSuperview(); processRecovery = nil; processRecoveryWebView = nil
+            return
+        }
+        let overlay = processRecovery ?? WebsiteProcessRecoveryOverlay(frame: bounds)
+        processRecovery = overlay; processRecoveryWebView = webView
+        overlay.frame = bounds; overlay.autoresizingMask = [.width, .height]
+        overlay.bind(store: store, recovery: recovery)
+        if overlay.superview !== self { addSubview(overlay) }
+        if let protection { addSubview(protection, positioned: .above, relativeTo: overlay) }
     }
     func setContent(_ view: NSView) {
         if let web = view as? SplitDropWebView, web.websiteFullscreen?.deferMount(in: self) == true { return }
@@ -106,6 +125,7 @@ struct WebPane: NSViewRepresentable {
             host.setContent(webView)
             host.setRecovery(store: store, webView: webView)
             host.setReader(store: store, webView: webView)
+            host.setProcessRecovery(store: store, webView: webView)
             host.setWebsiteProtection(store:store,webView:webView)
         } else { host.setContent(webView) }
         splitHost?.bindDrop(store: store, destination: splitDestination, color: splitAccent)

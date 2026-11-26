@@ -21,6 +21,7 @@ enum BoostStoreCheckError: Error { case failed }
             window.contentView = f.web; windows.append(window); return window
         }
         try await checkBoostProcessTermination(check)
+        try await checkWebsiteProcessRecovery(check)
         let f = try fixture(), store = f.store
         var boost = SiteBoost(content: BoostContent(name: "Owned look", host: "127.0.0.1", appearance: BoostAppearance(background: "#123456"), javascript: "window.fixtureRan = true;"))
         boost.approvedJavaScriptHash = boost.scriptHash

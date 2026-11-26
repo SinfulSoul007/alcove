@@ -181,6 +181,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var archivingOldTabs = false
     @Published var clearingToday = false
     var views: [UUID: WKWebView] = [:]
+    @Published var websiteProcessRecoveries: [ObjectIdentifier: WebsiteProcessRecovery] = [:]
     var readerSessions: [ObjectIdentifier: ReaderSession] = [:]
     var websitePromptRequests: [UUID: WebsitePromptRequest] = [:]
     private(set) var tabSelectionGeneration = UUID()
@@ -198,6 +199,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return identity
     }
     func invalidateDocumentIdentity(for web: WKWebView, refreshBoosts: Bool = true) {
+        clearWebsiteProcessRecovery(for: web)
         fullscreenSelectionRequests.removeValue(forKey: ObjectIdentifier(web))
         cancelReader(for: web)
         cancelWebsiteProtectionTickets(for:web)
@@ -247,6 +249,12 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         cancelWebsiteProtectionTickets(for:web)
         cancelWebsitePrompts(for: web)
         let identity = documentIdentity(for: web)
+        let recovery = websiteProcessRecoveries[ObjectIdentifier(web)]
+        let transferRecovery = recovery.map {
+            $0.web === web && web.navigationDelegate === self && $0.document === identity &&
+                $0.presentation === presentationIdentity(for: web) && !profileUnavailable($0.profileID)
+        } ?? false
+        clearWebsiteProcessRecovery(for: web)
         let extensionOrigin = extensionOriginPopups.contains(web)
         let popupOwner = extensionPopupOwners.object(forKey: web)
         documentIDs.removeObject(forKey: web)
@@ -263,6 +271,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         if let host = web.superview as? EdgeToEdgeWebHost { host.removeContent(web) }
         else { web.removeFromSuperview() }
         destination.documentIDs.setObject(identity, forKey: web)
+        if transferRecovery, let recovery {
+            destination.websiteProcessRecoveries[ObjectIdentifier(web)] = WebsiteProcessRecovery(
+                store: destination, web: web, profileID: recovery.profileID, address: recovery.address)
+        }
         if extensionOrigin { destination.extensionOriginPopups.add(web) }
         if let popupOwner { destination.extensionPopupOwners.setObject(popupOwner, forKey: web) }
     }
@@ -794,10 +806,16 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         message = failure.localizedDescription
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard !isShuttingDown, webView.navigationDelegate === self,
+              let profile = profileID(for: webView), !profileUnavailable(profile) else { return }
+        let address = websiteAddress(for: webView)
         // Expire pending document work without querying its terminated runtime.
         // The next explicit navigation installs a fresh document as usual.
         invalidateDocumentIdentity(for: webView, refreshBoosts: false)
-        message = "This page stopped responding. Use Reload to try again."
+        guard webView.navigationDelegate === self, profileID(for: webView) == profile,
+              !isShuttingDown, !profileUnavailable(profile) else { return }
+        websiteProcessRecoveries[ObjectIdentifier(webView)] = WebsiteProcessRecovery(
+            store: self, web: webView, profileID: profile, address: address)
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         createPopup(from: webView, configuration: configuration,requestedURL:action.request.url)

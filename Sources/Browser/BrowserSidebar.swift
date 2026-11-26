@@ -76,7 +76,7 @@ struct BrowserSidebar: View {
                 Button { store.showCommand() } label: {
                     HStack {
                         if store.currentView?.url?.scheme == "https" && store.currentView?.hasOnlySecureContent == true { Image(systemName: "lock.fill").font(.system(size: 9)).opacity(0.5) }
-                        Text(store.currentView?.url?.host ?? "Search or enter URL").font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        Text(store.sidebarAddressURL?.host ?? "Search or enter URL").font(.system(size: 12, weight: .medium)).lineLimit(1)
                         Spacer(minLength: 0)
                     }.padding(.horizontal, 12).frame(height: 36)
                         .background(theme.tile, in: RoundedRectangle(cornerRadius: 10))
