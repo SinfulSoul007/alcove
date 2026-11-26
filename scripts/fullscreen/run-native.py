@@ -150,9 +150,9 @@ def main():
         env = dict(os.environ, ALCOVE_FULLSCREEN_FIXTURE_URL=f'http://127.0.0.1:{server.server_port}/')
         # Separate processes retain the same per-operation and process bounds.
         # The expanded matrix must finish every case; a partial aggregate run
-        # cannot qualify a case it never reached. Run both groups after failure.
+        # cannot qualify a case it never reached. Run every group after failure.
         selected = bool(env.get('ALCOVE_FULLSCREEN_COMMAND_CASES', ''))
-        groups = ['diagnostic'] if selected else ['primary', 'quick']
+        groups = ['diagnostic'] if selected else ['primary', 'private-primary', 'quick']
         failed = []
         for group in groups:
             group_env = dict(env)

@@ -81,6 +81,7 @@ extension WebsiteFullscreenChecks {
         if kind == "archive-static" || kind == "suspend-static" {
             writer.preferences.archiveAfterDays = 0; writer.preferences.suspendTabs = false
         }
+        if kind == "expire-static" || kind == "peek-expire-static" { writer.preferences.quickBrowseArchiveHours = 1 }
         let profile: UUID
         if isPrivate { profile = BrowserProfile.defaultID }
         else {
@@ -155,7 +156,7 @@ extension WebsiteFullscreenChecks {
         var web = underlying
         var targetID = id
         var handoff: (store: BrowserStore, window: NSWindow, survivorID: UUID, survivor: WKWebView, document: NSUUID)?
-        if kind == "peek-escape" || kind.hasPrefix("peek-") && kind.hasSuffix("script-sheet") {
+        if kind == "peek-escape" || kind == "peek-expire-static" || kind.hasPrefix("peek-") && kind.hasSuffix("script-sheet") {
             store.openPeek(base.appendingPathComponent("page"), from: underlying)
             guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else { throw Failure.fixture("command Peek") }
             web = peek
@@ -272,7 +273,7 @@ extension WebsiteFullscreenChecks {
                     check(transferred && handoff.window.isKeyWindow,
                           "Finishing or cancelling a fullscreen handoff preserves its requesting window's focus")
                 }
-            case "archive-static", "suspend-static":
+            case "archive-static", "suspend-static", "expire-static", "peek-expire-static":
                 // Entry uses the existing decoded-media fixture. Remove that
                 // media before measuring idle cleanup; this does not qualify
                 // fullscreen entry on a fresh no-media document.
@@ -286,6 +287,54 @@ extension WebsiteFullscreenChecks {
                     return state == .paused || state == .none
                 }
                 print("FULLSCREEN_STATIC_PLAYBACK_STATE", playback?.rawValue ?? -1)
+                if isQuick {
+                    if web !== underlying {
+                        try await wait("Quick expiry parent document ready") { !underlying.isLoading }
+                        _ = try await underlying.evaluateJavaScript("document.querySelectorAll('video,audio').forEach(node=>{node.pause();node.remove()});true")
+                        try await wait("Quick expiry parent has no active media") {
+                            let state: WKMediaPlaybackState = await withCheckedContinuation { reply in
+                                underlying.requestMediaPlaybackState { reply.resume(returning: $0) }
+                            }
+                            return state == .paused || state == .none
+                        }
+                    }
+                    let primary = store.view(for: primaryID)
+                    try await wait("Quick expiry primary survivor ready") {
+                        (try? await primary.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
+                    }
+                    _ = try await primary.evaluateJavaScript("document.getElementById('draft').value='surviving Quick expiry draft';true")
+                    let primaryDocument = store.documentIdentity(for: primary)
+                    let idleID = try store.openQuickPage(url: base.appendingPathComponent("page-no-media"), profileID: profile, intendedSpaceID: store.space.id)
+                    app.syncQuickWindows(owner)
+                    guard let idleWindow = app.quickWindows[QuickWindowKey(ownerID: owner.id, pageID: idleID)]?.window else {
+                        throw Failure.fixture("registered idle Quick expiry control")
+                    }
+                    let idle = store.view(for: idleID)
+                    try await wait("idle Quick expiry control loaded") { !idle.isLoading }
+                    primaryWindow.makeKeyAndOrderFront(nil)
+                    let borrowed = (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true
+                    let setup = borrowed && !presentation.isKeyWindow && primaryWindow.isKeyWindow && store.focusedQuickPageID != id
+                    check(setup, "Quick expiry starts with an actual borrowed fullscreen source in the background, without playing media")
+                    guard setup else { throw Failure.fixture("background Quick source no longer borrowed") }
+                    // Own-model clock values make both records genuinely old
+                    // without letting incidental native focus notifications
+                    // change a timestamp while playback replies are pending.
+                    let instant = Date(), activity = Date().addingTimeInterval(3600)
+                    store.touchQuickPage(id, now: activity); store.touchQuickPage(idleID, now: activity)
+                    store.archiveInactiveQuickPages(now: instant.addingTimeInterval(3 * 3600))
+                    let completed = await effect { store.quickArchiveProbeID == nil && store.quickPage(idleID) == nil && !idleWindow.isVisible }
+                    check(completed, "Quick inactivity expiry removes its eligible idle control and closes that real window")
+                    let retained = store.quickPage(id) != nil && store.views[id] === underlying &&
+                        (web === underlying || store.quickPeekView(id) === web)
+                    let draft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41")) as? Bool
+                    check(completed && retained && store.profileID(for: web) == profile && store.documentIdentity(for: web) === document && draft == true,
+                          "Quick inactivity expiry protects the exact static fullscreen source/profile/document/form even when another window is key")
+                    let primaryDraft = (try? await primary.evaluateJavaScript("document.getElementById('draft').value==='surviving Quick expiry draft'")) as? Bool
+                    check(store.views[primaryID] === primary && store.documentIdentity(for: primary) === primaryDocument && primaryDraft == true,
+                          "Quick inactivity expiry preserves the other primary window's independent live document and form")
+                    if retained { quick?.surface(); try await leave(web) }
+                    break
+                }
                 let control = kind == "archive-static" ? store.newTab(url: base.appendingPathComponent("article"), activate: false) : store.newTab(activate: false)
                 let otherID = store.newTab(url: base.appendingPathComponent("article"))
                 let other = store.view(for: otherID)
@@ -889,11 +938,11 @@ extension WebsiteFullscreenChecks {
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
-        let compact = (["escape", "peek-escape", "location", "find", "reader", "close"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
+        let compact = (["escape", "peek-escape", "location", "find", "reader", "close", "expire-static", "peek-expire-static"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
         let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
-        guard ["", "primary", "quick"].contains(group), group.isEmpty || selected.isEmpty else {
+        guard ["", "primary", "private-primary", "quick"].contains(group), group.isEmpty || selected.isEmpty else {
             throw Failure.fixture("invalid command group or mixed selection")
         }
         // Characterization controls are opt-in and never counted as normal
@@ -905,8 +954,11 @@ extension WebsiteFullscreenChecks {
         for name in selected.isEmpty ? all : selected {
             let isPrivate = name.hasPrefix("private-"), presentation = isPrivate ? String(name.dropFirst(8)) : name
             let isQuick = presentation.hasPrefix("quick-"), kind = isQuick ? String(presentation.dropFirst(6)) : presentation
-            if group == "primary" && isQuick || group == "quick" && !isQuick { continue }
+            if group == "primary" && (isQuick || isPrivate) ||
+                group == "private-primary" && (isQuick || !isPrivate) ||
+                group == "quick" && !isQuick { continue }
             print("FULLSCREEN_COMMAND_CASE_STARTED", name)
+            print("FULLSCREEN_COMMAND_CASE_ELAPSED", name, runStarted.duration(to: .now))
             do { try await exerciseCommand(base: base, kind: kind, owned: owned, controllers: controllers, isPrivate: isPrivate, isQuick: isQuick) }
             catch { failures += 1; print("FULLSCREEN_COMMAND_CASE_ERROR", name, error) }
         }

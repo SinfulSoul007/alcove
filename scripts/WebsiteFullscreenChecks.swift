@@ -8,6 +8,7 @@ import Darwin
     enum Failure: Error { case timeout(String), fixture(String) }
     @MainActor static var checks = 0
     @MainActor static var failures = 0
+    @MainActor static var runStarted = ContinuousClock.now
 
     @MainActor static func check(_ value: Bool, _ label: String) {
         checks += 1
@@ -198,12 +199,12 @@ import Darwin
             print("FULLSCREEN_ENVIRONMENT_UNAVAILABLE"); return 2
         }
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
-        guard ["", "primary", "quick"].contains(group) else {
+        guard ["", "primary", "private-primary", "quick"].contains(group) else {
             print("FULLSCREEN_INVALID_COMMAND_GROUP"); return 2
         }
         print("FULLSCREEN_COMMAND_GROUP", group.isEmpty ? "all" : group)
         let selection = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"] ?? ""
-        if !selection.isEmpty || group == "quick" {
+        if !selection.isEmpty || group == "private-primary" || group == "quick" {
             if !selection.isEmpty { print("FULLSCREEN_SELECTION_COMMANDS_ONLY", selection) }
             if #available(macOS 15.4, *) {
                 do { try await exerciseCommands(base: base) }
@@ -236,6 +237,7 @@ import Darwin
 
     @MainActor static func main() {
         setbuf(stdout, nil)
+        runStarted = .now
         NSApplication.shared.setActivationPolicy(.regular)
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(300))
