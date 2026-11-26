@@ -54,12 +54,9 @@ extension BrowserStore {
             if !isShuttingDown { message = writer.message }
             return
         }
-        guard deletingProfileID == nil, !clearingData else { throw ProfileError.busy }
-        guard id != BrowserProfile.defaultID else { throw ProfileError.defaultProfile }
-        guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw ProfileError.missing }
-        if #available(macOS 15.4,*),try retainedExtensionNamespaces(profileID:id).contains(where:{ExtensionErasureJobs.holds($0)}) {throw ExtensionErasureError.busy}
-        guard !profiles[index].isPendingClear else { throw ProfileError.busy }
-        guard !session.spaces.contains(where: { $0.effectiveProfileID == id }) else { throw ProfileError.inUse }
+        _ = try validateProfileDeletion(id)
+        try await retireFullscreenProfilePages(id)
+        let index = try validateProfileDeletion(id)
         guard ProfileDataOperations.shared.begin(id) else { throw ProfileError.busy }
         defer { ProfileDataOperations.shared.finish(id) }
         try ExtensionPublicationOwners.begin(sessionURL);defer {ExtensionPublicationOwners.end(sessionURL)}
@@ -175,6 +172,20 @@ extension BrowserStore {
             catch { message = "Website data was cleared, but its completion could not be saved. Unlock local data and retry this profile’s clear operation."; throw error }
         }
         message = "Website data and history cleared for this profile. Other profiles, bookmarks and downloaded files were kept."
+    }
+    private func validateProfileDeletion(_ id: UUID) throws -> Int {
+        guard !isPrivate else { throw ProfileError.privateMode }
+        guard !isShuttingDown else { throw CancellationError() }
+        guard deletingProfileID == nil, !clearingData else { throw ProfileError.busy }
+        guard id != BrowserProfile.defaultID else { throw ProfileError.defaultProfile }
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { throw ProfileError.missing }
+        if #available(macOS 15.4,*),
+           try retainedExtensionNamespaces(profileID: id).contains(where: { ExtensionErasureJobs.holds($0) }) { throw ExtensionErasureError.busy }
+        guard !profiles[index].isPendingClear else { throw ProfileError.busy }
+        guard !session.spaces.contains(where: { $0.effectiveProfileID == id }) else { throw ProfileError.inUse }
+        guard !ProfileDataOperations.shared.activeIDs.contains(id) else { throw ProfileError.busy }
+        guard savingEnabled, vault != nil, persistedProfileIDs.contains(id) else { throw ProfileError.locked }
+        return index
     }
     private func validateProfileClear(_ id: UUID) throws {
         guard !isShuttingDown else { throw CancellationError() }
