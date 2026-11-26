@@ -63,7 +63,10 @@ import BrowserCore
         icon.symbolConfiguration = .init(pointSize: 34 * scale, weight: .regular)
         reload?.font = .systemFont(ofSize: 13 * scale, weight: .medium)
         reload?.bezelColor = NSColor(theme.accent)
-        reload?.contentTintColor = NSColor(ThemeColor.readableForeground(over: [theme.palette.resolvedForDisplay.accent]).color)
+        let buttonInk = NSColor(ThemeColor.readableForeground(over: [theme.palette.resolvedForDisplay.accent]).color)
+        if let reload, let font = reload.font {
+            reload.attributedTitle = NSAttributedString(string: "Reload", attributes: [.font: font, .foregroundColor: buttonInk])
+        }
         needsLayout = true; needsDisplay = true
     }
     override func draw(_ dirtyRect: NSRect) { backgroundColor.setFill(); bounds.fill() }

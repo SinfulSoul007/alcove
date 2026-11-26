@@ -4,7 +4,12 @@ import WebKit
 @MainActor private final class RecoveryProbeWeb: WKWebView {
     var pageURL: URL? = URL(string: "http://127.0.0.1:9/recovery")!
     var reloadCount = 0
+    var pageTitle: String? = "Owned recovery page"
     override var url: URL? { pageURL }
+    override var title: String? { pageTitle }
+    func clearTitle() {
+        willChangeValue(forKey: "title"); pageTitle = ""; didChangeValue(forKey: "title")
+    }
     override func reload() -> WKNavigation? { reloadCount += 1; return nil }
 }
 
@@ -49,6 +54,16 @@ import WebKit
         } else {
             check(try Data(contentsOf: store.sessionURL) == savedBytes, "Normal recovery does not persist transient error state")
         }
+
+        web.clearTitle()
+        try await Task.sleep(for: .milliseconds(50))
+        check(store.tab(id)?.title == "127.0.0.1", "\(scope) empty WebKit titles retain the saved hostname")
+        let boostError = NSError(domain: "OwnedBoostFailure", code: 1, userInfo: [NSLocalizedDescriptionKey: "Owned Boost failure"])
+        BoostRuntime.report(boostError, page: BoostRuntime.page(for: web))
+        check(store.message == "Boost: Owned Boost failure", "\(scope) a current Boost error is still reported")
+        store.webViewWebContentProcessDidTerminate(web)
+        check(store.message == nil && store.websiteProcessRecovery(for: web) != nil,
+              "\(scope) process recovery removes only its own obsolete Boost notice")
 
         store.webViewWebContentProcessDidTerminate(web); pane.mount(in: host)
         let staleNavigationButton = descendants(host).first { $0.identifier?.rawValue == "AlcoveWebsiteProcessReload" } as? NSButton

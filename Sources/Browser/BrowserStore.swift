@@ -95,7 +95,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             if windowGroupID != nil && extensionPopupProfileID == nil { save() }
         }
     }
-    @Published var message: String?
+    @Published var message: String? { didSet { boostFailureNotice = nil } }
+    var boostFailureNotice: BoostFailureNotice?
     @Published var revision = 0 {didSet {extensionBrowserStateChanged()}}
     @Published var profiles: [BrowserProfile] = [.defaultProfile] {
         didSet { windowGroup?.sharedFieldDidChange(.profiles, from: self) }
@@ -199,6 +200,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return identity
     }
     func invalidateDocumentIdentity(for web: WKWebView, refreshBoosts: Bool = true) {
+        BoostRuntime.dismissFailure(for: web, store: self)
         clearWebsiteProcessRecovery(for: web)
         fullscreenSelectionRequests.removeValue(forKey: ObjectIdentifier(web))
         cancelReader(for: web)
@@ -244,6 +246,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return (web, icon)
     }
     func transferDocumentBindings(for web: WKWebView, to destination: BrowserStore) {
+        BoostRuntime.dismissFailure(for: web, store: self)
         fullscreenSelectionRequests.removeValue(forKey: ObjectIdentifier(web))
         cancelReader(for: web)
         cancelWebsiteProtectionTickets(for:web)
@@ -714,7 +717,8 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         observations[id] = [
             web.observe(\.title, options: [.new]) { [weak self] web, _ in
                 Task { @MainActor in guard let self, self.views[id] === web else { return }; self.update(id) {
-                        $0.title = web.title ?? web.url?.host ?? "Page"
+                        let title = web.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        $0.title = title.isEmpty ? (web.url?.host ?? URL(string: $0.url)?.host ?? "Page") : title
                         if $0.pinned && ($0.pinnedTitle == nil || $0.pinnedTitle == web.url?.host) { $0.pinnedTitle = $0.title }
                     } }
             },

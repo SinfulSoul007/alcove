@@ -22,6 +22,14 @@ enum BoostRuntimeError: LocalizedError {
     var approvalDeferrals: [String: Int] = [:]
     init(_ web: WKWebView) { self.web = web }
 }
+@MainActor final class BoostFailureNotice {
+    weak var web: WKWebView?
+    let document: NSUUID
+    let text: String
+    init(web: WKWebView, document: NSUUID, text: String) {
+        self.web = web; self.document = document; self.text = text
+    }
+}
 @MainActor final class BoostRuntimeCall {
     let id = UUID()
     weak var page: BoostPageState?
@@ -95,6 +103,7 @@ enum BoostRuntimeError: LocalizedError {
     }
     static func snapshot(_ page: BoostPageState) -> Snapshot? {
         guard let web = page.web, let store = web.navigationDelegate as? BrowserStore, !store.isShuttingDown,
+              store.websiteProcessRecovery(for: web) == nil,
               let owner = store.profileID(for: web), !store.profileUnavailable(owner),
               store.matchesBoostWebsiteDataStore(web, profileID: owner),
               let url = web.url, let origin = WebOrigin(url) else { return nil }
@@ -132,8 +141,16 @@ enum BoostRuntimeError: LocalizedError {
         }
     }
     static func report(_ error: Error, page: BoostPageState) {
-        guard let web = page.web, let store = web.navigationDelegate as? BrowserStore, !store.isShuttingDown else { return }
-        store.message = "Boost: \(String(error.localizedDescription.prefix(500)))"
+        guard let web = page.web, let store = web.navigationDelegate as? BrowserStore, !store.isShuttingDown,
+              store.websiteProcessRecovery(for: web) == nil else { return }
+        let text = "Boost: \(String(error.localizedDescription.prefix(500)))"
+        store.message = text
+        store.boostFailureNotice = BoostFailureNotice(web: web, document: store.documentIdentity(for: web), text: text)
+    }
+    static func dismissFailure(for web: WKWebView, store: BrowserStore) {
+        guard let notice = store.boostFailureNotice, notice.web === web,
+              notice.document === store.documentIdentity(for: web), store.message == notice.text else { return }
+        store.message = nil
     }
     private static func refreshPage(_ page: BoostPageState, auto: Bool) async throws {
         let generation = page.generation
