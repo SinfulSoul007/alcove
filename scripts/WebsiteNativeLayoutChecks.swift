@@ -36,10 +36,17 @@ extension WebsiteFullscreenChecks {
                 preparedChrome = NativeWindowChrome()
                 preparedChrome?.attach(to: control)
             }
-            let hosting = NSHostingView(rootView: BrowserUI(store: store).environmentObject(app.updates))
-            hosting.safeAreaRegions = []
-            hosting.sizingOptions = kind == "layout-minimum-control" ? [.minSize] : []
-            control.contentView = hosting
+            let browser = BrowserUI(store: store).environmentObject(app.updates)
+            if kind == "layout-content-minimum-control" {
+                let hosting = NSHostingView(rootView: browser.frame(minWidth: 800, minHeight: 540))
+                hosting.safeAreaRegions = []; hosting.sizingOptions = [.minSize]
+                control.contentView = hosting
+            } else {
+                let hosting = NSHostingView(rootView: browser)
+                hosting.safeAreaRegions = []
+                hosting.sizingOptions = kind == "layout-minimum-control" ? [.minSize] : []
+                control.contentView = hosting
+            }
             window = control
         }
         defer {
@@ -62,17 +69,24 @@ extension WebsiteFullscreenChecks {
               "The visible browser root uses its actual native compact window chrome")
         print("FULLSCREEN_LAYOUT_INITIAL_METRICS", kind, "frame", window.frame.size, "minimum", window.minSize,
               "contentMinimum", window.contentMinSize, "web", web.bounds.size)
-        for size in [NSSize(width: 1260, height: 820), NSSize(width: 800, height: 600), NSSize(width: 1100, height: 720)] {
-            window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
+        check(window.minSize.width >= 800 && window.minSize.height >= 540,
+              "Visible browser startup retains its configured usable minimum after SwiftUI content installation")
+        guard let screenBounds = (window.screen ?? NSScreen.main)?.visibleFrame, screenBounds.width >= 800, screenBounds.height >= 600 else {
+            throw Failure.fixture("adequate native layout display")
+        }
+        print("FULLSCREEN_LAYOUT_SCREEN", screenBounds)
+        for size in [NSSize(width: 1000, height: 640), NSSize(width: 800, height: 600), NSSize(width: 950, height: 620)] {
+            let target = NSSize(width: min(size.width, screenBounds.width), height: min(size.height, screenBounds.height))
+            window.setFrame(NSRect(origin: screenBounds.origin, size: target), display: true)
             window.contentView?.layoutSubtreeIfNeeded()
             let fitted = await effect {
-                abs(window.frame.width - size.width) < 1 && abs(window.frame.height - size.height) < 1 &&
+                abs(window.frame.width - target.width) < 1 && abs(window.frame.height - target.height) < 1 &&
                     web.window === window && web.bounds.width > 80 && web.bounds.height > 80
             }
-            print("FULLSCREEN_LAYOUT_METRICS", kind, "target", size, "frame", window.frame.size,
+            print("FULLSCREEN_LAYOUT_METRICS", kind, "target", target, "frame", window.frame.size,
                   "minimum", window.minSize, "web", web.bounds.size, "mounted", web.window === window, "fitted", fitted)
             check(fitted,
-                  "Native browser resizing gives the requested window size and a usable website at \(Int(size.width))×\(Int(size.height))")
+                  "Native browser resizing gives the requested window size and a usable website at \(Int(target.width))×\(Int(target.height))")
         }
         store.sidebarVisible = false
         let hidden = await effect { window.contentView?.needsLayout == false }
