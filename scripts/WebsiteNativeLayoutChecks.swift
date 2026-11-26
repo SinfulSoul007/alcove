@@ -188,6 +188,10 @@ extension WebsiteFullscreenChecks {
     @available(macOS 15.4, *) @MainActor
     static func exerciseNativeLayout(base: URL, kind: String, owned: OwnedWebsiteStores,
                                      controllers: OwnedExtensionControllers) async throws {
+        if kind.contains("empty-focus-production") {
+            try await exerciseEmptyWindowFocus(kind: kind)
+            return
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-native-layout-" + UUID().uuidString)
         let suiteName = "Alcove.NativeLayout." + UUID().uuidString
         let sidebarDefaults = ["layout-isolated-defaults-control", "layout-wide-defaults-control"].contains(kind) ? UserDefaults(suiteName: suiteName) : nil
@@ -392,6 +396,78 @@ extension WebsiteFullscreenChecks {
               "Sidebar and theme updates preserve the browser's usable resize limit")
         if motionCheck { try await exerciseSidebarMotion(store: store, web: web, window: window, document: document) }
         if resizeCheck { try await exerciseLiveSidebarResize(store: store, web: web, window: window, document: document) }
+        print("FULLSCREEN_LAYOUT_CASE_COMPLETED", kind)
+    }
+
+    /// No website or media is created: this witnesses the actual empty-window
+    /// key-view choice without depending on the guest's WebKit renderer.
+    @available(macOS 15.4, *) @MainActor
+    private static func exerciseEmptyWindowFocus(kind: String) async throws {
+        let isPrivate = kind.contains("private")
+        let background = kind.contains("background")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-empty-focus-" + UUID().uuidString)
+        let savedWidth = UserDefaults.standard.object(forKey: "sidebarWidth")
+        UserDefaults.standard.set(236.0, forKey: "sidebarWidth")
+        let key = SymmetricKey(size: .bits256)
+        var keyReads = 0
+        let store = BrowserStore(isPrivate: isPrivate, dataRoot: root, keyProvider: { _ in keyReads += 1; return key })
+        store.finishOnboarding(); store.preferences.automaticUpdateChecks = false
+        let app = AppDelegate(), owner = app.makeOwner(store)
+        app.normalOwner = owner
+        defer {
+            for window in Array(app.primaryOwners.keys) { window.performClose(nil); window.close() }
+            owner.shutdown(); store.shutdown()
+            if isPrivate {
+                check(keyReads == 0 && !FileManager.default.fileExists(atPath: store.sessionURL.path),
+                      "Empty private focus never requests a metadata key or saves a session")
+            }
+            try? FileManager.default.removeItem(at: root)
+            if let savedWidth { UserDefaults.standard.set(savedWidth, forKey: "sidebarWidth") }
+            else { UserDefaults.standard.removeObject(forKey: "sidebarWidth") }
+        }
+        app.openPrimary(owner, activate: !background)
+        guard let window = app.primaryOwners.first(where: { $0.value === owner })?.key,
+              let content = window.contentView else { throw Failure.fixture("owned empty browser window") }
+        content.layoutSubtreeIfNeeded()
+        func dividers(_ view: NSView) -> [SidebarResizeHandle.Handle] {
+            if let divider = view as? SidebarResizeHandle.Handle { return [divider] }
+            return view.subviews.flatMap(dividers)
+        }
+        try await wait("empty browser divider") { dividers(content).count == 1 }
+        guard let divider = dividers(content).first else { throw Failure.fixture("empty browser divider") }
+        if background { app.openPrimary(owner) }
+        try await Task.sleep(for: .milliseconds(150))
+        check(window.isVisible && store.currentView == nil && store.views.isEmpty,
+              "Empty focus uses a visible actual browser with no website or media")
+        print("EMPTY_WINDOW_INITIAL_FOCUS", kind, window.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
+        check(window.firstResponder !== divider && !divider.isAccessibilityFocused(),
+              "Opening an empty browser does not automatically focus the full-height sidebar divider")
+        func width() -> Double {
+            store.windowSidebarWidth ?? UserDefaults.standard.double(forKey: "sidebarWidth")
+        }
+        func arrow() throws {
+            let character = String(UnicodeScalar(0xF702)!)
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                    context: nil, characters: character, charactersIgnoringModifiers: character,
+                    isARepeat: false, keyCode: 123) else { throw Failure.fixture("empty browser arrow") }
+                NSApp.postEvent(event, atStart: false)
+            }
+        }
+        let before = width()
+        try arrow(); try await Task.sleep(for: .milliseconds(150))
+        check(width() == before, "An initial arrow in an empty browser does not resize the sidebar")
+        divider.setAccessibilityFocused(true)
+        check(window.firstResponder === divider && divider.isAccessibilityFocused() && !divider.focusRingMaskBounds.isEmpty,
+              "Deliberate accessibility focus retains the divider and its visible keyboard focus ring")
+        let focusedWidth = width()
+        try arrow()
+        let resized = await effect { width() == focusedWidth - 12 }
+        check(resized, "An arrow deliberately directed to the divider still resizes it")
+        app.openPrimary(owner)
+        check(window.firstResponder === divider && app.primaryOwners.count == 1,
+              "Returning to the same empty window preserves deliberate divider focus")
         print("FULLSCREEN_LAYOUT_CASE_COMPLETED", kind)
     }
 
