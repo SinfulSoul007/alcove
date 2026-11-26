@@ -283,7 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     }
                     if let focused {
                         normalWindow = focused
-                        if activate { surfacePrimary(focused) }
+                        if activate { surfacePrimary(focused, focusPage: true) }
                     }
                     return
                 }
@@ -293,7 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 } else {
                     let member = try owner.acquirePrimaryStore()
                     let window = makePrimaryWindow(member.store, owner: owner, lease: member.lease)
-                    if activate { surfacePrimary(window) }
+                    if activate { surfacePrimary(window, focusPage: true) }
                 }
             } catch { store.message = error.localizedDescription }
             return
@@ -301,7 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let existing { if activate { surfacePrimary(existing) }; return }
         guard let lease = try? owner.acquirePrimary() else { return }
         let window = makePrimaryWindow(store, owner: owner, lease: lease)
-        if activate { surfacePrimary(window) }
+        if activate { surfacePrimary(window, focusPage: true) }
     }
     private func preferredPrimary(of owner: BrowserWindowOwner) -> NSWindow? {
         if let activeBrowserWindow, primaryOwners[activeBrowserWindow] === owner,
@@ -311,9 +311,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let normalWindow, primaryOwners[normalWindow] === owner { return normalWindow }
         return primaryOwners.first(where: { $0.value === owner && windows[$0.key]?.extensionPopupProfileID == nil })?.key
     }
-    private func surfacePrimary(_ window: NSWindow) {
+    private func surfacePrimary(_ window: NSWindow, focusPage: Bool = false) {
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
+        // AppKit otherwise chooses the sidebar splitter as the first key view.
+        // Existing windows retain their deliberate editor/control focus.
+        guard focusPage, window.attachedSheet == nil, let store = windows[window],
+              !store.onboardingVisible, !store.commandVisible, !store.findVisible,
+              store.presentedPanel == nil, store.primaryPeekView == nil,
+              store.visibleRecentTabSwitcher == nil, store.boostPicker == nil,
+              let web = store.currentView, web.window === window, store.isVisibleWebsite(web),
+              let profile = store.profileID(for: web), !store.profileUnavailable(profile),
+              store.websiteProtectionTicket(for: web)?.canPresent != true else { return }
+        let responder = window.firstResponder
+        guard responder == nil || responder === window || responder is SidebarResizeHandle.Handle else { return }
+        window.makeFirstResponder(web)
     }
     private func showExternalPresenter(of owner: BrowserWindowOwner, activate: Bool = true) {
         if let presenter = owner.store.windowGroup?.focusedPrimary,
@@ -379,7 +391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                                               y: frame.origin.y.isNaN ? defaultFrame.origin.y : frame.origin.y,
                                               width: frame.size.width.isNaN ? defaultFrame.width : frame.size.width,
                                               height: frame.size.height.isNaN ? defaultFrame.height : frame.size.height), to: window)
-        if configuration.shouldBeFocused { surfacePrimary(window) }
+        if configuration.shouldBeFocused { surfacePrimary(window, focusPage: true) }
         else {
             if let previous { normalWindow = previous }
             window.orderBack(nil)
@@ -648,7 +660,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let source = preferredPrimary(of: owner).flatMap { windows[$0] }
         do {
             let member = try owner.acquirePrimaryStore(copying: source)
-            surfacePrimary(makePrimaryWindow(member.store, owner: owner, lease: member.lease))
+            surfacePrimary(makePrimaryWindow(member.store, owner: owner, lease: member.lease), focusPage: true)
         } catch { (source ?? owner.store).message = error.localizedDescription }
     }
     @objc func newQuick() {

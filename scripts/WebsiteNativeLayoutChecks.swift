@@ -196,7 +196,9 @@ extension WebsiteFullscreenChecks {
         if kind == "layout-wide-defaults-control" { sidebarDefaults?.set(260.0, forKey: "sidebarWidth") }
         defer { sidebarDefaults?.removePersistentDomain(forName: suiteName) }
         let motionCheck = ["layout-normal-motion-production", "layout-normal-no-motion-production"].contains(kind)
-        let focusCheck = ["layout-normal-ready-focus-production", "layout-normal-loading-focus-production"].contains(kind)
+        let focusCheck = ["layout-normal-ready-focus-production", "layout-normal-loading-focus-production",
+                          "layout-private-ready-focus-production", "layout-private-loading-focus-production",
+                          "layout-normal-background-focus-production"].contains(kind)
         let savedSidebarPreference = UserDefaults.standard.object(forKey: "sidebarWidth")
         defer {
             if focusCheck {
@@ -205,7 +207,8 @@ extension WebsiteFullscreenChecks {
             }
         }
         let isPrivate = !(["layout-normal-production", "layout-normal-motion-production", "layout-normal-no-motion-production",
-                           "layout-normal-ready-focus-production", "layout-normal-loading-focus-production"].contains(kind))
+                           "layout-normal-ready-focus-production", "layout-normal-loading-focus-production",
+                           "layout-normal-background-focus-production"].contains(kind))
         let fixtureKey = SymmetricKey(size: .bits256)
         var keyReads = 0
         let store = BrowserStore(isPrivate: isPrivate, dataRoot: root, keyProvider: { _ in
@@ -251,7 +254,8 @@ extension WebsiteFullscreenChecks {
             check(store.profileID(for: web) == normalProfile && web.configuration.websiteDataStore.identifier == normalProfile,
                   "Normal native layout uses its registered disposable named profile")
         }
-        if kind == "layout-ready-production" || kind == "layout-normal-ready-focus-production" || motionCheck {
+        if ["layout-ready-production", "layout-normal-ready-focus-production", "layout-private-ready-focus-production",
+            "layout-normal-background-focus-production"].contains(kind) || motionCheck {
             try await wait("owned page ready before browser UI") {
                 guard !web.isLoading else { return false }
                 return (try? await web.evaluateJavaScript("document.readyState==='complete'&&document.getElementById('draft')!==null")) as? Bool == true
@@ -263,8 +267,13 @@ extension WebsiteFullscreenChecks {
         var preparedChrome: NativeWindowChrome?
         let window: NSWindow
         print("FULLSCREEN_LAYOUT_PHASE", kind, "mount")
-        if ["layout-production", "layout-normal-production", "layout-no-motion-production", "layout-collapsed-production", "layout-single-tab-production", "layout-ready-production", "layout-normal-motion-production", "layout-normal-no-motion-production", "layout-normal-ready-focus-production", "layout-normal-loading-focus-production"].contains(kind) {
-            app.openPrimary(owner)
+        if ["layout-production", "layout-normal-production", "layout-no-motion-production", "layout-collapsed-production", "layout-single-tab-production", "layout-ready-production", "layout-normal-motion-production", "layout-normal-no-motion-production", "layout-normal-ready-focus-production", "layout-normal-loading-focus-production", "layout-private-ready-focus-production", "layout-private-loading-focus-production", "layout-normal-background-focus-production"].contains(kind) {
+            app.openPrimary(owner, activate: kind != "layout-normal-background-focus-production")
+            if kind == "layout-normal-background-focus-production" {
+                app.openPrimary(owner)
+                check(app.primaryOwners.filter { $0.value === owner }.count == 1,
+                      "First activation reuses the actual previously prepared background window")
+            }
             guard let primary = app.primaryOwners.first(where: { $0.value === owner })?.key else {
                 throw Failure.fixture("actual production layout window")
             }
@@ -342,7 +351,7 @@ extension WebsiteFullscreenChecks {
         print("FULLSCREEN_LAYOUT_CHROME", kind, "ready", window.contentView.map(chromeMetrics) ?? [])
         _ = try await web.evaluateJavaScript("document.getElementById('draft').value='native layout draft';window.ownedLayoutToken=73;true")
         let document = store.documentIdentity(for: web)
-        if focusCheck { try await exerciseInitialPageFocus(store: store, web: web, window: window) }
+        if focusCheck { try await exerciseInitialPageFocus(store: store, web: web, window: window, app: app, owner: owner) }
         check(window.toolbarStyle == .unifiedCompact && window.toolbar != nil,
               "The visible browser root uses its actual native compact window chrome")
         print("FULLSCREEN_LAYOUT_INITIAL_METRICS", kind, "frame", window.frame.size, "minimum", window.minSize,
@@ -383,7 +392,8 @@ extension WebsiteFullscreenChecks {
     }
 
     @available(macOS 15.4, *) @MainActor
-    private static func exerciseInitialPageFocus(store: BrowserStore, web: WKWebView, window: NSWindow) async throws {
+    private static func exerciseInitialPageFocus(store: BrowserStore, web: WKWebView, window: NSWindow,
+                                                app: AppDelegate, owner: BrowserWindowOwner) async throws {
         // Give AppKit's initial key-view setup time to settle before testing a
         // real arrow event in this owned app's queue. No desktop-wide input.
         try await Task.sleep(for: .milliseconds(150))
@@ -409,6 +419,15 @@ extension WebsiteFullscreenChecks {
         print("FULLSCREEN_INITIAL_ARROW", "delivered", delivered, "widthBefore", before ?? -1, "widthAfter", store.windowSidebarWidth ?? -1)
         check(delivered && store.windowSidebarWidth == before,
               "A plain initial arrow key reaches the actual document without resizing the sidebar")
+        func dividers(_ view: NSView) -> [SidebarResizeHandle.Handle] {
+            if let divider = view as? SidebarResizeHandle.Handle { return [divider] }
+            return view.subviews.flatMap(dividers)
+        }
+        guard let root = window.contentView, let divider = dividers(root).first,
+              window.makeFirstResponder(divider) else { throw Failure.fixture("intentional existing-window divider focus") }
+        app.openPrimary(owner)
+        check(window.firstResponder === divider, "Returning to an existing window preserves its intentionally focused control")
+        window.makeFirstResponder(web)
     }
 
     @available(macOS 15.4, *) @MainActor
@@ -418,9 +437,13 @@ extension WebsiteFullscreenChecks {
             if let divider = view as? SidebarResizeHandle.Handle { return [divider] }
             return view.subviews.flatMap(dividers)
         }
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-              let root = window.contentView, let divider = dividers(root).first else {
-            throw Failure.fixture("display and divider available with system Reduce Motion off")
+        guard let root = window.contentView else { throw Failure.fixture("motion root content view") }
+        print("FULLSCREEN_MOTION_SETUP", "reduceMotion", NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              "dividerCount", dividers(root).count, "sidebarVisible", store.sidebarVisible)
+        try await wait("mounted sidebar divider before motion sampling") { !dividers(root).isEmpty }
+        guard let divider = dividers(root).first else { throw Failure.fixture("motion divider") }
+        guard !store.appearance.animationsEnabled || !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            throw Failure.fixture("enabled-motion qualification requires system Reduce Motion off")
         }
         let sampler = NativeSidebarMotionSampler(); sampler.root = root; sampler.page = web; sampler.divider = divider
         print("FULLSCREEN_MOTION_RENDER_CONTEXT", "rootLayer", root.layer != nil, "pageLayer", web.layer != nil,
