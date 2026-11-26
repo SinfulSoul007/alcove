@@ -131,8 +131,12 @@ extension BrowserStore {
         return tab
     }
     func closeQuickPage(_ id: UUID) throws {
+        let writer = metadataWriter
+        if writer !== self { try writer.closeQuickPage(id); return }
         guard let owner = quickProfileID(id), let page = quickPage(id) else { return }
         try requireQuickProfile(owner)
+        guard isPrivate || (savingEnabled && vault != nil) else { throw ProfileError.locked }
+        if deferFullscreenQuickClose(id, profileID: owner) { return }
         var candidate = makeDocument(); var records = candidate.library(for: owner)
         records.quickPages?.removeAll { $0.id == id }
         if let archived = archivedQuickTab(page) { records.archive.insert(archived, at: 0) }
@@ -141,6 +145,31 @@ extension BrowserStore {
             self.closeQuickPeek(id)
         })
         if focusedQuickPageID == id { focusedQuickPageID = nil }
+    }
+    private func deferFullscreenQuickClose(_ id: UUID, profileID: UUID) -> Bool {
+        let parent = views[id], peek = quickPeek(id)
+        for web in [peek, parent].compactMap({ $0 }) {
+            guard let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen,
+                  fullscreen.isBorrowed || web.fullscreenState != .notInFullscreen else { continue }
+            let document = documentIdentity(for: web), presentation = presentationIdentity(for: web)
+            cancelWebsitePrompts(for: web)
+            guard views[id] === parent, quickPeek(id) === peek,
+                  documentIdentity(for: web) === document, presentationIdentity(for: web) === presentation else { return true }
+            fullscreen.exitForRetirement { [weak self, weak web, weak parent, weak peek] restored in
+                guard let self, let web, !self.isShuttingDown, self.quickProfileID(id) == profileID,
+                      self.views[id] === parent, self.quickPeek(id) === peek,
+                      self.profileID(for: web) == profileID,
+                      self.documentIdentity(for: web) === document, self.presentationIdentity(for: web) === presentation else { return }
+                guard restored else {
+                    self.message = "Couldn’t leave fullscreen to close this Quick Browse window. Exit fullscreen and try again."
+                    return
+                }
+                do { try self.closeQuickPage(id) }
+                catch { self.message = error.localizedDescription }
+            }
+            return true
+        }
+        return false
     }
     @discardableResult func promoteQuickPage(_ id: UUID, to destination: UUID? = nil, allowProfileChange: Bool = false) throws -> UUID {
         guard !isShuttingDown else { throw CancellationError() }

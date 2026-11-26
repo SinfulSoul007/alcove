@@ -74,7 +74,7 @@ import BrowserCore
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard !released, store.quickPage(pageID) != nil else { return true }
         archivingUserClose = true; defer { archivingUserClose = false }
-        do { try store.closeQuickPage(pageID); return true }
+        do { try store.closeQuickPage(pageID); return store.quickPage(pageID) == nil }
         catch { state.navigationError = error.localizedDescription; return false }
     }
     func windowWillClose(_ notification: Notification) {
