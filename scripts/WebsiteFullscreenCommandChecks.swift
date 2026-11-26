@@ -107,6 +107,20 @@ extension WebsiteFullscreenChecks {
             }
         }
         let sourceSpace = writer.space.id
+        var fullscreenExtensionID: UUID?
+        if kind == "extension-focus" {
+            guard !isPrivate else { throw Failure.fixture("normal owned extension focus baseline") }
+            let source = root.appendingPathComponent("focus-extension")
+            try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+            try Data(#"{"manifest_version":3,"name":"Owned fullscreen focus","version":"1","permissions":["tabs"],"host_permissions":["http://127.0.0.1/*"],"options_page":"options.html"}"#.utf8)
+                .write(to: source.appendingPathComponent("manifest.json"))
+            try Data("<!doctype html><title>Owned extension focus</title><main id='owned-focus'>Owned focus</main>".utf8)
+                .write(to: source.appendingPathComponent("options.html"))
+            let package = try ExtensionPackage.prepare(at: source, stagingRoot: root.appendingPathComponent("extension-staging"))
+            let approval = try writer.extensionInstallApproval(for: package, profileID: profile,
+                permissions: ["tabs"], hostPatterns: ["http://127.0.0.1/*"], enable: true)
+            fullscreenExtensionID = try await writer.installExtension(package, approval: approval)
+        }
         var clearingSurvivorSpace: UUID?, clearingSurvivorProfile: UUID?
         if isProfileClear && !isPrivate {
             let otherProfile = try writer.createProfile(name: "Owned clearing survivor")
@@ -188,6 +202,7 @@ extension WebsiteFullscreenChecks {
         print("FULLSCREEN_COMMAND_CONTEXT", kind, "private", isPrivate, "quick", isQuick)
         let underlying = store.view(for: id)
         var web = underlying
+        var fullscreenExtensionOptions: WKWebView?
         var targetID = id
         var handoff: (store: BrowserStore, window: NSWindow, survivorID: UUID, survivor: WKWebView, document: NSUUID)?
         var clearingSurvivor: (store: BrowserStore, window: NSWindow, id: UUID, web: WKWebView, profile: UUID, document: NSUUID)?
@@ -264,6 +279,16 @@ extension WebsiteFullscreenChecks {
                 handoff = (destination, destinationWindow, survivorID, survivor, survivorDocument)
                 window.makeKeyAndOrderFront(nil)
             }
+            if let installed = fullscreenExtensionID {
+                let optionsID = try await store.openExtensionOptions(installed, profileID: profile)
+                guard let options = store.views[optionsID] else { throw Failure.fixture("real extension options view") }
+                try await wait("owned extension options document") {
+                    (try? await options.evaluateJavaScript("document.getElementById('owned-focus')!==null")) as? Bool == true
+                }
+                fullscreenExtensionOptions = options
+                store.select(primaryID)
+                window.makeKeyAndOrderFront(nil)
+            }
             try await wait("real browser website host") { web.window === window && web.superview is EdgeToEdgeWebHost }
             guard let commandHost = web.superview as? EdgeToEdgeWebHost else { throw Failure.fixture("original command host") }
             try await wait("command source decoded") {
@@ -290,6 +315,19 @@ extension WebsiteFullscreenChecks {
                 _ = try await web.evaluateJavaScript("document.cookie='owned_fullscreen_clear=target; path=/; SameSite=Lax';localStorage.setItem('owned_fullscreen_clear','target');true")
             }
             let document = store.documentIdentity(for: web)
+            if let options = fullscreenExtensionOptions {
+                _ = try await options.evaluateJavaScript("window.ownedFocusEvents=[];browser.windows.onFocusChanged.addListener(id=>window.ownedFocusEvents.push(id));true")
+                try await wait("real extension focus API before fullscreen") {
+                    (try? await options.callAsyncJavaScript("""
+                        const windows = await browser.windows.getAll({populate:true});
+                        const targets = windows.filter(w => w.type === type && w.tabs?.some(t => t.url === url));
+                        return targets.length === 1 && targets[0].focused === true &&
+                            targets[0].tabs.some(t => t.active && t.url === url);
+                        """, arguments: ["type": isQuick ? "popup" : "normal", "url": sourceURL.absoluteString],
+                        in: nil, contentWorld: .page)) as? Bool == true
+                }
+                print("FULLSCREEN_EXTENSION_FOCUS_CONTROL", "ready", true, "quick", isQuick)
+            }
             if kind == "close-primary-entering" || kind == "close-primary-exiting" {
                 try await exerciseTransitionWindowClose(app: app, owner: owner, store: store, web: web,
                                                         window: window, entering: kind == "close-primary-entering")
@@ -304,6 +342,10 @@ extension WebsiteFullscreenChecks {
             check(app.outputTarget(in: presentation)?.web === web,
                   "\(kind): page-output selection retains the fullscreen source")
             switch kind {
+            case "extension-focus":
+                guard let options = fullscreenExtensionOptions else { throw Failure.fixture("owned installed focus extension") }
+                try await exerciseFullscreenExtensionFocus(options: options, store: store, web: web, window: window,
+                    presentation: presentation, sourceURL: sourceURL, windowType: isQuick ? "popup" : "normal", document: document)
             case "quit", "peek-quit":
                 try await exerciseRealQuit(app: app, owner: owner, store: store, web: web, presentation: presentation) {
                     if isPrivate { return keyReads == 0 && !FileManager.default.fileExists(atPath: writer.sessionURL.path) }
@@ -1156,6 +1198,65 @@ extension WebsiteFullscreenChecks {
     }
 
     @available(macOS 15.4, *) @MainActor
+    private static func exerciseFullscreenExtensionFocus(options: WKWebView, store: BrowserStore,
+        web: WKWebView, window: NSWindow, presentation: NSWindow, sourceURL: URL,
+        windowType: String, document: NSUUID) async throws {
+        var last: [String: Any] = [:]
+        func focused(_ expected: Bool, event: Bool = false) async -> Bool {
+            do {
+                try await wait("actual extension focus API") {
+                    guard let state = try await options.callAsyncJavaScript("""
+                        const windows = await browser.windows.getAll({populate:true});
+                        const targets = windows.filter(w => w.type === type && w.tabs?.some(t => t.url === url));
+                        const target = targets[0];
+                        return {windowCount:windows.length,targets:targets.length,targetId:target?.id ?? -2,
+                            focused:target?.focused === true,focusedCount:windows.filter(w => w.focused).length,
+                            activeSource:target?.tabs?.some(t => t.active && t.url === url) === true,
+                            lastEvent:window.ownedFocusEvents?.at(-1) ?? -2};
+                        """, arguments: ["type": windowType, "url": sourceURL.absoluteString],
+                        in: nil, contentWorld: .page) as? [String: Any] else {
+                        throw Failure.fixture("native extension windows API result")
+                    }
+                    last = state
+                    let id = (state["targetId"] as? NSNumber)?.intValue
+                    let lastEvent = (state["lastEvent"] as? NSNumber)?.intValue
+                    return state["targets"] as? Int == 1 && state["activeSource"] as? Bool == true &&
+                        state["focused"] as? Bool == expected && state["focusedCount"] as? Int == (expected ? 1 : 0) &&
+                        (!event || lastEvent == (expected ? id : -1))
+                }
+                return true
+            } catch { return false }
+        }
+        let fullscreenFocused = await focused(true)
+        print("FULLSCREEN_EXTENSION_FOCUS", "phase", "fullscreen", "type", windowType, "state", last)
+        check(fullscreenFocused, "The real extension windows API reports its logical browser window focused during website fullscreen")
+        let expectedCount = windowType == "popup" ? 2 : 1
+        check(last["windowCount"] as? Int == expectedCount,
+              "The extension API does not expose WebKit's physical fullscreen window as another browser window")
+        let other = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 420, height: 280),
+                             styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false; other.title = "Owned extension focus control"
+        other.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 280))
+        defer { other.contentView = nil; other.close() }
+        other.makeKeyAndOrderFront(nil)
+        try await wait("alternate extension focus control is key") { other.isKeyWindow }
+        let unfocused = await focused(false, event: true)
+        print("FULLSCREEN_EXTENSION_FOCUS", "phase", "other", "type", windowType, "state", last)
+        check(unfocused, "Actual extension focus state and onFocusChanged report no browser window when an unrelated window is key")
+        presentation.makeKeyAndOrderFront(nil)
+        try await wait("native fullscreen regains key") { presentation.isKeyWindow }
+        let refocused = await focused(true, event: true)
+        print("FULLSCREEN_EXTENSION_FOCUS", "phase", "returned", "type", windowType, "state", last)
+        check(refocused, "Returning to native fullscreen delivers the real extension focus event for the same logical browser window")
+        try await leave(web)
+        window.makeKeyAndOrderFront(nil)
+        let restored = await focused(true)
+        let draft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41")) as? Bool
+        check(restored && web.window === window && store.documentIdentity(for: web) === document && draft == true,
+              "Exiting fullscreen preserves extension focus, the actual source document and its unsaved form")
+    }
+
+    @available(macOS 15.4, *) @MainActor
     private static func exerciseTransitionWindowClose(app: AppDelegate, owner: BrowserWindowOwner,
                                                       store: BrowserStore, web: WKWebView,
                                                       window: NSWindow, entering: Bool) async throws {
@@ -1240,12 +1341,13 @@ extension WebsiteFullscreenChecks {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
         let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static", "suspend-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"]
+        let extensionFocusCases = ["extension-focus", "quick-extension-focus"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close", "close-window-direct", "peek-parent-close", "peek-parent-model-close", "expire-static", "peek-expire-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
         let primaryWindowClosure = ["close-primary-window-direct", "peek-close-primary-window-direct", "close-primary-entering", "close-primary-exiting"]
-        let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + primaryWindowClosure + (["escape", "location", "find", "reader", "close", "suspend-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"] + scriptDialogs + promptLifetimes + peekLifetimes + primaryWindowClosure).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 } + ["quick-profile-delete", "quick-peek-profile-delete"]
+        let all = extensionFocusCases + regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + primaryWindowClosure + (["escape", "location", "find", "reader", "close", "suspend-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"] + scriptDialogs + promptLifetimes + peekLifetimes + primaryWindowClosure).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 } + ["quick-profile-delete", "quick-peek-profile-delete"]
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
         guard ["", "primary", "private-primary", "quick"].contains(group), group.isEmpty || selected.isEmpty else {
