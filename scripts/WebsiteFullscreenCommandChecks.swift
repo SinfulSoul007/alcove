@@ -290,6 +290,10 @@ extension WebsiteFullscreenChecks {
                 _ = try await web.evaluateJavaScript("document.cookie='owned_fullscreen_clear=target; path=/; SameSite=Lax';localStorage.setItem('owned_fullscreen_clear','target');true")
             }
             let document = store.documentIdentity(for: web)
+            if kind == "close-primary-entering" || kind == "close-primary-exiting" {
+                try await exerciseTransitionWindowClose(app: app, owner: owner, store: store, web: web,
+                                                        window: window, entering: kind == "close-primary-entering")
+            } else {
             if kind == "no-media" { try await enterWithOwnedClick(web, window: window) }
             else { try await enter(web, target: "element") }
             guard let presentation = web.window, presentation !== window else { throw Failure.fixture("command presentation") }
@@ -1131,6 +1135,7 @@ extension WebsiteFullscreenChecks {
                 if let alternate { check(closed && alternate.isKeyWindow, "Closing a fullscreen tab from another window preserves the requesting window's focus") }
             default: throw Failure.fixture("unknown native command")
             }
+            }
         } catch { caught = error }
 
         // Recover using the independently qualified document exit, only after
@@ -1151,6 +1156,86 @@ extension WebsiteFullscreenChecks {
     }
 
     @available(macOS 15.4, *) @MainActor
+    private static func exerciseTransitionWindowClose(app: AppDelegate, owner: BrowserWindowOwner,
+                                                      store: BrowserStore, web: WKWebView,
+                                                      window: NSWindow, entering: Bool) async throws {
+        guard let coordinator = (web as? SplitDropWebView)?.websiteFullscreen else {
+            throw Failure.fixture("real primary fullscreen coordinator")
+        }
+        let phase: WKWebView.FullscreenState = entering ? .enteringFullscreen : .exitingFullscreen
+        check(owner.leaseCount == 1 && !owner.isClosed && !store.isShuttingDown,
+              "Transition closure starts with a live primary window and its sole owner lease")
+        var scheduled = false, attempted: WKWebView.FullscreenState?
+        var presentation: NSWindow?, states: [Int] = []
+        var retainedDuringTransition = false, closedWhileNative = false, closeNotifications = 0
+        let closeObservation = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
+                                                                      object: window, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                closeNotifications += 1
+                if web.fullscreenState != .notInFullscreen || coordinator.isBorrowed || presentation?.isVisible == true {
+                    closedWhileNative = true
+                }
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(closeObservation) }
+        let stateObservation = web.observe(\.fullscreenState, options: [.new]) { view, _ in
+            MainActor.assumeIsolated {
+                states.append(Int(view.fullscreenState.rawValue))
+                if let native = view.window, native !== window { presentation = native }
+                guard view.fullscreenState == phase, !scheduled else { return }
+                scheduled = true
+                // Deliver the close on the app queue, outside WebKit's KVO
+                // callback. Missing the actual phase is a fixture failure.
+                DispatchQueue.main.async {
+                    guard web.fullscreenState == phase else {
+                        print("FULLSCREEN_TRANSITION_CLOSE_MISSED", "expected", phase.rawValue,
+                              "actual", web.fullscreenState.rawValue)
+                        return
+                    }
+                    attempted = web.fullscreenState
+                    print("FULLSCREEN_TRANSITION_CLOSE_REQUESTED", "phase", phase.rawValue,
+                          "borrowed", coordinator.isBorrowed, "logicalWindow", coordinator.logicalWindow === window)
+                    window.performClose(nil); window.performClose(nil)
+                    retainedDuringTransition = app.windows[window] === store && app.primaryOwners[window] === owner &&
+                        !owner.isClosed && !store.isShuttingDown && owner.leaseCount == 1 &&
+                        store.views.values.contains(where: { $0 === web })
+                }
+            }
+        }
+        defer { stateObservation.invalidate() }
+        if entering {
+            web.callAsyncJavaScript("""
+                document.getElementById('element').requestFullscreen().catch(() => {});
+                return true;
+                """, arguments: [:], in: nil, in: .page) { _ in }
+        } else {
+            try await enter(web, target: "element")
+            if let native = web.window, native !== window { presentation = native }
+            web.callAsyncJavaScript("""
+                Document.prototype.exitFullscreen.call(document).catch(() => {});
+                return true;
+                """, arguments: [:], in: nil, in: .defaultClient) { _ in }
+        }
+        let closed = await effect {
+            attempted != nil && !window.isVisible && app.windows[window] == nil && app.primaryOwners[window] == nil &&
+                owner.isClosed && store.isShuttingDown && owner.leaseCount == 0 &&
+                web.fullscreenState == .notInFullscreen && !coordinator.isBorrowed &&
+                presentation != nil && presentation?.isVisible == false
+        }
+        print("FULLSCREEN_TRANSITION_CLOSE_RESULT", "expected", phase.rawValue,
+              "attempted", attempted?.rawValue ?? -1, "states", states, "closed", closed,
+              "retained", retainedDuringTransition, "notifications", closeNotifications,
+              "premature", closedWhileNative)
+        check(attempted == phase, "The close is actually delivered during the requested native fullscreen transition")
+        check(retainedDuringTransition, "Closing during a native transition retains the page, window and owner until return")
+        check(!closedWhileNative && closeNotifications == 1,
+              "Repeated transition closes deliver one window-close notification after physical fullscreen return")
+        check(closed && store.views.isEmpty, "Transition closure retires the actual native window and last page without recovery")
+        check(closed && NSApp.isRunning && !app.applicationShouldTerminateAfterLastWindowClosed(NSApp),
+              "Closing the final transitioning window leaves the browser application running")
+    }
+
+    @available(macOS 15.4, *) @MainActor
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
@@ -1159,7 +1244,7 @@ extension WebsiteFullscreenChecks {
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close", "close-window-direct", "peek-parent-close", "peek-parent-model-close", "expire-static", "peek-expire-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
-        let primaryWindowClosure = ["close-primary-window-direct", "peek-close-primary-window-direct"]
+        let primaryWindowClosure = ["close-primary-window-direct", "peek-close-primary-window-direct", "close-primary-entering", "close-primary-exiting"]
         let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + primaryWindowClosure + (["escape", "location", "find", "reader", "close", "suspend-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"] + scriptDialogs + promptLifetimes + peekLifetimes + primaryWindowClosure).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 } + ["quick-profile-delete", "quick-peek-profile-delete"]
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""

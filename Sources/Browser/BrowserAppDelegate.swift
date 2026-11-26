@@ -315,7 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
         guard let primary = window as? ExtensionCommandWindow,
-              primary.needsInitialPageFocus, window.isKeyWindow else { return }
+              primary.needsInitialPageFocus else { return }
         primary.needsInitialPageFocus = false
         // AppKit otherwise chooses the sidebar splitter as the first key view.
         // Existing windows retain their deliberate editor/control focus.
