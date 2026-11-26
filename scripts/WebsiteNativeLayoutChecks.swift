@@ -8,12 +8,25 @@ import CryptoKit
 @MainActor private struct NativeLayoutComponentRoot: View {
     @ObservedObject var store: BrowserStore
     @ObservedObject var chrome: NativeWindowChrome
+    @StateObject private var reveal = SidebarRevealController()
     let web: WKWebView
     let kind: String
 
     var body: some View {
         Group {
-            if kind == "layout-chrome-feedback-control" { chromeFeedback }
+            if kind == "layout-store-sheet-control" {
+                componentContent.sheet(item: Binding(get: {
+                    store.presentedPanel == .spaces ? nil : store.presentedPanel
+                }, set: { next in
+                    if next != nil || store.presentedPanel != .spaces { store.presentedPanel = next }
+                })) { _ in Text("Owned layout fixture panel") }
+            } else if kind == "layout-tracking-control" {
+                componentContent.overlay(alignment: .leading) {
+                    SidebarTracking(controller: reveal, region: .edge, enabled: !store.sidebarVisible).frame(width: 8)
+                }
+                .onAppear { reveal.setEnabled(!store.sidebarVisible) }
+                .onChange(of: store.sidebarVisible) { _, value in reveal.setEnabled(!value) }
+            } else if kind == "layout-chrome-feedback-control" { chromeFeedback }
             else { componentContent }
         }
         .background { store.activeTheme.surface }
@@ -61,7 +74,34 @@ import CryptoKit
 
     @ViewBuilder private var sidebar: some View {
         let tabs = store.space.tabs.filter { !$0.url.isEmpty }
-        if kind == "layout-sidebar-saved-control" {
+        if kind == "layout-native-menus-control" {
+            HStack {
+                Menu {
+                    Button("Manage Spaces…") { store.showSpacesManager() }
+                    Menu("Theme") {
+                        ForEach(SidebarTheme.allCases) { choice in Button(choice.name) { store.setTheme(choice) } }
+                    }
+                } label: { Image(systemName: "ellipsis") }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20)
+                Menu {
+                    Button("Settings…") { store.settingsVisible = true }
+                    ForEach(store.session.spaces) { space in Button(space.name) { store.selectSpace(space.id) } }
+                } label: { Image(systemName: "plus").font(.system(size: 15)) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 20)
+            }
+        } else if kind == "layout-address-controls-control" {
+            HStack {
+                ReaderControl(store: store, web: web)
+                ExtensionControls(store: store, web: web).frame(width: 22, height: 26)
+            }
+        } else if kind == "layout-tracking-control" {
+            Color.clear
+                .background(SidebarTracking(controller: reveal, region: .panel,
+                                            enabled: !store.sidebarVisible && reveal.revealed))
+                .modifier(SidebarSpaceSwipeRegion(spaces: .init(current: store.space.id, previous: nil, next: nil),
+                                                 reveal: reveal, enabled: true, motion: nil,
+                                                 select: { store.selectSpace($0) }))
+        } else if kind == "layout-sidebar-saved-control" {
             SidebarSavedTabs(store: store, theme: store.activeTheme, appearance: store.appearance,
                              motion: nil, height: 120, layout: store.sidebarLists.saved, collapsed: false)
         } else if kind == "layout-sidebar-row-control", let tab = tabs.first {
@@ -138,7 +178,9 @@ extension WebsiteFullscreenChecks {
             control.extensionStore = store; control.extensionCommandSource = { [weak store] in store?.currentView }
             let componentControl = ["layout-web-content-control", "layout-chrome-reader-control",
                                     "layout-sidebar-row-control", "layout-sidebar-scroll-control",
-                                    "layout-sidebar-saved-control", "layout-chrome-feedback-control"].contains(kind)
+                                    "layout-sidebar-saved-control", "layout-chrome-feedback-control",
+                                    "layout-native-menus-control", "layout-address-controls-control",
+                                    "layout-tracking-control", "layout-store-sheet-control"].contains(kind)
             if kind == "layout-preconfigured-control" || componentControl {
                 preparedChrome = NativeWindowChrome()
                 preparedChrome?.attach(to: control)
