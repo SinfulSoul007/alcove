@@ -6,7 +6,7 @@ import BrowserCore
 extension WebsiteFullscreenChecks {
     @available(macOS 15.4, *) @MainActor
     static func exerciseCrossProfileExtensionFocus(base: URL, owned: OwnedWebsiteStores,
-                                                    controllers: OwnedExtensionControllers) async throws {
+                                                    controllers: OwnedExtensionControllers, cancelling: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-cross-profile-focus-" + UUID().uuidString)
         let writer = BrowserStore(dataRoot: root, keyProvider: { _ in SymmetricKey(data: Data(repeating: 93, count: 32)) })
         writer.finishOnboarding(); writer.preferences.automaticUpdateChecks = false
@@ -36,6 +36,13 @@ extension WebsiteFullscreenChecks {
         try register(sourceProfile)
         let sourceSpace = writer.space.id, sourceURL = base.appendingPathComponent("page")
         let sourceID = writer.newTab(url: sourceURL)
+        var latestSelection: (space: UUID, id: UUID, url: URL)?
+        if cancelling {
+            let space = try writer.createSpace(name: "Owned latest user selection", profileID: sourceProfile)
+            let url = URL(string: "page-no-media#latest-user-selection", relativeTo: base)!.absoluteURL
+            latestSelection = (space, writer.newTab(url: url), url)
+            writer.selectSpace(sourceSpace)
+        }
         let app = AppDelegate(), owner = app.makeOwner(writer)
         app.normalOwner = owner; app.openPrimary(owner)
         guard let window = app.primaryOwners.first(where: { $0.value === owner })?.key,
@@ -92,6 +99,25 @@ extension WebsiteFullscreenChecks {
             try await wait("other-profile fullscreen key") { presentation.isKeyWindow }
             check(app.activeStore === store && app.activeWebView === source && store.activeProfileID == sourceProfile,
                   "Cross-profile focus starts on the actual other account's native fullscreen document")
+            var cancellationObservation: NSKeyValueObservation?
+            var cancellationScheduled = false, cancellationApplied = false, cancellationPhase: Int?
+            if let latestSelection {
+                cancellationObservation = source.observe(\.fullscreenState, options: [.new]) { view, _ in
+                    MainActor.assumeIsolated {
+                        guard view.fullscreenState == .exitingFullscreen, !cancellationScheduled else { return }
+                        cancellationScheduled = true
+                        DispatchQueue.main.async {
+                            guard source.fullscreenState == .exitingFullscreen else { return }
+                            cancellationPhase = Int(source.fullscreenState.rawValue)
+                            store.selectSpace(latestSelection.space); store.select(latestSelection.id)
+                            cancellationApplied = store.space.id == latestSelection.space && store.focusedID == latestSelection.id
+                            print("FULLSCREEN_CROSS_PROFILE_FOCUS_CANCELLATION", "phase", cancellationPhase ?? -1,
+                                  "applied", cancellationApplied)
+                        }
+                    }
+                }
+            }
+            defer { cancellationObservation?.invalidate() }
             _ = try await options.callAsyncJavaScript("""
                 window.ownedCrossFocus={status:'pending'};
                 browser.windows.update(id,{focused:true}).then(
@@ -104,24 +130,41 @@ extension WebsiteFullscreenChecks {
                 reply = (try? await options.evaluateJavaScript("window.ownedCrossFocus")) as? [String: Any] ?? [:]
                 return ["fulfilled", "rejected"].contains(reply["status"] as? String ?? "")
             }
+            let expectedSpace = latestSelection?.space ?? targetSpace
+            let expectedProfile = cancelling ? sourceProfile : targetProfile
             let restored = await effect {
                 source.fullscreenState == .notInFullscreen && !fullscreen.isBorrowed && !presentation.isVisible &&
-                    store.activeProfileID == targetProfile && store.space.id == targetSpace && window.isKeyWindow
+                    store.activeProfileID == expectedProfile && store.space.id == expectedSpace && window.isKeyWindow
             }
             print("FULLSCREEN_CROSS_PROFILE_FOCUS_RESULT", "reply", reply, "sourceState", source.fullscreenState.rawValue,
                   "nativeVisible", presentation.isVisible, "targetProfileActive", store.activeProfileID == targetProfile,
                   "logicalKey", window.isKeyWindow)
-            check(reply["status"] as? String == "fulfilled" && restored,
-                  "An extension's cross-profile focus request restores native fullscreen before showing its own account")
+            if cancelling {
+                guard cancellationPhase == Int(WKWebView.FullscreenState.exitingFullscreen.rawValue), cancellationApplied else {
+                    throw Failure.fixture("actual changed-selection control during cross-profile fullscreen exit")
+                }
+            }
+            check(reply["status"] as? String == (cancelling ? "rejected" : "fulfilled") && restored,
+                  cancelling ? "Changing selection during native exit cancels the stale SDK focus without replacing the user's latest Space" :
+                    "An extension's cross-profile focus request restores native fullscreen before showing its own account")
             let targetDraft = (try? await target.evaluateJavaScript("document.getElementById('draft').value==='target account draft'&&window.ownedCrossProfileTarget===61")) as? Bool
             check(store.views[targetID] === target && store.profileID(for: target) == targetProfile &&
                   store.documentIdentity(for: target) === targetDocument && targetDraft == true &&
-                  store.currentView === target && target.window === window,
-                  "Cross-profile SDK focus shows the exact authorized target account document and unsaved form")
+                  (cancelling || store.currentView === target && target.window === window),
+                  "Cross-profile SDK focus preserves the exact authorized target account document and unsaved form")
             let sourceDraft = (try? await source.evaluateJavaScript("document.getElementById('draft').value==='source account draft'&&window.ownedCrossProfileSource===62")) as? Bool
             check(store.views[sourceID] === source && store.profileID(for: source) == sourceProfile &&
                   store.documentIdentity(for: source) === sourceDocument && sourceDraft == true,
                   "Cross-profile focus preserves the separate source account's exact document and unsaved form")
+            if let latestSelection {
+                let latest = store.view(for: latestSelection.id)
+                try await wait("latest user-selected document after cancelled SDK focus") {
+                    guard store.currentView === latest, latest.window === window, latest.url == latestSelection.url else { return false }
+                    return (try? await latest.evaluateJavaScript("document.getElementById('draft')?.value==='original'&&window.ownedCrossProfileTarget===undefined&&window.ownedCrossProfileSource===undefined")) as? Bool == true
+                }
+                check(store.profileID(for: latest) == sourceProfile,
+                      "A cancelled cross-profile request leaves the user's exact replacement Space and fresh document visible")
+            }
         } catch { caught = error }
         if source.fullscreenState != .notInFullscreen || (source as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true {
             try await leave(source)

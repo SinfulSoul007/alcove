@@ -60,10 +60,10 @@ extension WebsiteFullscreenChecks {
     @available(macOS 15.4, *) @MainActor
     static func exerciseCommand(base: URL, kind: String, owned: OwnedWebsiteStores,
                                 controllers: OwnedExtensionControllers, isPrivate: Bool = false, isQuick: Bool = false) async throws {
-        if kind == "extension-cross-profile-focus-request" {
+        if ["extension-cross-profile-focus-request", "extension-cross-profile-focus-cancel"].contains(kind) {
             guard !isPrivate, !isQuick else { throw Failure.fixture("normal cross-profile primary focus") }
             print("FULLSCREEN_COMMAND_CONTEXT", kind, "private", false, "quick", false)
-            try await exerciseCrossProfileExtensionFocus(base: base, owned: owned, controllers: controllers)
+            try await exerciseCrossProfileExtensionFocus(base: base, owned: owned, controllers: controllers, cancelling: kind.hasSuffix("-cancel"))
             print("FULLSCREEN_COMMAND_CASE_COMPLETED", kind, "private", false, "quick", false)
             return
         }
@@ -1571,7 +1571,7 @@ extension WebsiteFullscreenChecks {
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close", "close-window-direct", "peek-parent-close", "peek-parent-model-close", "expire-static", "peek-expire-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
         let primaryWindowClosure = ["close-primary-window-direct", "peek-close-primary-window-direct", "close-primary-entering", "close-primary-exiting"]
-        let all = ["extension-cross-profile-focus-request"] + extensionFocusCases + regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + primaryWindowClosure + (["escape", "location", "find", "reader", "close", "suspend-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"] + scriptDialogs + promptLifetimes + peekLifetimes + primaryWindowClosure).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 } + ["quick-profile-delete", "quick-peek-profile-delete"]
+        let all = ["extension-cross-profile-focus-request", "extension-cross-profile-focus-cancel"] + extensionFocusCases + regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + primaryWindowClosure + (["escape", "location", "find", "reader", "close", "suspend-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"] + scriptDialogs + promptLifetimes + peekLifetimes + primaryWindowClosure).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 } + ["quick-profile-delete", "quick-peek-profile-delete"]
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
         guard ["", "primary", "private-primary", "quick"].contains(group), group.isEmpty || selected.isEmpty else {
