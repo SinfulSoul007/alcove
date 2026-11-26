@@ -9,6 +9,7 @@ import BrowserCore
     let store: BrowserStore
     let sample: (String) -> Void
     let nativeExitControl: Bool
+    var confirmationResults: [Bool] = []
     init(store: BrowserStore, nativeExitControl: Bool = false, sample: @escaping (String) -> Void) {
         self.store = store; self.sample = sample; self.nativeExitControl = nativeExitControl
     }
@@ -35,6 +36,7 @@ import BrowserCore
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
         sample("delegate-entry")
         store.webView(webView, runJavaScriptConfirmPanelWithMessage: message, initiatedByFrame: frame) { result in
+            self.confirmationResults.append(result)
             self.sample("delegate-completion"); completionHandler(result)
         }
         sample("delegate-return")
@@ -154,7 +156,7 @@ extension WebsiteFullscreenChecks {
             guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else { throw Failure.fixture("command Peek") }
             web = peek
         } else {
-            if (kind == "close" || kind.hasPrefix("close-direct")) && !isQuick {
+            if (kind == "close" || kind.hasPrefix("close-direct") || kind == "close-script-sheet") && !isQuick {
                 targetID = store.newTab(url: base.appendingPathComponent("page"))
                 web = store.view(for: targetID)
             }
@@ -541,6 +543,55 @@ extension WebsiteFullscreenChecks {
                 } else {
                     check(false, "Last-tab close remains unqualified while captured tab close fails")
                 }
+            case "close-script-sheet":
+                try await wait("owned surviving sheet-close document") {
+                    (try? await underlying.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
+                }
+                _ = try await underlying.evaluateJavaScript("document.getElementById('draft').value='surviving sheet-close draft';true")
+                let survivorDocument = store.documentIdentity(for: underlying)
+                let marker = "Owned pending confirmation on tab closure"
+                let probe = OwnedFullscreenScriptProbe(store: store) { label in
+                    residency("close-script-sheet " + label, web: web, host: commandHost, window: window)
+                }
+                guard web.uiDelegate === store else { throw Failure.fixture("pending-script production delegate") }
+                web.uiDelegate = probe
+                defer { if store.views[targetID] === web { web.uiDelegate = store } }
+                _ = try await web.callAsyncJavaScript("setTimeout(()=>confirm(marker),0);return true;",
+                    arguments: ["marker": marker], in: nil, contentWorld: .page)
+                func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+                var prompt: NSWindow?
+                let shown = await effect {
+                    guard let sheet = window.attachedSheet, sheet.isVisible, let content = sheet.contentView,
+                          descendants(content).contains(where: { ($0 as? NSTextField)?.stringValue == marker }) else { return false }
+                    prompt = sheet; return true
+                }
+                check(shown && probe.confirmationResults.isEmpty && !presentation.isVisible,
+                      "An actual unanswered page confirmation belongs to its captured browser window after fullscreen hides")
+                store.close(targetID)
+                let closed = await effect {
+                    store.views[targetID] == nil && store.tab(targetID) == nil && !presentation.isVisible &&
+                        web.fullscreenState == .notInFullscreen && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false &&
+                        prompt?.isVisible == false && window.attachedSheet == nil && probe.confirmationResults == [false]
+                }
+                check(closed && prompt?.isVisible == false && window.attachedSheet == nil && probe.confirmationResults == [false],
+                      "Closing a fullscreen tab cancels its actual pending script sheet once before retiring the page")
+                print("FULLSCREEN_PENDING_SHEET_CLOSE", "closed", closed, "replies", probe.confirmationResults,
+                      "sheetVisible", prompt?.isVisible ?? false, "attached", window.attachedSheet != nil,
+                      "registered", store.views[targetID] === web, "state", web.fullscreenState.rawValue)
+                // Explicit recovery follows the observed outcome and cannot
+                // satisfy the closure/cancellation assertions above.
+                if let prompt, let parent = prompt.sheetParent {
+                    parent.endSheet(prompt, returnCode: .alertSecondButtonReturn); prompt.orderOut(nil)
+                }
+                if !closed {
+                    _ = await effect { !probe.confirmationResults.isEmpty }
+                    store.close(targetID)
+                    _ = await effect { store.views[targetID] == nil }
+                }
+                let survivorDraft = try await underlying.evaluateJavaScript("document.getElementById('draft').value==='surviving sheet-close draft'") as? Bool
+                check(closed && window.isVisible && NSApp.isRunning && store.views[id] === underlying &&
+                      store.profileID(for: underlying) == profile && store.documentIdentity(for: underlying) === survivorDocument && survivorDraft == true,
+                      "Cancelling a closing tab's script sheet preserves the other exact live profile/document/form")
             case "close-direct", "close-direct-background":
                 try await wait("owned surviving document") {
                     (try? await underlying.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
@@ -598,7 +649,7 @@ extension WebsiteFullscreenChecks {
         let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close"] + scriptDialogs).map { "quick-" + $0 }
-        let all = regular + ["close-direct", "close-direct-background"] + (["escape", "location", "find", "reader", "close"] + scriptDialogs).map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
+        let all = regular + ["close-direct", "close-direct-background", "close-script-sheet"] + (["escape", "location", "find", "reader", "close"] + scriptDialogs).map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         // Characterization controls are opt-in and never counted as normal
         // production-path command coverage in the full default matrix.
