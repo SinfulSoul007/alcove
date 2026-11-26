@@ -23,6 +23,10 @@ on:
         description: Run existing warning ticket and actual navigation/surface regressions
         type: boolean
         default: false
+      window_lifecycle:
+        description: Run existing shared-window and live handoff regressions
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -30,7 +34,7 @@ permissions:
 jobs:
   macos:
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -96,6 +100,18 @@ jobs:
           set -o pipefail
           mkdir -p .build/fullscreen
           caffeinate -is scripts/build.sh website-protection-navigation-test 2>&1 | tee .build/fullscreen/website-protection-navigation.log
+      - name: Verify existing shared-window ownership
+        if: ${{ always() && inputs.window_lifecycle }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh window-group-test 2>&1 | tee .build/fullscreen/window-group.log
+      - name: Verify existing live window handoff
+        if: ${{ always() && inputs.window_lifecycle }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh window-handoff-test 2>&1 | tee .build/fullscreen/window-handoff.log
       - name: Verify source-bound website warning surfaces
         if: ${{ always() && inputs.website_protection }}
         run: |

@@ -39,6 +39,12 @@ Actual page alerts, confirmations and text prompts use asynchronous sheets on th
 
 The owned local HTTP/video fixture pins the unmodified WebKit test clip to source `26695efdefc6076049ec50713a2c4e54b90b4d47` and SHA-256 `c2f0f7007861ab196d31d6d9d62a01e4bd4a4158b2d6cd696105c09e9d8d61e6`. It is downloaded only for testing and is not a product asset.
 
+## Further lifecycle and no-media qualification
+
+The shared tab-model close path has a separate actual RED at `e0b7961`, run45698902072: six assertions/three failures, cleanup true/true. It removes the fullscreen source before native exit; the normal Cmd-W wrapper's prior success did not cover this path. The development fix holds model/view retirement until native restoration and the captured profile/presentation remain current. It separates retirement from foreground command delivery and tests another window retaining focus. Native verification is pending.
+
+No-media input controls at `d8d8247` (run45680958395) and `ef933f3` (run45715733955) each fail their input precondition: the page receives an `isTrusted` click, but `navigator.userActivation.isActive` is false and WebKit rejects fullscreen for missing transient activation. Direct owned-window delivery and ordinary application-queue delivery show the same result. Both use a page with no audio/video and record zero video requests; cleanup passes. These do not establish a browser fullscreen failure or success. The strict `no-media` case remains an explicit diagnostic, excluded from the default matrix because the hosted input fixture cannot grant activation. **Ordinary no-media fullscreen remains a required, unqualified live-input gate before feature completion.** No activation/security preference is weakened and no media bootstrap is added. The default matrix now has54 cases, still awaiting a combined run.
+
 ## Sidebar render evidence
 
 The separate sidebar layout step in run45594880471 passes101 checks with zero failures and retains ten owned renders: three window sizes, nested folders, active-tab return states across scrolling/closed shelves/collapsed folders, recent tabs and four-pane layout. All ten were visually inspected. These are NSHostingView cache renders; native window controls, composited website contents, animation and accessibility are outside this capture's scope. This is static layout evidence, not complete visual fidelity.

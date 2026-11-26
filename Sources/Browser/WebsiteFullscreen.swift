@@ -32,14 +32,18 @@ import WebKit
         let profileID: UUID
         let presentationID: NSUUID
         let generation: UUID
+        let requiresForeground: Bool
         let completion: @MainActor (Bool) -> Void
 
         var isCurrent: Bool {
             guard let presentation, !presentation.isBorrowed, presentation.presentationGeneration == generation,
-                  let store, let web, let window, window.isVisible, window.isKeyWindow, NSApp.isActive,
+                  let store, let web,
                   !store.isShuttingDown, web.navigationDelegate === store,
                   store.profileID(for: web) == profileID, !store.profileUnavailable(profileID),
-                  store.presentationIdentity(for: web) === presentationID, web.window === window else { return false }
+                  store.presentationIdentity(for: web) === presentationID else { return false }
+            if requiresForeground {
+                guard let window, window.isVisible, window.isKeyWindow, NSApp.isActive, web.window === window else { return false }
+            }
             return true
         }
     }
@@ -55,9 +59,13 @@ import WebKit
         private var focusObservations: [NSObjectProtocol] = []
         private var focusMonitor: Any?
 
-        init(presentation: WebsiteFullscreen, window: NSWindow) {
+        init(presentation: WebsiteFullscreen, window: NSWindow?) {
             self.presentation = presentation; self.window = window
-            beganInForeground = NSApp.isActive && (window.isKeyWindow || presentation.presentationWindow?.isKeyWindow == true)
+            beganInForeground = NSApp.isActive && (window?.isKeyWindow == true || presentation.presentationWindow?.isKeyWindow == true)
+            if !beganInForeground {
+                focusChanged = true
+                if let key = NSApp.keyWindow, key !== window, key !== presentation.presentationWindow { preferredWindow = key }
+            }
             focusObservations.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] notification in
                 MainActor.assumeIsolated {
                     guard let self, !self.finished, let changed = notification.object as? NSWindow,
@@ -98,7 +106,7 @@ import WebKit
             let captured = waiters; waiters.removeAll()
             // Revalidate each callback after the previous one: closing a tab or
             // changing its owner must revoke later work from that old context.
-            for waiter in captured { waiter.completion(restored && canContinue && waiter.isCurrent) }
+            for waiter in captured { waiter.completion(restored && (!waiter.requiresForeground || canContinue) && waiter.isCurrent) }
         }
     }
 
@@ -135,12 +143,25 @@ import WebKit
     /// True permits work only in the still-current, foreground source context.
     /// False cancels stale actions, even when native restoration itself succeeded.
     func exit(completion: @escaping @MainActor (Bool) -> Void) {
-        guard let web, let store, let window = logicalWindow, let profileID, let presentationID else {
+        requestExit(requiresForeground: true, completion: completion)
+    }
+
+    /// Explicit retirement may originate in another window. It still requires
+    /// physical restoration and the same owner/profile/presentation, but does
+    /// not require the retiring page to become foreground again.
+    func exitForRetirement(completion: @escaping @MainActor (Bool) -> Void) {
+        requestExit(requiresForeground: false, completion: completion)
+    }
+
+    private func requestExit(requiresForeground: Bool, completion: @escaping @MainActor (Bool) -> Void) {
+        guard let web, let store, let profileID, let presentationID else {
             completion(false); return
         }
+        let window = logicalWindow
+        if requiresForeground && window == nil { completion(false); return }
         let waiter = ExitWaiter(presentation: self, store: store, web: web, window: window,
                                 profileID: profileID, presentationID: presentationID,
-                                generation: presentationGeneration, completion: completion)
+                                generation: presentationGeneration, requiresForeground: requiresForeground, completion: completion)
         guard isBorrowed || web.fullscreenState != .notInFullscreen else { completion(waiter.isCurrent); return }
         if let exitRequest { exitRequest.waiters.append(waiter) }
         else {

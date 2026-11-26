@@ -434,6 +434,24 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return tab.id
     }
     func close(_ id: UUID) {
+        if let presenter = pageStores.first(where: { $0.views[id] != nil }), let web = presenter.views[id],
+           let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen,
+           fullscreen.isBorrowed || web.fullscreenState != .notInFullscreen {
+            let profile = presenter.profileID(for: web), presentation = presenter.presentationIdentity(for: web)
+            fullscreen.exitForRetirement { [weak self, weak presenter, weak web] restored in
+                guard let self, let presenter, let web, !self.isShuttingDown,
+                      presenter.views[id] === web, presenter.profileID(for: web) == profile,
+                      presenter.presentationIdentity(for: web) === presentation else { return }
+                guard restored else {
+                    if fullscreen.isBorrowed || web.fullscreenState != .notInFullscreen {
+                        self.message = "Couldn’t leave fullscreen to close this tab. Exit fullscreen and try again."
+                    }
+                    return
+                }
+                self.close(id)
+            }
+            return
+        }
         if quickPage(id) != nil { do { try closeQuickPage(id) } catch { message = error.localizedDescription }; return }
         if !session.spaces.contains(where: { $0.tabs.contains(where: { $0.id == id }) }), let favorite = tab(id), favorite.favorite == true {
             update(id) { $0.url = $0.homeURL ?? $0.url; $0.title = $0.pinnedTitle ?? $0.title }; discardSharedView(id); return

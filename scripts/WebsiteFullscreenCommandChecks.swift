@@ -154,7 +154,7 @@ extension WebsiteFullscreenChecks {
             guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else { throw Failure.fixture("command Peek") }
             web = peek
         } else {
-            if (kind == "close" || kind == "close-direct") && !isQuick {
+            if (kind == "close" || kind.hasPrefix("close-direct")) && !isQuick {
                 targetID = store.newTab(url: base.appendingPathComponent("page"))
                 web = store.view(for: targetID)
             }
@@ -541,12 +541,22 @@ extension WebsiteFullscreenChecks {
                 } else {
                     check(false, "Last-tab close remains unqualified while captured tab close fails")
                 }
-            case "close-direct":
+            case "close-direct", "close-direct-background":
                 try await wait("owned surviving document") {
                     (try? await underlying.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
                 }
                 _ = try await underlying.evaluateJavaScript("document.getElementById('draft').value='surviving close draft';true")
                 let survivorDocument = store.documentIdentity(for: underlying)
+                var alternate: NSWindow?
+                if kind == "close-direct-background" {
+                    let other = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 420, height: 280),
+                                         styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                    other.isReleasedWhenClosed = false; other.title = "Owned background tab-close requester"
+                    other.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 280))
+                    other.makeKeyAndOrderFront(nil); alternate = other
+                    try await wait("owned close requester key") { other.isKeyWindow }
+                }
+                defer { alternate?.contentView = nil; alternate?.close() }
                 // This is the shared model API used by tab close controls;
                 // AppDelegate's already-qualified Cmd-W wrapper is bypassed.
                 store.close(targetID)
@@ -559,6 +569,7 @@ extension WebsiteFullscreenChecks {
                 check(closed && window.isVisible && NSApp.isRunning && store.views[id] === underlying &&
                       store.profileID(for: underlying) == profile && store.documentIdentity(for: underlying) === survivorDocument && survivorDraft == true,
                       "Direct fullscreen tab closure keeps the browser and its other exact live document/profile/form intact")
+                if let alternate { check(closed && alternate.isKeyWindow, "Closing a fullscreen tab from another window preserves the requesting window's focus") }
             default: throw Failure.fixture("unknown native command")
             }
         } catch { caught = error }
@@ -587,11 +598,14 @@ extension WebsiteFullscreenChecks {
         let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close"] + scriptDialogs).map { "quick-" + $0 }
-        let all = regular + ["no-media", "close-direct"] + (["escape", "location", "find", "reader", "close"] + scriptDialogs).map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
+        let all = regular + ["close-direct", "close-direct-background"] + (["escape", "location", "find", "reader", "close"] + scriptDialogs).map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         // Characterization controls are opt-in and never counted as normal
         // production-path command coverage in the full default matrix.
-        guard selected.allSatisfy((all + ["script-alert-native-control"]).contains) else { throw Failure.fixture("unknown selected command case") }
+        // App-local events do not grant WebKit transient activation on this
+        // hosted OS. Keep no-media's strict input control explicit; ordinary
+        // no-media fullscreen remains a required, unqualified live-input gate.
+        guard selected.allSatisfy((all + ["script-alert-native-control", "no-media"]).contains) else { throw Failure.fixture("unknown selected command case") }
         for name in selected.isEmpty ? all : selected {
             let isPrivate = name.hasPrefix("private-"), presentation = isPrivate ? String(name.dropFirst(8)) : name
             let isQuick = presentation.hasPrefix("quick-"), kind = isQuick ? String(presentation.dropFirst(6)) : presentation
