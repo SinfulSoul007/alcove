@@ -80,7 +80,9 @@ import SwiftUI
             let visible = !window.styleMask.contains(.fullScreen)
             if toolbar.isVisible != visible { toolbar.isVisible = visible }
         }
-        content.superview?.layoutSubtreeIfNeeded()
+        // This measurement is scheduled by the native layout callbacks. Forcing
+        // an ancestor layout here can re-enter SwiftUI's current layout graph.
+        // Read the current geometry; subsequent native callbacks refresh it.
         var next = layout
         let usable = content.convert(window.contentLayoutRect, from: nil)
         let inset = content.isFlipped ? usable.minY - content.bounds.minY : content.bounds.maxY - usable.maxY
