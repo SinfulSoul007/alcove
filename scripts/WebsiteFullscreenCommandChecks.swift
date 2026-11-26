@@ -156,7 +156,7 @@ extension WebsiteFullscreenChecks {
             guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else { throw Failure.fixture("command Peek") }
             web = peek
         } else {
-            if (kind == "close" || kind.hasPrefix("close-direct") || kind == "close-script-sheet") && !isQuick {
+            if (kind == "close" || kind.hasPrefix("close-direct") || kind == "close-script-sheet" || kind == "navigate-script-sheet") && !isQuick {
                 targetID = store.newTab(url: base.appendingPathComponent("page"))
                 web = store.view(for: targetID)
             }
@@ -548,7 +548,8 @@ extension WebsiteFullscreenChecks {
                 } else {
                     check(false, "Last-tab close remains unqualified while captured tab close fails")
                 }
-            case "close-script-sheet":
+            case "close-script-sheet", "navigate-script-sheet":
+                let retiring = kind == "close-script-sheet", replacement = base.appendingPathComponent("article")
                 try await wait("owned surviving sheet-close document") {
                     (try? await underlying.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
                 }
@@ -556,7 +557,7 @@ extension WebsiteFullscreenChecks {
                 let survivorDocument = store.documentIdentity(for: underlying)
                 let marker = "Owned pending confirmation on tab closure"
                 let probe = OwnedFullscreenScriptProbe(store: store) { label in
-                    residency("close-script-sheet " + label, web: web, host: commandHost, window: window)
+                    residency(kind + " " + label, web: web, host: commandHost, window: window)
                 }
                 guard web.uiDelegate === store else { throw Failure.fixture("pending-script production delegate") }
                 web.uiDelegate = probe
@@ -577,9 +578,13 @@ extension WebsiteFullscreenChecks {
                             unanswered = probe.confirmationResults.isEmpty
                             hiddenBeforePrompt = !presentation.isVisible
                             deadline = clock.now.advanced(by: .seconds(12))
-                            store.close(targetID)
+                            if retiring { store.close(targetID) }
+                            else { store.commandOpensNewTab = false; store.navigate(replacement.absoluteString) }
                         }
-                        if store.views[targetID] == nil && store.tab(targetID) == nil && !presentation.isVisible &&
+                        let sourceSettled = retiring ? (store.views[targetID] == nil && store.tab(targetID) == nil) :
+                            (store.views[targetID] === web && web.url == replacement && !web.isLoading && web.window === window &&
+                                store.documentIdentity(for: web) !== document)
+                        if sourceSettled && !presentation.isVisible &&
                             web.fullscreenState == .notInFullscreen && (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false &&
                             prompt?.isVisible == false && window.attachedSheet == nil && probe.confirmationResults == [false] {
                             closedBeforeRecovery = true; timer.invalidate()
@@ -608,8 +613,8 @@ extension WebsiteFullscreenChecks {
                 check(observed && unanswered && hiddenBeforePrompt,
                       "An actual unanswered page confirmation belongs to its captured browser window after fullscreen hides")
                 check(closed,
-                      "Closing a fullscreen tab cancels its actual pending script sheet once before retiring the page")
-                print("FULLSCREEN_PENDING_SHEET_CLOSE", "closed", closed, "recoveryUsed", recoveryUsed,
+                      "\(kind): changing the source cancels its actual pending script sheet once and completes native exit")
+                print("FULLSCREEN_PENDING_SHEET_LIFETIME", kind, "settled", closed, "recoveryUsed", recoveryUsed,
                       "replies", probe.confirmationResults, "sheetVisible", prompt?.isVisible ?? false,
                       "attached", window.attachedSheet != nil, "registered", store.views[targetID] === web,
                       "state", web.fullscreenState.rawValue)
@@ -618,13 +623,20 @@ extension WebsiteFullscreenChecks {
                 }
                 if !closed {
                     _ = await effect { !probe.confirmationResults.isEmpty }
-                    store.close(targetID)
-                    _ = await effect { store.views[targetID] == nil }
+                    if retiring {
+                        store.close(targetID)
+                        _ = await effect { store.views[targetID] == nil }
+                    } else { _ = await effect { web.url == replacement && !web.isLoading } }
                 }
                 let survivorDraft = try await underlying.evaluateJavaScript("document.getElementById('draft').value==='surviving sheet-close draft'") as? Bool
                 check(closed && window.isVisible && NSApp.isRunning && store.views[id] === underlying &&
                       store.profileID(for: underlying) == profile && store.documentIdentity(for: underlying) === survivorDocument && survivorDraft == true,
                       "Cancelling a closing tab's script sheet preserves the other exact live profile/document/form")
+                if !retiring {
+                    let replacementDOM = try await web.evaluateJavaScript("document.querySelector('article')!==null&&document.getElementById('draft').value==='original'&&window.ownedCommandToken===undefined") as? Bool
+                    check(closed && store.views[targetID] === web && store.profileID(for: web) == profile && replacementDOM == true,
+                          "Real navigation dismisses the old script sheet and commits a fresh document in the same profile/view")
+                }
             case "close-direct", "close-direct-background":
                 try await wait("owned surviving document") {
                     (try? await underlying.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
@@ -682,7 +694,7 @@ extension WebsiteFullscreenChecks {
         let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close"] + scriptDialogs).map { "quick-" + $0 }
-        let all = regular + ["close-direct", "close-direct-background", "close-script-sheet"] + (["escape", "location", "find", "reader", "close"] + scriptDialogs).map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
+        let all = regular + ["close-direct", "close-direct-background", "close-script-sheet", "navigate-script-sheet"] + (["escape", "location", "find", "reader", "close"] + scriptDialogs).map { "private-" + $0 } + compact + compact.map { "private-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         // Characterization controls are opt-in and never counted as normal
         // production-path command coverage in the full default matrix.
