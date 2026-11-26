@@ -109,18 +109,47 @@ extension WebsiteFullscreenChecks {
         }
         let sourceSpace = writer.space.id
         var fullscreenExtensionID: UUID?
+        var extensionPrivateHost: (owner: BrowserWindowOwner, profile: UUID)?
+        defer { extensionPrivateHost?.owner.shutdown() }
         if extensionPeek || ["extension-focus", "extension-focus-request", "extension-close", "extension-close-disable", "extension-close-revoke"].contains(kind) {
-            guard !isPrivate else { throw Failure.fixture("normal owned extension focus baseline") }
+            guard !isPrivate || ["extension-focus", "extension-focus-request", "peek-extension-focus", "peek-extension-focus-request"].contains(kind) else {
+                throw Failure.fixture("private extension close is not part of the focus fixture")
+            }
+            let installer: BrowserStore, installProfile: UUID
+            if isPrivate {
+                let normal = BrowserStore(dataRoot: root.appendingPathComponent("normal-extension-owner"),
+                    keyProvider: { _ in SymmetricKey(data: Data(repeating: 89, count: 32)) })
+                normal.finishOnboarding(); normal.preferences.automaticUpdateChecks = false
+                let normalOwner = BrowserWindowOwner(store: normal)
+                extensionPrivateHost = (normalOwner, BrowserProfile.defaultID)
+                installProfile = try normal.createProfile(name: "Owned private extension association")
+                extensionPrivateHost = (normalOwner, installProfile)
+                try owned.register(installProfile)
+                if let controller = normal.profiles.first(where: { $0.id == installProfile })?.extensionControllerID {
+                    try controllers.register(controller)
+                }
+                installer = normal
+            } else { installer = writer; installProfile = profile }
             let source = root.appendingPathComponent("focus-extension")
             try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
-            try Data(#"{"manifest_version":3,"name":"Owned fullscreen focus","version":"1","permissions":["tabs"],"host_permissions":["http://127.0.0.1/*"],"options_page":"options.html"}"#.utf8)
+            try Data(#"{"manifest_version":3,"name":"Owned fullscreen focus","version":"1","incognito":"spanning","permissions":["tabs"],"host_permissions":["http://127.0.0.1/*"],"options_page":"options.html"}"#.utf8)
                 .write(to: source.appendingPathComponent("manifest.json"))
             try Data("<!doctype html><title>Owned extension focus</title><main id='owned-focus'>Owned focus</main>".utf8)
                 .write(to: source.appendingPathComponent("options.html"))
             let package = try ExtensionPackage.prepare(at: source, stagingRoot: root.appendingPathComponent("extension-staging"))
-            let approval = try writer.extensionInstallApproval(for: package, profileID: profile,
+            let approval = try installer.extensionInstallApproval(for: package, profileID: installProfile,
                 permissions: ["tabs"], hostPatterns: ["http://127.0.0.1/*"], enable: true)
-            fullscreenExtensionID = try await writer.installExtension(package, approval: approval)
+            let installed = try await installer.installExtension(package, approval: approval)
+            fullscreenExtensionID = installed
+            if let association = extensionPrivateHost {
+                guard var grants = installer.extensionRecords(profileID: installProfile).first(where: { $0.id == installed })?.grants else {
+                    throw Failure.fixture("owned private extension grants")
+                }
+                grants.allowPrivate = true
+                try installer.setExtensionGrants(installed, profileID: installProfile, grants: grants)
+                try await installer.prepareExtensions(profileID: installProfile)
+                try writer.associateExtensions(with: association.owner, profileID: installProfile)
+            }
         }
         var clearingSurvivorSpace: UUID?, clearingSurvivorProfile: UUID?
         if isProfileClear && !isPrivate {
@@ -171,7 +200,8 @@ extension WebsiteFullscreenChecks {
         let app = AppDelegate(pageOutput: PageOutputCoordinator(environment: environment)), owner = app.makeOwner(writer)
         var clearingPrivateOwner: BrowserWindowOwner?
         var clearingPrivateKeyReads = 0
-        app.normalOwner = owner // Even a broken fallback can only open this owned profile.
+        // Even a broken fallback can only open these disposable owned profiles.
+        app.normalOwner = extensionPrivateHost?.owner ?? owner
         defer {
             clearingPrivateOwner?.shutdown()
             owner.shutdown(); writer.shutdown()
@@ -184,6 +214,15 @@ extension WebsiteFullscreenChecks {
                 }
             }
             try? FileManager.default.removeItem(at: root)
+        }
+        var privateExtensionOptionsStore: BrowserStore?
+        if let association = extensionPrivateHost {
+            app.openPrimary(association.owner)
+            guard let normalWindow = app.primaryOwners.first(where: { $0.value === association.owner })?.key,
+                  let normal = app.windows[normalWindow], normal.activeProfileID == association.profile else {
+                throw Failure.fixture("registered normal extension options window")
+            }
+            privateExtensionOptionsStore = normal
         }
         app.openPrimary(owner)
         guard let primaryWindow = app.primaryOwners.first(where: { $0.value === owner })?.key,
@@ -283,8 +322,10 @@ extension WebsiteFullscreenChecks {
                 window.makeKeyAndOrderFront(nil)
             }
             if let installed = fullscreenExtensionID {
-                let optionsID = try await store.openExtensionOptions(installed, profileID: profile)
-                guard let options = store.views[optionsID] else { throw Failure.fixture("real extension options view") }
+                let optionsStore = privateExtensionOptionsStore ?? store
+                let optionsProfile = extensionPrivateHost?.profile ?? profile
+                let optionsID = try await optionsStore.openExtensionOptions(installed, profileID: optionsProfile)
+                guard let options = optionsStore.views[optionsID] else { throw Failure.fixture("real extension options view") }
                 try await wait("owned extension options document") {
                     (try? await options.evaluateJavaScript("document.getElementById('owned-focus')!==null")) as? Bool == true
                 }
@@ -337,12 +378,16 @@ extension WebsiteFullscreenChecks {
                     (try? await options.callAsyncJavaScript("""
                         const windows = await browser.windows.getAll({populate:true});
                         const targets = windows.filter(w => w.type === type && w.tabs?.some(t => t.url === url));
-                        return targets.length === 1 && targets[0].focused === true &&
+                        return targets.length === 1 && targets[0].focused === true && targets[0].incognito === privateExpected &&
                             targets[0].tabs.some(t => t.active && t.url === url);
-                        """, arguments: ["type": isQuick ? "popup" : "normal", "url": extensionSourceURL.absoluteString],
+                        """, arguments: ["type": isQuick ? "popup" : "normal", "url": extensionSourceURL.absoluteString, "privateExpected": isPrivate],
                         in: nil, contentWorld: .page)) as? Bool == true
                 }
-                print("FULLSCREEN_EXTENSION_FOCUS_CONTROL", "ready", true, "quick", isQuick)
+                print("FULLSCREEN_EXTENSION_FOCUS_CONTROL", "ready", true, "quick", isQuick, "private", isPrivate)
+                if isPrivate {
+                    check(!web.configuration.websiteDataStore.isPersistent && store.profileID(for: web) == BrowserProfile.defaultID,
+                          "The approved private extension source retains its temporary website store and private profile")
+                }
             }
             if kind == "close-primary-entering" || kind == "close-primary-exiting" {
                 try await exerciseTransitionWindowClose(app: app, owner: owner, store: store, web: web,
@@ -361,7 +406,8 @@ extension WebsiteFullscreenChecks {
             case "extension-focus", "peek-extension-focus":
                 guard let options = fullscreenExtensionOptions else { throw Failure.fixture("owned installed focus extension") }
                 try await exerciseFullscreenExtensionFocus(options: options, store: store, web: web, window: window,
-                    presentation: presentation, sourceURL: extensionSourceURL, windowType: isQuick ? "popup" : "normal", document: document)
+                    presentation: presentation, sourceURL: extensionSourceURL, windowType: isQuick ? "popup" : "normal",
+                    expectedWindowCount: (isQuick ? 2 : 1) + (isPrivate ? 1 : 0), document: document)
             case "extension-focus-request", "peek-extension-focus-request", "extension-close", "extension-close-disable", "extension-close-revoke":
                 guard let options = fullscreenExtensionOptions, !kind.hasPrefix("extension-close") || isQuick else {
                     throw Failure.fixture("owned extension window action")
@@ -1368,7 +1414,7 @@ extension WebsiteFullscreenChecks {
     @available(macOS 15.4, *) @MainActor
     private static func exerciseFullscreenExtensionFocus(options: WKWebView, store: BrowserStore,
         web: WKWebView, window: NSWindow, presentation: NSWindow, sourceURL: URL,
-        windowType: String, document: NSUUID) async throws {
+        windowType: String, expectedWindowCount: Int, document: NSUUID) async throws {
         var last: [String: Any] = [:]
         func focused(_ expected: Bool, afterEvents: Int? = nil) async -> Bool {
             do {
@@ -1400,8 +1446,7 @@ extension WebsiteFullscreenChecks {
         let fullscreenFocused = await focused(true)
         print("FULLSCREEN_EXTENSION_FOCUS", "phase", "fullscreen", "type", windowType, "state", last)
         check(fullscreenFocused, "The real extension windows API reports its logical browser window focused during website fullscreen")
-        let expectedCount = windowType == "popup" ? 2 : 1
-        check(last["windowCount"] as? Int == expectedCount,
+        check(last["windowCount"] as? Int == expectedWindowCount,
               "The extension API does not expose WebKit's physical fullscreen window as another browser window")
         let other = NSWindow(contentRect: NSRect(x: 40, y: 40, width: 420, height: 280),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -1513,7 +1558,7 @@ extension WebsiteFullscreenChecks {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
         let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static", "suspend-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"]
-        let extensionFocusCases = ["extension-focus", "quick-extension-focus", "extension-focus-request", "quick-extension-focus-request", "quick-extension-close", "quick-extension-close-disable", "quick-extension-close-revoke", "peek-extension-focus", "quick-peek-extension-focus", "peek-extension-focus-request", "quick-peek-extension-focus-request"]
+        let extensionFocusCases = ["extension-focus", "quick-extension-focus", "extension-focus-request", "quick-extension-focus-request", "quick-extension-close", "quick-extension-close-disable", "quick-extension-close-revoke", "peek-extension-focus", "quick-peek-extension-focus", "peek-extension-focus-request", "quick-peek-extension-focus-request"] + ["extension-focus", "quick-extension-focus", "extension-focus-request", "quick-extension-focus-request", "peek-extension-focus", "quick-peek-extension-focus", "peek-extension-focus-request", "quick-peek-extension-focus-request"].map { "private-" + $0 }
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
