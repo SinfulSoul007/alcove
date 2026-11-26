@@ -78,7 +78,9 @@ extension WebsiteFullscreenChecks {
             keyReads += 1; return SymmetricKey(data: Data(repeating: 87, count: 32))
         }, websiteProtection: protection)
         writer.finishOnboarding(); writer.preferences.automaticUpdateChecks = false
-        if kind == "archive-static" { writer.preferences.archiveAfterDays = 0 }
+        if kind == "archive-static" || kind == "suspend-static" {
+            writer.preferences.archiveAfterDays = 0; writer.preferences.suspendTabs = false
+        }
         let profile: UUID
         if isPrivate { profile = BrowserProfile.defaultID }
         else {
@@ -198,7 +200,7 @@ extension WebsiteFullscreenChecks {
             check(app.outputTarget(in: presentation)?.web === web,
                   "\(kind): page-output selection retains the fullscreen source")
             switch kind {
-            case "archive-static":
+            case "archive-static", "suspend-static":
                 // Entry uses the existing decoded-media fixture. Remove that
                 // media before measuring idle cleanup; this does not qualify
                 // fullscreen entry on a fresh no-media document.
@@ -212,29 +214,45 @@ extension WebsiteFullscreenChecks {
                     return state == .paused || state == .none
                 }
                 print("FULLSCREEN_STATIC_PLAYBACK_STATE", playback?.rawValue ?? -1)
-                let control = store.newTab(url: base.appendingPathComponent("article"), activate: false)
+                let control = kind == "archive-static" ? store.newTab(url: base.appendingPathComponent("article"), activate: false) : store.newTab(activate: false)
                 let otherID = store.newTab(url: base.appendingPathComponent("article"))
                 let other = store.view(for: otherID)
                 try await wait("other selected document while original remains fullscreen") {
                     guard other.window === window, !other.isLoading else { return false }
                     return (try? await other.evaluateJavaScript("document.querySelector('article')!==null")) as? Bool == true
                 }
-                let old = Date().addingTimeInterval(-3 * 86400)
-                store.update(id) { $0.lastAccessed = old }
-                store.update(control) { $0.lastAccessed = old }
-                check(store.views[control] == nil && web.window === presentation && web.fullscreenState == .inFullscreen,
-                      "Archive fixture has an unloaded old control and an actual paused fullscreen source outside the selected tab")
-                store.preferences.archiveAfterDays = 1
-                store.archiveOldTabs()
-                let completed = await effect { !store.archivingOldTabs && store.tab(control) == nil }
-                check(completed, "Automatic archive completes and removes its eligible old control")
+                let completed: Bool
+                if kind == "archive-static" {
+                    let old = Date().addingTimeInterval(-3 * 86400)
+                    store.update(id) { $0.lastAccessed = old }
+                    store.update(control) { $0.lastAccessed = old }
+                    check(store.views[control] == nil && web.window === presentation && web.fullscreenState == .inFullscreen,
+                          "Archive fixture has an unloaded old control and an actual paused fullscreen source outside the selected tab")
+                    store.preferences.archiveAfterDays = 1
+                    store.archiveOldTabs()
+                    completed = await effect { !store.archivingOldTabs && store.tab(control) == nil }
+                    check(completed, "Automatic archive completes and removes its eligible old control")
+                } else {
+                    var idlePages = [store.view(for: control)]
+                    for _ in 0..<5 { idlePages.append(store.view(for: store.newTab(activate: false))) }
+                    store.select(otherID)
+                    try await wait("owned background suspension documents") { idlePages.allSatisfy { !$0.isLoading } }
+                    check(store.views.count > 6 && store.views[control] != nil &&
+                          web.window === presentation && web.fullscreenState == .inFullscreen,
+                          "Suspension fixture exceeds the live-view budget while its actual idle fullscreen source remains unselected")
+                    store.preferences.suspendTabs = true
+                    store.scheduleTabSuspension(afterOpening: otherID, retaining: nil)
+                    completed = await effect { store.pendingTabSuspensionExclusions == nil && store.views[control] == nil }
+                    check(completed && store.tab(control) != nil,
+                          "Automatic suspension unloads its eligible idle control while keeping that tab in the sidebar")
+                }
                 let retained = store.tab(id) != nil && store.views[id] === web &&
                     web.window === presentation && web.fullscreenState == .inFullscreen
                 check(completed && retained,
-                      "Automatic archive protects a genuinely fullscreen static page even without playing media or current tab selection")
+                      "\(kind): automatic cleanup protects a genuinely fullscreen static page without playing media or current tab selection")
                 let draft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41")) as? Bool
                 check(retained && store.profileID(for: web) == profile && store.documentIdentity(for: web) === document && draft == true,
-                      "Automatic archive preserves the exact fullscreen view/profile/document and unsaved form")
+                      "\(kind): automatic cleanup preserves the exact fullscreen view/profile/document and unsaved form")
                 if retained {
                     let otherDocument = store.documentIdentity(for: other)
                     _ = try await other.evaluateJavaScript("document.getElementById('draft').value='surviving explicit-clear draft';true")
@@ -245,7 +263,7 @@ extension WebsiteFullscreenChecks {
                             web.fullscreenState == .notInFullscreen &&
                             (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
                     }
-                    check(cleared, "Explicit Clear Today exits fullscreen and closes the same static page protected from automatic archive")
+                    check(cleared, "Explicit Clear Today exits fullscreen and closes the same static page protected from automatic cleanup")
                     let otherDraft = (try? await other.evaluateJavaScript("document.getElementById('draft').value==='surviving explicit-clear draft'")) as? Bool
                     check(cleared && window.isVisible && store.views[otherID] === other &&
                           store.documentIdentity(for: other) === otherDocument && store.profileID(for: other) == profile && otherDraft == true,
@@ -779,12 +797,12 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static"]
+        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static", "suspend-static"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
-        let all = regular + ["close-direct", "close-direct-background"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
+        let all = regular + ["close-direct", "close-direct-background"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
         guard ["", "primary", "quick"].contains(group), group.isEmpty || selected.isEmpty else {
