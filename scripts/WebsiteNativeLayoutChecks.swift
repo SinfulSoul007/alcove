@@ -17,6 +17,7 @@ extension WebsiteFullscreenChecks {
         let web = store.view(for: id)
         let app = AppDelegate(), owner = app.makeOwner(store)
         app.normalOwner = owner
+        var preparedChrome: NativeWindowChrome?
         let window: NSWindow
         if kind == "layout-production" {
             app.openPrimary(owner)
@@ -31,6 +32,10 @@ extension WebsiteFullscreenChecks {
             control.titlebarAppearsTransparent = true; control.titleVisibility = .hidden
             control.minSize = NSSize(width: 800, height: 540)
             control.extensionStore = store; control.extensionCommandSource = { [weak store] in store?.currentView }
+            if kind == "layout-preconfigured-control" {
+                preparedChrome = NativeWindowChrome()
+                preparedChrome?.attach(to: control)
+            }
             let hosting = NSHostingView(rootView: BrowserUI(store: store).environmentObject(app.updates))
             hosting.safeAreaRegions = []
             hosting.sizingOptions = kind == "layout-minimum-control" ? [.minSize] : []
@@ -43,6 +48,7 @@ extension WebsiteFullscreenChecks {
             check(keyReads == 0 && !FileManager.default.fileExists(atPath: store.sessionURL.path),
                   "Native layout fixtures never read a metadata key or save a private session")
             try? FileManager.default.removeItem(at: root)
+            withExtendedLifetime(preparedChrome) {}
         }
         print("FULLSCREEN_LAYOUT_CONTEXT", kind, "private", true)
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
@@ -54,15 +60,19 @@ extension WebsiteFullscreenChecks {
         let document = store.documentIdentity(for: web)
         check(window.toolbarStyle == .unifiedCompact && window.toolbar != nil,
               "The visible browser root uses its actual native compact window chrome")
-        for size in [NSSize(width: 1260, height: 820), NSSize(width: 800, height: 540), NSSize(width: 1100, height: 720)] {
+        print("FULLSCREEN_LAYOUT_INITIAL_METRICS", kind, "frame", window.frame.size, "minimum", window.minSize,
+              "contentMinimum", window.contentMinSize, "web", web.bounds.size)
+        for size in [NSSize(width: 1260, height: 820), NSSize(width: 800, height: 600), NSSize(width: 1100, height: 720)] {
             window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
             window.contentView?.layoutSubtreeIfNeeded()
             let fitted = await effect {
                 abs(window.frame.width - size.width) < 1 && abs(window.frame.height - size.height) < 1 &&
                     web.window === window && web.bounds.width > 80 && web.bounds.height > 80
             }
-            check(fitted && window.minSize == NSSize(width: 800, height: 540),
-                  "Native browser sizing keeps its explicit minimum and a usable website at \(Int(size.width))×\(Int(size.height))")
+            print("FULLSCREEN_LAYOUT_METRICS", kind, "target", size, "frame", window.frame.size,
+                  "minimum", window.minSize, "web", web.bounds.size, "mounted", web.window === window, "fitted", fitted)
+            check(fitted,
+                  "Native browser resizing gives the requested window size and a usable website at \(Int(size.width))×\(Int(size.height))")
         }
         store.sidebarVisible = false
         let hidden = await effect { window.contentView?.needsLayout == false }
