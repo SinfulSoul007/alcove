@@ -7,7 +7,7 @@ enum QuickBrowseError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missing: return "This Quick Browse page is no longer open."
-        case .invalidAddress: return "Enter a web address or search query. Only http and https links can open in Quick Browse."
+        case .invalidAddress: return "Enter an HTTP or HTTPS address, or a search query."
         case .consentRequired: return "Changing profiles reloads this page. Confirm the move first; unsaved forms cannot be transferred."
         }
     }
