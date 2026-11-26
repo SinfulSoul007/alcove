@@ -6,6 +6,9 @@ import WebKit
 @MainActor class ExtensionCommandWindow:NSWindow {
     weak var extensionStore:BrowserStore?
     var extensionCommandSource:(()->WKWebView?)?
+    // Primary windows consume this on their first foreground presentation,
+    // including windows created earlier without activation.
+    var needsInitialPageFocus = false
     override func performKeyEquivalent(with event:NSEvent) -> Bool {
         if super.performKeyEquivalent(with:event) {return true}
         guard attachedSheet==nil,isKeyWindow,

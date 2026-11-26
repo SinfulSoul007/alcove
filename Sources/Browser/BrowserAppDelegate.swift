@@ -283,7 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     }
                     if let focused {
                         normalWindow = focused
-                        if activate { surfacePrimary(focused, focusPage: true) }
+                        if activate { surfacePrimary(focused) }
                     }
                     return
                 }
@@ -293,7 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 } else {
                     let member = try owner.acquirePrimaryStore()
                     let window = makePrimaryWindow(member.store, owner: owner, lease: member.lease)
-                    if activate { surfacePrimary(window, focusPage: true) }
+                    if activate { surfacePrimary(window) }
                 }
             } catch { store.message = error.localizedDescription }
             return
@@ -301,7 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let existing { if activate { surfacePrimary(existing) }; return }
         guard let lease = try? owner.acquirePrimary() else { return }
         let window = makePrimaryWindow(store, owner: owner, lease: lease)
-        if activate { surfacePrimary(window, focusPage: true) }
+        if activate { surfacePrimary(window) }
     }
     private func preferredPrimary(of owner: BrowserWindowOwner) -> NSWindow? {
         if let activeBrowserWindow, primaryOwners[activeBrowserWindow] === owner,
@@ -311,12 +311,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let normalWindow, primaryOwners[normalWindow] === owner { return normalWindow }
         return primaryOwners.first(where: { $0.value === owner && windows[$0.key]?.extensionPopupProfileID == nil })?.key
     }
-    private func surfacePrimary(_ window: NSWindow, focusPage: Bool = false) {
+    private func surfacePrimary(_ window: NSWindow) {
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
+        guard let primary = window as? ExtensionCommandWindow,
+              primary.needsInitialPageFocus, window.isKeyWindow else { return }
+        primary.needsInitialPageFocus = false
         // AppKit otherwise chooses the sidebar splitter as the first key view.
         // Existing windows retain their deliberate editor/control focus.
-        guard focusPage, window.attachedSheet == nil, let store = windows[window],
+        guard window.attachedSheet == nil, let store = windows[window],
               !store.onboardingVisible, !store.commandVisible, !store.findVisible,
               store.presentedPanel == nil, store.primaryPeekView == nil,
               store.visibleRecentTabSwitcher == nil, store.boostPicker == nil,
@@ -337,6 +340,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let compact = store.extensionPopupProfileID != nil
         let frame = NSRect(x: 0, y: 0, width: compact ? 760 : 1260, height: compact ? 600 : 820)
         let window = ExtensionCommandWindow(contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.needsInitialPageFocus = true
         window.extensionStore=store;window.extensionCommandSource={[weak store] in store?.primaryPeekView ?? store?.currentView}
         window.title = store.isPrivate ? "Alcove — Private" : "Alcove"; window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false; window.delegate = self
@@ -391,7 +395,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                                               y: frame.origin.y.isNaN ? defaultFrame.origin.y : frame.origin.y,
                                               width: frame.size.width.isNaN ? defaultFrame.width : frame.size.width,
                                               height: frame.size.height.isNaN ? defaultFrame.height : frame.size.height), to: window)
-        if configuration.shouldBeFocused { surfacePrimary(window, focusPage: true) }
+        if configuration.shouldBeFocused { surfacePrimary(window) }
         else {
             if let previous { normalWindow = previous }
             window.orderBack(nil)
@@ -660,7 +664,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let source = preferredPrimary(of: owner).flatMap { windows[$0] }
         do {
             let member = try owner.acquirePrimaryStore(copying: source)
-            surfacePrimary(makePrimaryWindow(member.store, owner: owner, lease: member.lease), focusPage: true)
+            surfacePrimary(makePrimaryWindow(member.store, owner: owner, lease: member.lease))
         } catch { (source ?? owner.store).message = error.localizedDescription }
     }
     @objc func newQuick() {

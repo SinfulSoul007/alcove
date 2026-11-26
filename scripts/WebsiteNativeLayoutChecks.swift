@@ -401,7 +401,10 @@ extension WebsiteFullscreenChecks {
         print("FULLSCREEN_INITIAL_FOCUS", window.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
         check(focused, "A new browser window initially gives keyboard focus to its actual page")
         _ = try await web.evaluateJavaScript("window.ownedInitialFocusArrow=false;window.addEventListener('keydown',event=>{if(event.key==='ArrowLeft')window.ownedInitialFocusArrow=true})")
-        let before = store.windowSidebarWidth
+        func sidebarWidth() -> Double {
+            store.windowSidebarWidth ?? (UserDefaults.standard.object(forKey: "sidebarWidth") as? Double) ?? SidebarSizing.defaultWidth
+        }
+        let before = sidebarWidth()
         let character = String(UnicodeScalar(0xF702)!), time = ProcessInfo.processInfo.systemUptime
         for (type, offset) in [(NSEvent.EventType.keyDown, 0.0), (.keyUp, 0.01)] {
             guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: time + offset,
@@ -416,8 +419,9 @@ extension WebsiteFullscreenChecks {
             if delivered { break }
             try await Task.sleep(for: .milliseconds(12))
         }
-        print("FULLSCREEN_INITIAL_ARROW", "delivered", delivered, "widthBefore", before ?? -1, "widthAfter", store.windowSidebarWidth ?? -1)
-        check(delivered && store.windowSidebarWidth == before,
+        let after = sidebarWidth()
+        print("FULLSCREEN_INITIAL_ARROW", "delivered", delivered, "widthBefore", before, "widthAfter", after)
+        check(delivered && after == before,
               "A plain initial arrow key reaches the actual document without resizing the sidebar")
         func dividers(_ view: NSView) -> [SidebarResizeHandle.Handle] {
             if let divider = view as? SidebarResizeHandle.Handle { return [divider] }
