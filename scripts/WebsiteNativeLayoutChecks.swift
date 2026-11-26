@@ -6,20 +6,37 @@ import CryptoKit
 extension WebsiteFullscreenChecks {
     /// Actual visible BrowserUI startup and resizing, without website fullscreen.
     /// Fresh processes distinguish production behavior from sizing controls.
-    @MainActor static func exerciseNativeLayout(base: URL, kind: String) async throws {
+    @available(macOS 15.4, *) @MainActor
+    static func exerciseNativeLayout(base: URL, kind: String, owned: OwnedWebsiteStores,
+                                     controllers: OwnedExtensionControllers) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-native-layout-" + UUID().uuidString)
+        let isPrivate = kind != "layout-normal-production"
+        let fixtureKey = SymmetricKey(size: .bits256)
         var keyReads = 0
-        let store = BrowserStore(isPrivate: true, dataRoot: root, keyProvider: { _ in
-            keyReads += 1; return SymmetricKey(size: .bits256)
+        let store = BrowserStore(isPrivate: isPrivate, dataRoot: root, keyProvider: { _ in
+            keyReads += 1; return fixtureKey
         })
         store.finishOnboarding(); store.preferences.automaticUpdateChecks = false
+        let normalProfile: UUID?
+        if isPrivate { normalProfile = nil }
+        else {
+            let profile = try store.createProfile(name: "Owned native layout profile")
+            normalProfile = profile; try owned.register(profile)
+            if let controller = store.profiles.first(where: { $0.id == profile })?.extensionControllerID {
+                try controllers.register(controller)
+            }
+        }
         let id = store.newTab(url: base.appendingPathComponent("page-no-media"))
         let web = store.view(for: id)
+        if let normalProfile {
+            check(store.profileID(for: web) == normalProfile && web.configuration.websiteDataStore.identifier == normalProfile,
+                  "Normal native layout uses its registered disposable named profile")
+        }
         let app = AppDelegate(), owner = app.makeOwner(store)
         app.normalOwner = owner
         var preparedChrome: NativeWindowChrome?
         let window: NSWindow
-        if kind == "layout-production" {
+        if kind == "layout-production" || kind == "layout-normal-production" {
             app.openPrimary(owner)
             guard let primary = app.primaryOwners.first(where: { $0.value === owner })?.key else {
                 throw Failure.fixture("actual production layout window")
@@ -52,12 +69,17 @@ extension WebsiteFullscreenChecks {
         defer {
             window.performClose(nil); window.contentView = nil; window.close()
             owner.shutdown(); store.shutdown()
-            check(keyReads == 0 && !FileManager.default.fileExists(atPath: store.sessionURL.path),
-                  "Native layout fixtures never read a metadata key or save a private session")
+            if isPrivate {
+                check(keyReads == 0 && !FileManager.default.fileExists(atPath: store.sessionURL.path),
+                      "Native layout fixtures never read a metadata key or save a private session")
+            } else {
+                check(keyReads > 0 && FileManager.default.fileExists(atPath: store.sessionURL.path),
+                      "Normal layout fixtures use their injected key and disposable saved session")
+            }
             try? FileManager.default.removeItem(at: root)
             withExtendedLifetime(preparedChrome) {}
         }
-        print("FULLSCREEN_LAYOUT_CONTEXT", kind, "private", true)
+        print("FULLSCREEN_LAYOUT_CONTEXT", kind, "private", isPrivate)
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         try await wait("visible native layout source") {
             guard window.isVisible, web.window === window else { return false }
@@ -95,6 +117,8 @@ extension WebsiteFullscreenChecks {
         let draft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='native layout draft'&&window.ownedLayoutToken===73")) as? Bool
         check(hidden && visible && store.views[id] === web && store.documentIdentity(for: web) === document && draft == true,
               "Visible native resizing, sidebar changes and theming preserve the exact page and unsaved form")
+        check(window.minSize.width >= 800 && window.minSize.height >= 540,
+              "Sidebar and theme updates preserve the browser's usable resize limit")
         print("FULLSCREEN_LAYOUT_CASE_COMPLETED", kind)
     }
 }

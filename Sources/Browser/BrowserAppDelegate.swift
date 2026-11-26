@@ -328,8 +328,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.extensionStore=store;window.extensionCommandSource={[weak store] in store?.primaryPeekView ?? store?.currentView}
         window.title = store.isPrivate ? "Alcove — Private" : "Alcove"; window.titlebarAppearsTransparent = true; window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false; window.delegate = self
-        window.minSize = compact ? NSSize(width: 440, height: 340) : NSSize(width: 800, height: 540)
-        let hosting = NSHostingView(rootView: BrowserUI(store: store).environmentObject(updates))
+        let minimum = compact ? NSSize(width: 440, height: 340) : NSSize(width: 800, height: 540)
+        window.minSize = minimum
+        // A top-level hosting view derives the window minimum from its content.
+        // Keep the browser's usable floor on that content as well as AppKit.
+        let hosting = NSHostingView(rootView: BrowserUI(store: store).environmentObject(updates)
+            .frame(minWidth: minimum.width, minHeight: minimum.height))
         hosting.safeAreaRegions = []; hosting.sizingOptions = [.minSize]; window.contentView = hosting
         windows[window] = store; primaryOwners[window] = owner; primaryLeases[window] = lease
         if store !== owner.store { configurePrimaryActions(store, owner: owner) }

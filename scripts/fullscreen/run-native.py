@@ -123,6 +123,15 @@ def main():
     media_requests = 0
 
     class Handler(BaseHTTPRequestHandler):
+        def handle(self):
+            try:
+                super().handle()
+            except (BrokenPipeError, ConnectionResetError):
+                # An owned WebKit page can cancel a request or quit while the
+                # loopback server is reading its next request. Page readiness
+                # and all native assertions remain independent requirements.
+                pass
+
         def do_GET(self):
             nonlocal media_requests
             if self.path == '/video.mp4':
@@ -157,7 +166,7 @@ def main():
         # The expanded matrix must finish every case; a partial aggregate run
         # cannot qualify a case it never reached. Run every group after failure.
         quit_cases = [prefix + kind for prefix in ['', 'private-', 'quick-', 'private-quick-'] for kind in ['quit', 'peek-quit']]
-        layout_cases = {'layout-production', 'layout-minimum-control', 'layout-fixed-control', 'layout-preconfigured-control', 'layout-content-minimum-control'}
+        layout_cases = {'layout-production', 'layout-normal-production', 'layout-minimum-control', 'layout-fixed-control', 'layout-preconfigured-control', 'layout-content-minimum-control'}
         selection = [name for name in env.get('ALCOVE_FULLSCREEN_COMMAND_CASES', '').split(',') if name]
         selected_quits = [name for name in selection if name in quit_cases] if selection else quit_cases
         selected_layout = [name for name in selection if name in layout_cases]

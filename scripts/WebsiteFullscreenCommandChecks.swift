@@ -60,9 +60,9 @@ extension WebsiteFullscreenChecks {
     @available(macOS 15.4, *) @MainActor
     static func exerciseCommand(base: URL, kind: String, owned: OwnedWebsiteStores,
                                 controllers: OwnedExtensionControllers, isPrivate: Bool = false, isQuick: Bool = false) async throws {
-        if ["layout-production", "layout-minimum-control", "layout-fixed-control", "layout-preconfigured-control", "layout-content-minimum-control"].contains(kind) {
+        if ["layout-production", "layout-normal-production", "layout-minimum-control", "layout-fixed-control", "layout-preconfigured-control", "layout-content-minimum-control"].contains(kind) {
             guard !isPrivate, !isQuick else { throw Failure.fixture("owned layout diagnostic context") }
-            try await exerciseNativeLayout(base: base, kind: kind)
+            try await exerciseNativeLayout(base: base, kind: kind, owned: owned, controllers: controllers)
             print("FULLSCREEN_COMMAND_CASE_COMPLETED", kind, "private", false, "quick", false)
             return
         }
@@ -1171,7 +1171,7 @@ extension WebsiteFullscreenChecks {
         // App-local events do not grant WebKit transient activation on this
         // hosted OS. Keep no-media's strict input control explicit; ordinary
         // no-media fullscreen remains a required, unqualified live-input gate.
-        guard selected.allSatisfy((all + ["script-alert-native-control", "no-media", "layout-production", "layout-minimum-control", "layout-fixed-control", "layout-preconfigured-control", "layout-content-minimum-control"]).contains) else { throw Failure.fixture("unknown selected command case") }
+        guard selected.allSatisfy((all + ["script-alert-native-control", "no-media", "layout-production", "layout-normal-production", "layout-minimum-control", "layout-fixed-control", "layout-preconfigured-control", "layout-content-minimum-control"]).contains) else { throw Failure.fixture("unknown selected command case") }
         for name in selected.isEmpty ? all : selected {
             let isPrivate = name.hasPrefix("private-"), presentation = isPrivate ? String(name.dropFirst(8)) : name
             let isQuick = presentation.hasPrefix("quick-"), kind = isQuick ? String(presentation.dropFirst(6)) : presentation
