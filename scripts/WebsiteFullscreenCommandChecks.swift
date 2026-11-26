@@ -158,7 +158,7 @@ extension WebsiteFullscreenChecks {
         var web = underlying
         var targetID = id
         var handoff: (store: BrowserStore, window: NSWindow, survivorID: UUID, survivor: WKWebView, document: NSUUID)?
-        if kind == "peek-escape" || kind == "peek-expire-static" || kind.hasPrefix("peek-") && kind.hasSuffix("script-sheet") {
+        if kind == "peek-escape" || kind == "peek-expire-static" || kind.hasPrefix("peek-parent-") || kind.hasPrefix("peek-") && kind.hasSuffix("script-sheet") {
             store.openPeek(base.appendingPathComponent("page"), from: underlying)
             guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else { throw Failure.fixture("command Peek") }
             web = peek
@@ -735,6 +735,38 @@ extension WebsiteFullscreenChecks {
                       "A focus change during command delivery still completes native fullscreen restoration")
                 check(exited && !store.findVisible && other.isKeyWindow,
                       "A deferred browser command neither opens UI nor steals focus after another window becomes key")
+            case "close-window-direct", "peek-parent-close", "peek-parent-model-close":
+                guard isQuick else { throw Failure.fixture("direct compact-window close requires Quick Browse") }
+                let survivor = store.view(for: primaryID)
+                try await wait("direct Quick close surviving primary document") {
+                    (try? await survivor.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
+                }
+                _ = try await survivor.evaluateJavaScript("document.getElementById('draft').value='surviving compact close draft';true")
+                let survivorDocument = store.documentIdentity(for: survivor)
+                check((web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true &&
+                      web.fullscreenState == .inFullscreen,
+                      "Direct Quick parent closure begins with the actual page or Peek still borrowed by native fullscreen")
+                if kind == "peek-parent-model-close" { try store.closeQuickPage(id) }
+                else { window.performClose(nil) }
+                let stillNative = presentation.isVisible || web.fullscreenState != .notInFullscreen ||
+                    (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true
+                check(!stillNative || (window.isVisible && store.quickPage(id) != nil && store.views[id] === underlying &&
+                      (web === underlying || store.quickPeekView(id) === web)),
+                      "Direct Quick parent closure retains its window, parent and Peek until physical fullscreen exit")
+                let closed = await effect {
+                    store.quickPage(id) == nil && store.views[id] == nil && store.quickPeekView(id) == nil &&
+                        !window.isVisible && !presentation.isVisible && web.fullscreenState == .notInFullscreen &&
+                        (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false
+                }
+                check(closed && !app.quickWindows.keys.contains(QuickWindowKey(ownerID: owner.id, pageID: id)),
+                      "Direct Quick parent closure removes its actual native fullscreen and compact windows without recovery")
+                check(closed && store.library(for: profile).archive.filter({ $0.id == id }).count == 1,
+                      "Direct Quick parent closure archives the parent exactly once after native return")
+                let survivorDraft = (try? await survivor.evaluateJavaScript("document.getElementById('draft').value==='surviving compact close draft'")) as? Bool
+                check(primaryWindow.isVisible && NSApp.isRunning && !app.applicationShouldTerminateAfterLastWindowClosed(NSApp) &&
+                      store.views[primaryID] === survivor && store.profileID(for: survivor) == profile &&
+                      store.documentIdentity(for: survivor) === survivorDocument && survivorDraft == true,
+                      "Direct Quick parent closure preserves the primary window's exact independent profile, document and unsaved form")
             case "close":
                 app.closeTab()
                 if isQuick {
@@ -945,7 +977,7 @@ extension WebsiteFullscreenChecks {
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
-        let compact = (["escape", "peek-escape", "location", "find", "reader", "close", "expire-static", "peek-expire-static"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
+        let compact = (["escape", "peek-escape", "location", "find", "reader", "close", "close-window-direct", "peek-parent-close", "peek-parent-model-close", "expire-static", "peek-expire-static"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
         let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
