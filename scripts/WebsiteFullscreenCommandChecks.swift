@@ -154,6 +154,7 @@ extension WebsiteFullscreenChecks {
         let underlying = store.view(for: id)
         var web = underlying
         var targetID = id
+        var handoff: (store: BrowserStore, window: NSWindow, survivorID: UUID, survivor: WKWebView, document: NSUUID)?
         if kind == "peek-escape" || kind.hasPrefix("peek-") && kind.hasSuffix("script-sheet") {
             store.openPeek(base.appendingPathComponent("page"), from: underlying)
             guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else { throw Failure.fixture("command Peek") }
@@ -167,6 +168,26 @@ extension WebsiteFullscreenChecks {
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         var caught: Error?
         do {
+            if kind.hasPrefix("handoff") {
+                app.newBrowserWindow()
+                guard let destinationWindow = app.windows.keys.first(where: { $0 !== window && app.primaryOwners[$0] === owner }),
+                      let destination = app.windows[destinationWindow], destination.windowGroup === store.windowGroup else {
+                    throw Failure.fixture("registered same-owner handoff destination")
+                }
+                let survivorID = destination.newTab(url: base.appendingPathComponent("page"))
+                let survivor = destination.view(for: survivorID)
+                try await wait("handoff survivor document") {
+                    (try? await survivor.evaluateJavaScript("document.getElementById('draft')!==null")) as? Bool == true
+                }
+                _ = try await survivor.evaluateJavaScript("document.getElementById('draft').value='surviving handoff draft';true")
+                let survivorDocument = destination.documentIdentity(for: survivor)
+                destination.select(id)
+                store.select(id)
+                // The destination now shows the real Bring Tab Here placeholder;
+                // its independent live page remains available in the background.
+                handoff = (destination, destinationWindow, survivorID, survivor, survivorDocument)
+                window.makeKeyAndOrderFront(nil)
+            }
             try await wait("real browser website host") { web.window === window && web.superview is EdgeToEdgeWebHost }
             guard let commandHost = web.superview as? EdgeToEdgeWebHost else { throw Failure.fixture("original command host") }
             try await wait("command source decoded") {
@@ -200,6 +221,40 @@ extension WebsiteFullscreenChecks {
             check(app.outputTarget(in: presentation)?.web === web,
                   "\(kind): page-output selection retains the fullscreen source")
             switch kind {
+            case "handoff", "handoff-cancel", "handoff-close":
+                guard let handoff else { throw Failure.fixture("prepared handoff destination") }
+                handoff.window.makeKeyAndOrderFront(nil)
+                try await wait("handoff requesting window key") { handoff.window.isKeyWindow }
+                check(web.fullscreenState != .notInFullscreen &&
+                      (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true,
+                      "Window handoff begins with the actual source still borrowed by native fullscreen")
+                handoff.store.select(id)
+                if kind == "handoff-cancel" { handoff.store.select(handoff.survivorID) }
+                if kind == "handoff-close" { handoff.window.performClose(nil) }
+                let destination = kind == "handoff" ? handoff.store : store
+                let expectedWindow = kind == "handoff" ? handoff.window : window
+                let transferred = await effect {
+                    web.fullscreenState == .notInFullscreen && !presentation.isVisible &&
+                        (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == false &&
+                        destination.views[id] === web && web.window === expectedWindow &&
+                        (kind == "handoff" ? store.views[id] == nil : handoff.store.views[id] == nil)
+                }
+                check(transferred, kind == "handoff" ?
+                      "Same-profile window handoff completes native exit before moving the exact live website" :
+                      "A newer destination selection or closed window cancels the pending fullscreen handoff without losing its source")
+                let draft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41")) as? Bool
+                check(transferred && destination.profileID(for: web) == profile &&
+                      destination.documentIdentity(for: web) === document && draft == true,
+                      "Fullscreen handoff preserves the original profile, document identity and unsaved form without reloading")
+                let survivorOwner = store.pageStores.first { $0.views[handoff.survivorID] === handoff.survivor }
+                let survivorDraft = (try? await handoff.survivor.evaluateJavaScript("document.getElementById('draft').value==='surviving handoff draft'")) as? Bool
+                check(survivorOwner?.profileID(for: handoff.survivor) == profile &&
+                      survivorOwner?.documentIdentity(for: handoff.survivor) === handoff.document && survivorDraft == true,
+                      "Fullscreen transfer or cancellation preserves the independent destination page's live document and form")
+                if kind != "handoff-close" {
+                    check(transferred && handoff.window.isKeyWindow,
+                          "Finishing or cancelling a fullscreen handoff preserves its requesting window's focus")
+                }
             case "archive-static", "suspend-static":
                 // Entry uses the existing decoded-media fixture. Remove that
                 // media before measuring idle cleanup; this does not qualify
@@ -802,7 +857,7 @@ extension WebsiteFullscreenChecks {
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
-        let all = regular + ["close-direct", "close-direct-background"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
+        let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
         guard ["", "primary", "quick"].contains(group), group.isEmpty || selected.isEmpty else {
