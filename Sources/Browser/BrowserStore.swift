@@ -182,6 +182,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     @Published var clearingToday = false
     var views: [UUID: WKWebView] = [:]
     var readerSessions: [ObjectIdentifier: ReaderSession] = [:]
+    var websitePromptRequests: [UUID: WebsitePromptRequest] = [:]
     private let documentIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     private let presentationIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     func documentIdentity(for web: WKWebView) -> NSUUID {
@@ -198,6 +199,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         cancelReader(for: web)
         cancelWebsiteProtectionTickets(for:web)
         documentIDs.setObject(NSUUID(), forKey: web)
+        cancelWebsitePrompts(for: web)
         reconcilePrivateExtensionReopen()
         cancelInvalidExtensionNavigations()
         extensionHosting?.sourceDocumentChanged(web)
@@ -239,6 +241,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func transferDocumentBindings(for web: WKWebView, to destination: BrowserStore) {
         cancelReader(for: web)
         cancelWebsiteProtectionTickets(for:web)
+        cancelWebsitePrompts(for: web)
         let identity = documentIdentity(for: web)
         let extensionOrigin = extensionOriginPopups.contains(web)
         let popupOwner = extensionPopupOwners.object(forKey: web)
@@ -374,6 +377,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
+        cancelAllWebsitePrompts()
         closeExtensionManagers()
         cancelRecentTabSwitcher()
         cancelAllReaders(); cancelAllWebsiteProtectionTickets(); flush(); isShuttingDown = true; privateExtensionReopenJob?.finish(.failure(ExtensionHostError.closed)); cancelAllExtensionNavigations(); extensionHosting = nil; extensionPublication?.cancel(); extensionMaintenance?.cancel(); cancelBoostApprovals(); cancelBoostPicker(); cancelLinkReloads(); quickArchiveProbeID = nil; saveTask?.cancel(); saveTask = nil; archiveTimer?.invalidate()
@@ -438,6 +442,9 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
            let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen,
            fullscreen.isBorrowed || web.fullscreenState != .notInFullscreen {
             let profile = presenter.profileID(for: web), presentation = presenter.presentationIdentity(for: web)
+            presenter.cancelWebsitePrompts(for: web)
+            guard presenter.views[id] === web, presenter.profileID(for: web) == profile,
+                  presenter.presentationIdentity(for: web) === presentation else { return }
             fullscreen.exitForRetirement { [weak self, weak presenter, weak web] restored in
                 guard let self, let presenter, let web, !self.isShuttingDown,
                       presenter.views[id] === web, presenter.profileID(for: web) == profile,

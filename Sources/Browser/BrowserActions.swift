@@ -193,6 +193,7 @@ extension BrowserStore {
         requestWebsiteFiles(from: webView, present: { window, finish in
             let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = parameters.allowsDirectories; panel.allowsMultipleSelection = parameters.allowsMultipleSelection
             panel.beginSheetModal(for: window) { result in finish(result == .OK ? panel.urls : nil) }
+            return { [weak panel] in panel?.cancel(nil) }
         }, completion: completionHandler)
     }
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
@@ -208,16 +209,17 @@ extension BrowserStore {
             alert.informativeText = "Only allow access if you trust this website. macOS also controls Alcove’s device access. This choice applies to this request."
             alert.addButton(withTitle: "Don’t Allow"); alert.addButton(withTitle: "Allow Once")
             alert.beginSheetModal(for: window) { finish($0 == .alertSecondButtonReturn) }
+            return Self.websiteSheetCancellation(alert.window)
         }, completion: decisionHandler)
     }
-    func requestWebsiteFiles(from webView: WKWebView, present: @escaping (NSWindow, @escaping ([URL]?) -> Void) -> Void,
+    func requestWebsiteFiles(from webView: WKWebView, present: @escaping (NSWindow, @escaping ([URL]?) -> Void) -> (() -> Void)?,
                              completion: @escaping ([URL]?) -> Void) {
         requestWebsitePrompt(from: webView, denied: nil, present: present, completion: completion)
     }
-    func requestWebsiteMedia(from webView: WKWebView, present: @escaping (NSWindow, @escaping (Bool) -> Void) -> Void,
+    func requestWebsiteMedia(from webView: WKWebView, present: @escaping (NSWindow, @escaping (Bool) -> Void) -> (() -> Void)?,
                              completion: @escaping (WKPermissionDecision) -> Void) {
         requestWebsitePrompt(from: webView, denied: .deny, present: { window, finish in
-            present(window) { finish($0 ? .grant : .deny) }
+            return present(window) { finish($0 ? .grant : .deny) }
         }, completion: completion)
     }
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
@@ -227,6 +229,7 @@ extension BrowserStore {
             let alert = NSAlert(); alert.messageText = frame.request.url?.host ?? "Website"; alert.informativeText = message
             alert.addButton(withTitle: "OK")
             alert.beginSheetModal(for: window) { _ in finish(()) }
+            return Self.websiteSheetCancellation(alert.window)
         }, completion: { _ in completionHandler() })
     }
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
@@ -236,6 +239,7 @@ extension BrowserStore {
             let alert = NSAlert(); alert.messageText = frame.request.url?.host ?? "Website"; alert.informativeText = message
             alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
             alert.beginSheetModal(for: window) { finish($0 == .alertFirstButtonReturn) }
+            return Self.websiteSheetCancellation(alert.window)
         }, completion: completionHandler)
     }
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
@@ -246,11 +250,19 @@ extension BrowserStore {
             let field = NSTextField(string: defaultText ?? ""); field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
             alert.accessoryView = field; alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
             alert.beginSheetModal(for: window) { finish($0 == .alertFirstButtonReturn ? field.stringValue : nil) }
+            return Self.websiteSheetCancellation(alert.window)
         }, completion: completionHandler)
+    }
+    private static func websiteSheetCancellation(_ sheet: NSWindow) -> () -> Void {
+        { [weak sheet] in
+            guard let sheet else { return }
+            if let parent = sheet.sheetParent { parent.endSheet(sheet, returnCode: .cancel) }
+            sheet.orderOut(nil)
+        }
     }
     private func requestWebsitePrompt<Value>(from web: WKWebView, denied: Value,
                                               scriptDialog: Bool = false,
-                                              present: @escaping (NSWindow, @escaping (Value) -> Void) -> Void,
+                                              present: @escaping (NSWindow, @escaping (Value) -> Void) -> (() -> Void)?,
                                               completion: @escaping (Value) -> Void) {
         let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen
         guard let window = fullscreen?.logicalWindow ?? web.window,
@@ -259,13 +271,16 @@ extension BrowserStore {
               let url = web.url, let profile = profileID(for: web) else { completion(denied); return }
         let document = documentIdentity(for: web)
         let presentation = presentationIdentity(for: web)
-        var finished = false
-        let cancel = {
-            guard !finished else { return }
-            finished = true; completion(denied)
+        let request = WebsitePromptRequest(web: web)
+        let requestID = request.id
+        websitePromptRequests[requestID] = request
+        request.onCancel = { [weak self] in
+            self?.websitePromptRequests.removeValue(forKey: requestID)
+            completion(denied)
         }
+        let cancel = { request.cancel() }
         let deliver = { [weak self, weak web, weak window] in
-            guard !finished else { return }
+            guard request.isPending else { return }
             guard let self, let web, let window, web.url == url,
                   web.window === window || (scriptDialog && fullscreen?.scriptDialogWindow === window),
                   self.profileID(for: web) == profile,
@@ -274,9 +289,9 @@ extension BrowserStore {
                   window.attachedSheet == nil,
                   self.documentIdentity(for: web) === document,
                   self.presentationIdentity(for: web) === presentation else { cancel(); return }
-            present(window) { [weak self, weak web, weak window] result in
-                guard !finished else { return }
-                finished = true
+            let dismiss = present(window) { [weak self, weak web, weak window] result in
+                guard request.finish() else { return }
+                self?.websitePromptRequests.removeValue(forKey: requestID)
                 // A sheet may finish before AppKit returns key status to its original window.
                 guard let self, let web, let window, web.url == url,
                       (web.window === window && self.isVisibleWebsite(web)) ||
@@ -286,6 +301,7 @@ extension BrowserStore {
                       self.presentationIdentity(for: web) === presentation else { completion(denied); return }
                 completion(result)
             }
+            request.bindCancellation(dismiss)
         }
         // Capture all ownership before exit. Recapturing here after restoration
         // could present an old file/device request for a replacement document.

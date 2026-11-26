@@ -304,6 +304,7 @@ extension WebsiteFullscreenChecks {
                         duplicateReply = { reply([root.appendingPathComponent("never-selected.txt")]) }
                         recoveryReply = { reply(nil) }
                         panel.beginSheetModal(for: parent) { _ in reply(nil) }
+                        return { panel.cancel(nil) }
                     }, completion: { denials.append($0 == nil) })
                 } else {
                     store.requestWebsiteMedia(from: web, present: { parent, reply in
@@ -312,6 +313,10 @@ extension WebsiteFullscreenChecks {
                         presentedIn = parent; prompt = alert.window
                         duplicateReply = { reply(true) }; recoveryReply = { reply(false) }
                         alert.beginSheetModal(for: parent) { reply($0 == .alertSecondButtonReturn) }
+                        return {
+                            if let parent = alert.window.sheetParent { parent.endSheet(alert.window, returnCode: .cancel) }
+                            alert.window.orderOut(nil)
+                        }
                     }, completion: { denials.append($0 == .deny) })
                 }
                 let shown = await effect { prompt != nil && prompt?.isVisible == true && prompt?.sheetParent === presentedIn }

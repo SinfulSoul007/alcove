@@ -21,6 +21,7 @@ private final class UploadFixtureDelegate: NSObject, WKUIDelegate {
         store.requestWebsiteFiles(from: webView, present: { window, complete in
             self.presentedWindow = window
             complete(self.files)
+            return nil
         }, completion: completionHandler)
     }
 }
@@ -41,17 +42,19 @@ private final class UploadFixtureDelegate: NSObject, WKUIDelegate {
         let files = [fixture.root.appendingPathComponent("owned-upload.txt")]
         try Data("Fixture content".utf8).write(to: files[0])
 
-        func fileRequest(from source: WKWebView? = nil) -> (answer: ([URL]?) -> Void, results: () -> [[URL]?]) {
+        func fileRequest(from source: WKWebView? = nil) -> (answer: ([URL]?) -> Void, results: () -> [[URL]?], cancellations: () -> Int) {
             var result: [[URL]?] = []
+            var cancellations = 0
             var finish: ([URL]?) -> Void = { _ in }
-            store.requestWebsiteFiles(from: source ?? web, present: { _, respond in finish = respond }, completion: { result.append($0) })
-            return (finish, { result })
+            store.requestWebsiteFiles(from: source ?? web, present: { _, respond in finish = respond; return { cancellations += 1 } }, completion: { result.append($0) })
+            return (finish, { result }, { cancellations })
         }
-        func mediaRequest(from source: WKWebView? = nil) -> (answer: (Bool) -> Void, results: () -> [WKPermissionDecision]) {
+        func mediaRequest(from source: WKWebView? = nil) -> (answer: (Bool) -> Void, results: () -> [WKPermissionDecision], cancellations: () -> Int) {
             var result: [WKPermissionDecision] = []
+            var cancellations = 0
             var finish: (Bool) -> Void = { _ in }
-            store.requestWebsiteMedia(from: source ?? web, present: { _, respond in finish = respond }, completion: { result.append($0) })
-            return (finish, { result })
+            store.requestWebsiteMedia(from: source ?? web, present: { _, respond in finish = respond; return { cancellations += 1 } }, completion: { result.append($0) })
+            return (finish, { result }, { cancellations })
         }
 
         let file = fileRequest()
@@ -62,6 +65,8 @@ private final class UploadFixtureDelegate: NSObject, WKUIDelegate {
         check(media.results() == [.grant], "The foreground website can receive a one-time device grant")
         file.answer(nil); media.answer(false)
         check(file.results().count == 1 && media.results().count == 1, "Each website prompt finishes once even when a callback is repeated")
+        check(file.cancellations() == 0 && media.cancellations() == 0,
+              "An answered website prompt releases its cancellation action without dismissing another presentation")
 
         fixture.window.fixtureKey = false
         check(fileRequest().results() == [nil] && mediaRequest().results() == [.deny],
@@ -77,6 +82,9 @@ private final class UploadFixtureDelegate: NSObject, WKUIDelegate {
 
         let beforeReload = fileRequest(), mediaBeforeReload = mediaRequest()
         store.webView(web, didCommit: nil)
+        check(beforeReload.results() == [nil] && mediaBeforeReload.results() == [.deny] &&
+              beforeReload.cancellations() == 1 && mediaBeforeReload.cancellations() == 1,
+              "Replacing a document immediately denies and dismisses both pending website prompt boundaries")
         beforeReload.answer(files); mediaBeforeReload.answer(true)
         check(beforeReload.results() == [nil] && mediaBeforeReload.results() == [.deny],
               "A same-URL navigation revokes pending file selection and device permission")
@@ -94,6 +102,8 @@ private final class UploadFixtureDelegate: NSObject, WKUIDelegate {
         guard group.claimPresentation(tabID: tab, in: store) else { throw OutputCheckError.expected }
         fixture.window.contentView = nil
         fixture.window.contentView = web
+        check(beforeMove.cancellations() == 1 && mediaBeforeMove.cancellations() == 1,
+              "A live page handoff dismisses the old window's pending website prompt boundaries once")
         check(web.window === fixture.window && store.documentIdentity(for: web) === document,
               "Tab handoff returns the same document to the original window")
         beforeMove.answer(files); mediaBeforeMove.answer(true)
