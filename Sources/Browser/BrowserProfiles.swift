@@ -32,7 +32,7 @@ enum ProfileError: LocalizedError {
         case .inUse: return "Move this profile’s Spaces to another profile before deleting it."
         case .defaultProfile: return "The default profile can be cleared but cannot be removed."
         case .busy: return "Another profile data operation is still running."
-        case .pagesClosing: return "Some pages are still closing. Try deleting this profile again shortly."
+        case .pagesClosing: return "Some pages are still closing. Try again shortly."
         }
     }
 }
@@ -116,12 +116,11 @@ extension BrowserStore {
             if !isShuttingDown { message = writer.message }
             return
         }
-        guard !clearingData, deletingProfileID == nil else { throw ProfileError.busy }
-        guard isPrivate ? id == BrowserProfile.defaultID : profiles.contains(where: { $0.id == id && !$0.isPendingDeletion }) else { throw ProfileError.missing }
-        if #available(macOS 15.4,*),!isPrivate,try retainedExtensionNamespaces(profileID:id).contains(where:{ExtensionErasureJobs.holds($0)}) {throw ExtensionErasureError.busy}
+        try validateProfileClear(id)
+        try await retireFullscreenProfilePages(id)
+        try validateProfileClear(id)
         if !isPrivate { guard ProfileDataOperations.shared.begin(id) else { throw ProfileError.busy } }
         defer { if !isPrivate { ProfileDataOperations.shared.finish(id) } }
-        if !isPrivate { guard savingEnabled, vault != nil, persistedProfileIDs.contains(id) else { throw ProfileError.locked } }
         let extensionControllerID = profiles.first(where:{$0.id == id})?.extensionControllerID
         let installedExtensions = isPrivate ? [] : extensionRecords(profileID:id)
         let extensionNamespaces = isPrivate ? Set<UUID>() : try retainedExtensionNamespaces(profileID:id)
@@ -176,6 +175,43 @@ extension BrowserStore {
             catch { message = "Website data was cleared, but its completion could not be saved. Unlock local data and retry this profile’s clear operation."; throw error }
         }
         message = "Website data and history cleared for this profile. Other profiles, bookmarks and downloaded files were kept."
+    }
+    private func validateProfileClear(_ id: UUID) throws {
+        guard !isShuttingDown else { throw CancellationError() }
+        guard !clearingData, deletingProfileID == nil else { throw ProfileError.busy }
+        guard isPrivate ? id == BrowserProfile.defaultID : profiles.contains(where: { $0.id == id && !$0.isPendingDeletion }) else { throw ProfileError.missing }
+        if #available(macOS 15.4,*), !isPrivate,
+           try retainedExtensionNamespaces(profileID: id).contains(where: { ExtensionErasureJobs.holds($0) }) { throw ExtensionErasureError.busy }
+        if !isPrivate {
+            guard !ProfileDataOperations.shared.activeIDs.contains(id) else { throw ProfileError.busy }
+            guard savingEnabled, vault != nil, persistedProfileIDs.contains(id) else { throw ProfileError.locked }
+        }
+    }
+    private func retireFullscreenProfilePages(_ id: UUID) async throws {
+        let clock = ContinuousClock(), deadline = ContinuousClock.now.advanced(by: .seconds(12))
+        while true {
+            try Task.checkCancellation()
+            guard !isShuttingDown else { throw CancellationError() }
+            var target: (store: BrowserStore, web: WKWebView)?
+            for store in pageStores {
+                let pages = Array(store.views.values) + store.peekPages.values.map(\.web)
+                if let web = pages.first(where: {
+                    store.profileID(for: $0) == id && ($0.fullscreenState != .notInFullscreen ||
+                        ($0 as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true)
+                }) { target = (store, web); break }
+            }
+            guard let target else { return }
+            guard clock.now < deadline, let fullscreen = (target.web as? SplitDropWebView)?.websiteFullscreen else {
+                throw ProfileError.pagesClosing
+            }
+            target.store.cancelWebsitePrompts(for: target.web)
+            let restored = await withCheckedContinuation { reply in
+                fullscreen.exitForRetirement { reply.resume(returning: $0) }
+            }
+            try Task.checkCancellation()
+            guard !isShuttingDown else { throw CancellationError() }
+            guard restored else { throw ProfileError.pagesClosing }
+        }
     }
     private func closeProfilePages(_ id: UUID) {
         for store in pageStores {

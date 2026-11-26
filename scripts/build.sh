@@ -451,6 +451,11 @@ if [[ "${1:-}" == "lifecycle-test" ]]; then
     "$MANUAL/profile-lifecycle-checks"
     exit
 fi
+if [[ "${1:-}" == "profile-store-test" ]]; then
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/ProfileStoreChecks.swift -o "$MANUAL/profile-store-checks"
+    "$MANUAL/profile-store-checks"
+    exit
+fi
 if [[ "${1:-}" == "test" ]]; then
     run_bookmark_export_core_checks
     run_bookmark_export_store_checks

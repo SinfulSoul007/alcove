@@ -35,6 +35,10 @@ on:
         description: Run existing Quick Browse persistence, lifecycle and window regressions
         type: boolean
         default: false
+      profile_regressions:
+        description: Run existing profile persistence, lifecycle and real website-data regressions
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -156,6 +160,24 @@ jobs:
           set -o pipefail
           mkdir -p .build/fullscreen
           caffeinate -is scripts/build.sh website-protection-surface-test 2>&1 | tee .build/fullscreen/website-protection-surface.log
+      - name: Verify existing profile persistence
+        if: ${{ always() && inputs.profile_regressions }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh profile-store-test 2>&1 | tee .build/fullscreen/profile-store.log
+      - name: Verify existing profile lifecycle and retry behavior
+        if: ${{ always() && inputs.profile_regressions }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh lifecycle-test 2>&1 | tee .build/fullscreen/profile-lifecycle.log
+      - name: Verify existing real profile and Quick website-data isolation
+        if: ${{ always() && inputs.profile_regressions }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh website-test 2>&1 | tee .build/fullscreen/profile-website.log
       - name: Preserve the bounded native result
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
