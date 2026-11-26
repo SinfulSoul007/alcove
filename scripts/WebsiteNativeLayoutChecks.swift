@@ -3,6 +3,49 @@ import SwiftUI
 import WebKit
 import CryptoKit
 
+/// Characterization controls use the real components, with the same live page.
+/// They localize layout notices; they cannot qualify the complete BrowserUI.
+@MainActor private struct NativeLayoutComponentRoot: View {
+    @ObservedObject var store: BrowserStore
+    @ObservedObject var chrome: NativeWindowChrome
+    let web: WKWebView
+    let kind: String
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if store.sidebarVisible {
+                sidebar.frame(width: 260)
+            }
+            WebPane(webView: web, store: store).padding(8)
+        }
+        .background { store.activeTheme.surface }
+        .foregroundStyle(store.activeTheme.ink)
+        .preferredColorScheme(store.activeTheme.isDark ? .dark : .light)
+        .background {
+            if kind == "layout-chrome-reader-control" { NativeChromeReader(chrome: chrome) }
+        }
+    }
+
+    @ViewBuilder private var sidebar: some View {
+        let tabs = store.space.tabs.filter { !$0.url.isEmpty }
+        if kind == "layout-sidebar-row-control", let tab = tabs.first {
+            SidebarTabRow(tab: tab, spaceID: store.space.id, store: store,
+                          theme: store.activeTheme, appearance: store.appearance, motion: nil)
+        } else if kind == "layout-sidebar-scroll-control" {
+            SidebarTabScrollView(positions: sidebarTabPositions(tabs), focusedTab: store.focusedID,
+                                 theme: store.activeTheme, motion: nil) {
+                LazyVStack(alignment: .leading, spacing: 3) {
+                    ForEach(tabs) { tab in
+                        SidebarTabRow(tab: tab, spaceID: store.space.id, store: store,
+                                      theme: store.activeTheme, appearance: store.appearance, motion: nil)
+                            .sidebarTabScrollTarget(tab.id)
+                    }
+                }.padding(.horizontal, 8)
+            }
+        } else { Color.clear }
+    }
+}
+
 extension WebsiteFullscreenChecks {
     /// Actual visible BrowserUI startup and resizing, without website fullscreen.
     /// Fresh processes distinguish production behavior from sizing controls.
@@ -57,12 +100,19 @@ extension WebsiteFullscreenChecks {
             control.titlebarAppearsTransparent = true; control.titleVisibility = .hidden
             control.minSize = NSSize(width: 800, height: 540)
             control.extensionStore = store; control.extensionCommandSource = { [weak store] in store?.currentView }
-            if kind == "layout-preconfigured-control" {
+            let componentControl = ["layout-web-content-control", "layout-chrome-reader-control",
+                                    "layout-sidebar-row-control", "layout-sidebar-scroll-control"].contains(kind)
+            if kind == "layout-preconfigured-control" || componentControl {
                 preparedChrome = NativeWindowChrome()
                 preparedChrome?.attach(to: control)
             }
             let browser = BrowserUI(store: store).environmentObject(app.updates)
-            if kind == "layout-content-minimum-control" {
+            if componentControl, let preparedChrome {
+                let component = NativeLayoutComponentRoot(store: store, chrome: preparedChrome, web: web, kind: kind)
+                let hosting = NSHostingView(rootView: component.frame(minWidth: 800, minHeight: 540))
+                hosting.safeAreaRegions = []; hosting.sizingOptions = [.minSize]
+                control.contentView = hosting
+            } else if kind == "layout-content-minimum-control" {
                 let hosting = NSHostingView(rootView: browser.frame(minWidth: 800, minHeight: 540))
                 hosting.safeAreaRegions = []; hosting.sizingOptions = [.minSize]
                 control.contentView = hosting
