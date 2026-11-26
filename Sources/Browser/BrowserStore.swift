@@ -575,7 +575,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             else { message = error.localizedDescription }
         }
     }
-    private func loadWebsite(_ web: WKWebView, to url: URL) {
+    func loadWebsite(_ web: WKWebView, to url: URL) {
         let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen
         let profile = profileID(for: web), document = documentIdentity(for: web), presentation = presentationIdentity(for: web)
         let needsExit = fullscreen?.isBorrowed == true || web.fullscreenState != .notInFullscreen

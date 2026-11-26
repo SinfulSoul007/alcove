@@ -32,7 +32,7 @@ extension BrowserStore {
         let url = try resolveSearchInput(input, selection: selection)
         if let peek = quickPeekView(id) {
             guard QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.invalidAddress }
-            touchQuickPage(id); peek.load(URLRequest(url: url))
+            touchQuickPage(id); loadWebsite(peek, to: url)
         } else { try navigateQuickPage(id, input: url.absoluteString) }
     }
     func isFocusedWebsite(_ web: WKWebView) -> Bool {

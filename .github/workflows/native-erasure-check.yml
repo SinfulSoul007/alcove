@@ -31,6 +31,10 @@ on:
         description: Run existing site-search and link-routing store regressions
         type: boolean
         default: false
+      quick_regressions:
+        description: Run existing Quick Browse persistence, lifecycle and window regressions
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,7 +42,7 @@ permissions:
 jobs:
   macos:
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -128,6 +132,24 @@ jobs:
           set -o pipefail
           mkdir -p .build/fullscreen
           caffeinate -is scripts/build.sh window-handoff-test 2>&1 | tee .build/fullscreen/window-handoff.log
+      - name: Verify existing Quick Browse persistence
+        if: ${{ always() && inputs.quick_regressions }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh quick-store-test 2>&1 | tee .build/fullscreen/quick-store.log
+      - name: Verify existing Quick Browse lifecycle
+        if: ${{ always() && inputs.quick_regressions }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh quick-lifecycle-test 2>&1 | tee .build/fullscreen/quick-lifecycle.log
+      - name: Verify existing Quick Browse window controls
+        if: ${{ always() && inputs.quick_regressions }}
+        run: |
+          set -o pipefail
+          mkdir -p .build/fullscreen
+          caffeinate -is scripts/build.sh quick-window-test 2>&1 | tee .build/fullscreen/quick-window.log
       - name: Verify source-bound website warning surfaces
         if: ${{ always() && inputs.website_protection }}
         run: |

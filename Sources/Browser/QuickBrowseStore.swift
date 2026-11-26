@@ -113,7 +113,7 @@ extension BrowserStore {
             records.quickPages?[index].requestedURL = url.absoluteString; records.quickPages?[index].lastActiveAt = Date()
         }
         save()
-        if let existing { existing.load(URLRequest(url: url)) } else { _ = view(for: id) }
+        if let existing { loadWebsite(existing, to: url) } else { _ = view(for: id) }
     }
     func archivedQuickTab(_ page: QuickPage) -> BrowserCore.Tab? {
         var tab = page.tab
