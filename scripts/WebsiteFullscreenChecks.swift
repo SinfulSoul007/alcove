@@ -54,6 +54,11 @@ import Darwin
     /// Deliver mouse events only to this fixture's owned window. The document
     /// must witness a trusted, activating click; JavaScript click() is not used.
     @MainActor static func enterWithOwnedClick(_ web: WKWebView, window: NSWindow) async throws {
+        let focused = (window.firstResponder as? NSView).map { $0 === web || $0.isDescendant(of: web) } ?? false
+        print("FULLSCREEN_NO_MEDIA_FOCUS", "pageResponder", focused,
+              "responder", window.firstResponder.map { String(describing: type(of: $0)) } ?? "none",
+              "documentFocused", (try? await web.evaluateJavaScript("document.hasFocus()")) ?? "unavailable")
+        guard focused else { throw Failure.fixture("no-media click requires the actual page to have initial keyboard focus") }
         guard web.window === window, window.isKeyWindow, NSApp.isActive,
               let point = try await web.evaluateJavaScript("""
                 (()=>{const r=document.getElementById('enter').getBoundingClientRect();
