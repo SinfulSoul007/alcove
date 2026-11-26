@@ -81,7 +81,7 @@ extension WebsiteFullscreenChecks {
         if kind == "archive-static" || kind == "suspend-static" {
             writer.preferences.archiveAfterDays = 0; writer.preferences.suspendTabs = false
         }
-        if kind == "expire-static" || kind == "peek-expire-static" { writer.preferences.quickBrowseArchiveHours = 1 }
+        if kind == "expire-static" || kind == "peek-expire-static" { writer.preferences.quickBrowseArchiveHours = 6 }
         let profile: UUID
         if isPrivate { profile = BrowserProfile.defaultID }
         else {
@@ -98,7 +98,9 @@ extension WebsiteFullscreenChecks {
             _ = writer.newTab(url: base.appendingPathComponent("page"))
             writer.selectSpace(sourceSpace)
         }
-        let sourceURL = base.appendingPathComponent(kind == "reader" ? "article" : (kind == "no-media" ? "page-no-media" : "page"))
+        let sourceURL = kind == "peek-expire-static"
+            ? URL(string: "page-no-media#quick-expiry-parent", relativeTo: base)!.absoluteURL
+            : base.appendingPathComponent(kind == "reader" ? "article" : (kind == "no-media" ? "page-no-media" : "page"))
         let primaryID = writer.newTab(url: sourceURL)
         if kind == "next-tab" || kind == "split" {
             _ = writer.newTab(url: sourceURL, activate: false)
@@ -313,21 +315,26 @@ extension WebsiteFullscreenChecks {
                     try await wait("idle Quick expiry control loaded") { !idle.isLoading }
                     primaryWindow.makeKeyAndOrderFront(nil)
                     let borrowed = (web as? SplitDropWebView)?.websiteFullscreen?.isBorrowed == true
-                    let setup = borrowed && !presentation.isKeyWindow && primaryWindow.isKeyWindow && store.focusedQuickPageID != id
+                    let setup = borrowed && !presentation.isKeyWindow && primaryWindow.isKeyWindow && store.focusedQuickPageID == nil
                     check(setup, "Quick expiry starts with an actual borrowed fullscreen source in the background, without playing media")
                     guard setup else { throw Failure.fixture("background Quick source no longer borrowed") }
                     // Own-model clock values make both records genuinely old
                     // without letting incidental native focus notifications
                     // change a timestamp while playback replies are pending.
                     let instant = Date(), activity = Date().addingTimeInterval(3600)
+                    let expiry = instant.addingTimeInterval(9 * 3600)
                     store.touchQuickPage(id, now: activity); store.touchQuickPage(idleID, now: activity)
-                    store.archiveInactiveQuickPages(now: instant.addingTimeInterval(3 * 3600))
+                    check(idleID != id && store.preferences.quickBrowseArchiveHours == 6 &&
+                          store.quickPage(id)?.lastActiveAt == activity && store.quickPage(idleID)?.lastActiveAt == activity &&
+                          activity < expiry.addingTimeInterval(-6 * 3600),
+                          "Quick expiry stages two distinct pages older than the supported six-hour inactivity cutoff")
+                    store.archiveInactiveQuickPages(now: expiry)
                     let completed = await effect { store.quickArchiveProbeID == nil && store.quickPage(idleID) == nil && !idleWindow.isVisible }
                     check(completed, "Quick inactivity expiry removes its eligible idle control and closes that real window")
                     let retained = store.quickPage(id) != nil && store.views[id] === underlying &&
                         (web === underlying || store.quickPeekView(id) === web)
                     let draft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41")) as? Bool
-                    check(completed && retained && store.profileID(for: web) == profile && store.documentIdentity(for: web) === document && draft == true,
+                    check(retained && store.profileID(for: web) == profile && store.documentIdentity(for: web) === document && draft == true,
                           "Quick inactivity expiry protects the exact static fullscreen source/profile/document/form even when another window is key")
                     let primaryDraft = (try? await primary.evaluateJavaScript("document.getElementById('draft').value==='surviving Quick expiry draft'")) as? Bool
                     check(store.views[primaryID] === primary && store.documentIdentity(for: primary) === primaryDocument && primaryDraft == true,
