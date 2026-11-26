@@ -183,7 +183,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var views: [UUID: WKWebView] = [:]
     var readerSessions: [ObjectIdentifier: ReaderSession] = [:]
     var websitePromptRequests: [UUID: WebsitePromptRequest] = [:]
-    private var tabSelectionGeneration = UUID()
+    private(set) var tabSelectionGeneration = UUID()
     private var fullscreenSelectionRequests: [ObjectIdentifier: UUID] = [:]
     private let documentIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     private let presentationIDs = NSMapTable<WKWebView, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
