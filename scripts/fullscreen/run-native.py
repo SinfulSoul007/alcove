@@ -110,6 +110,7 @@ def main():
     native = ['xcrun', 'swiftc', *flags, '-parse-as-library', '-warnings-as-errors', '-I', str(OUT), *sources,
               'scripts/WebsiteFullscreenChecks.swift', 'scripts/WebsiteFullscreenContextChecks.swift',
               'scripts/WebsiteFullscreenCommandChecks.swift',
+              'scripts/WebsiteFullscreenExtensionCrossProfileChecks.swift',
               'scripts/WebsiteFullscreenProfileDeletionChecks.swift',
               'scripts/WebsiteFullscreenQuitChecks.swift',
               'scripts/WebsiteNativeLayoutChecks.swift',
