@@ -18,10 +18,10 @@ import CryptoKit
                 GeometryReader { _ in
                     componentContent.frame(maxWidth: .infinity, maxHeight: .infinity).ignoresSafeArea()
                 }
-            } else if ["layout-progress-control", "layout-content-frame-control"].contains(kind) {
+            } else if ["layout-progress-control", "layout-content-frame-control", "layout-conditional-progress-control"].contains(kind) {
                 VStack(spacing: 0) {
                     Color.clear.frame(height: max(0, chrome.pageTopInset - 8))
-                    if kind == "layout-progress-control" {
+                    if kind == "layout-progress-control" || (kind == "layout-conditional-progress-control" && web.isLoading) {
                         ProgressView(value: web.estimatedProgress).progressViewStyle(.linear)
                             .tint(.purple).frame(height: 2)
                     }
@@ -200,12 +200,19 @@ extension WebsiteFullscreenChecks {
             check(store.profileID(for: web) == normalProfile && web.configuration.websiteDataStore.identifier == normalProfile,
                   "Normal native layout uses its registered disposable named profile")
         }
+        if kind == "layout-ready-production" {
+            try await wait("owned page ready before browser UI") {
+                guard !web.isLoading else { return false }
+                return (try? await web.evaluateJavaScript("document.readyState==='complete'&&document.getElementById('draft')!==null")) as? Bool == true
+            }
+            check(true, "The owned local document finishes loading before the actual browser UI is mounted")
+        }
         let app = AppDelegate(), owner = app.makeOwner(store)
         app.normalOwner = owner
         var preparedChrome: NativeWindowChrome?
         let window: NSWindow
         print("FULLSCREEN_LAYOUT_PHASE", kind, "mount")
-        if ["layout-production", "layout-normal-production", "layout-no-motion-production", "layout-collapsed-production", "layout-single-tab-production"].contains(kind) {
+        if ["layout-production", "layout-normal-production", "layout-no-motion-production", "layout-collapsed-production", "layout-single-tab-production", "layout-ready-production"].contains(kind) {
             app.openPrimary(owner)
             guard let primary = app.primaryOwners.first(where: { $0.value === owner })?.key else {
                 throw Failure.fixture("actual production layout window")
@@ -225,7 +232,7 @@ extension WebsiteFullscreenChecks {
                                     "layout-tracking-control", "layout-store-sheet-control",
                                     "layout-full-sidebar-control", "layout-progress-control",
                                     "layout-content-frame-control", "layout-resize-grip-control",
-                                    "layout-ignored-safe-area-control"].contains(kind)
+                                    "layout-ignored-safe-area-control", "layout-conditional-progress-control"].contains(kind)
             if kind == "layout-preconfigured-control" || componentControl {
                 preparedChrome = NativeWindowChrome()
                 preparedChrome?.attach(to: control)
