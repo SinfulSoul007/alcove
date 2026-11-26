@@ -51,6 +51,11 @@ extension WebsiteFullscreenChecks {
             guard source.window === window, source.superview is EdgeToEdgeWebHost, !source.isLoading else { return false }
             return (try? await source.evaluateJavaScript("document.getElementById('video')?.readyState>=2")) as? Bool == true
         }
+        try await wait("deletion source window and document visible") {
+            guard NSApp.isActive, window.isVisible, window.isKeyWindow, window.isOnActiveSpace,
+                  source.window === window, !source.isHiddenOrHasHiddenAncestor else { return false }
+            return (try? await source.evaluateJavaScript("document.visibilityState==='visible'")) as? Bool == true
+        }
         guard source.configuration.websiteDataStore.identifier == profile else {
             throw Failure.fixture("deletion source own named store")
         }
