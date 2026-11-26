@@ -103,6 +103,7 @@ def main():
     native = ['xcrun', 'swiftc', *flags, '-parse-as-library', '-warnings-as-errors', '-I', str(OUT), *sources,
               'scripts/WebsiteFullscreenChecks.swift', 'scripts/WebsiteFullscreenContextChecks.swift',
               'scripts/WebsiteFullscreenCommandChecks.swift',
+              'scripts/WebsiteFullscreenProfileDeletionChecks.swift',
               'scripts/OwnedWebsiteStores.swift', 'scripts/OwnedExtensionControllers.swift']
     if args.typecheck_only:
         command([*native, '-typecheck'])

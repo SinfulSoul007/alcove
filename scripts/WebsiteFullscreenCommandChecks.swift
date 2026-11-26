@@ -60,6 +60,13 @@ extension WebsiteFullscreenChecks {
     @available(macOS 15.4, *) @MainActor
     static func exerciseCommand(base: URL, kind: String, owned: OwnedWebsiteStores,
                                 controllers: OwnedExtensionControllers, isPrivate: Bool = false, isQuick: Bool = false) async throws {
+        if kind == "profile-delete" || kind == "peek-profile-delete" {
+            guard !isPrivate, isQuick else { throw Failure.fixture("normal Quick profile deletion") }
+            print("FULLSCREEN_COMMAND_CONTEXT", kind, "private", false, "quick", true)
+            try await exerciseProfileDeletion(base: base, owned: owned, controllers: controllers, peek: kind == "peek-profile-delete")
+            print("FULLSCREEN_COMMAND_CASE_COMPLETED", kind, "private", false, "quick", true)
+            return
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-fullscreen-command-" + UUID().uuidString)
         let isProfileClear = kind == "profile-clear" || kind == "peek-profile-clear"
         var protection: WebsiteProtectionService?
@@ -1103,7 +1110,7 @@ extension WebsiteFullscreenChecks {
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
         let compact = (["escape", "peek-escape", "location", "find", "reader", "close", "close-window-direct", "peek-parent-close", "peek-parent-model-close", "expire-static", "peek-expire-static", "profile-clear", "peek-profile-clear"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
-        let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static", "profile-clear", "peek-profile-clear"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 }
+        let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + (["escape", "location", "find", "reader", "close", "suspend-static", "profile-clear", "peek-profile-clear"] + scriptDialogs + promptLifetimes + peekLifetimes).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 } + ["quick-profile-delete", "quick-peek-profile-delete"]
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
         guard ["", "primary", "private-primary", "quick"].contains(group), group.isEmpty || selected.isEmpty else {
