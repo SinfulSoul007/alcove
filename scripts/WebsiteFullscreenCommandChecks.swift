@@ -108,7 +108,7 @@ extension WebsiteFullscreenChecks {
         }
         let sourceSpace = writer.space.id
         var fullscreenExtensionID: UUID?
-        if ["extension-focus", "extension-focus-request", "extension-close"].contains(kind) {
+        if ["extension-focus", "extension-focus-request", "extension-close", "extension-close-disable", "extension-close-revoke"].contains(kind) {
             guard !isPrivate else { throw Failure.fixture("normal owned extension focus baseline") }
             let source = root.appendingPathComponent("focus-extension")
             try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
@@ -346,14 +346,16 @@ extension WebsiteFullscreenChecks {
                 guard let options = fullscreenExtensionOptions else { throw Failure.fixture("owned installed focus extension") }
                 try await exerciseFullscreenExtensionFocus(options: options, store: store, web: web, window: window,
                     presentation: presentation, sourceURL: sourceURL, windowType: isQuick ? "popup" : "normal", document: document)
-            case "extension-focus-request", "extension-close":
-                guard let options = fullscreenExtensionOptions, kind != "extension-close" || isQuick else {
+            case "extension-focus-request", "extension-close", "extension-close-disable", "extension-close-revoke":
+                guard let options = fullscreenExtensionOptions, !kind.hasPrefix("extension-close") || isQuick else {
                     throw Failure.fixture("owned extension window action")
                 }
+                let cancellation = ["extension-close-disable", "extension-close-revoke"].contains(kind)
+                    ? fullscreenExtensionID.map { (id: $0, profile: profile, revoke: kind == "extension-close-revoke") } : nil
                 try await exerciseFullscreenExtensionWindowAction(options: options, app: app, owner: owner,
                     store: store, web: web, window: window, presentation: presentation, sourceURL: sourceURL,
                     sourceID: id, primaryID: primaryID, windowType: isQuick ? "popup" : "normal",
-                    document: document, removing: kind == "extension-close")
+                    document: document, removing: kind.hasPrefix("extension-close"), cancellation: cancellation)
             case "quit", "peek-quit":
                 try await exerciseRealQuit(app: app, owner: owner, store: store, web: web, presentation: presentation) {
                     if isPrivate { return keyReads == 0 && !FileManager.default.fileExists(atPath: writer.sessionURL.path) }
@@ -1209,7 +1211,8 @@ extension WebsiteFullscreenChecks {
     private static func exerciseFullscreenExtensionWindowAction(options: WKWebView, app: AppDelegate,
         owner: BrowserWindowOwner, store: BrowserStore, web: WKWebView, window: NSWindow,
         presentation: NSWindow, sourceURL: URL, sourceID: UUID, primaryID: UUID,
-        windowType: String, document: NSUUID, removing: Bool) async throws {
+        windowType: String, document: NSUUID, removing: Bool,
+        cancellation: (id: UUID, profile: UUID, revoke: Bool)? = nil) async throws {
         guard let sdkID = try await options.callAsyncJavaScript("""
             const windows = await browser.windows.getAll({populate:true});
             const targets = windows.filter(w => w.type === type && w.tabs?.some(t => t.url === url));
@@ -1236,6 +1239,41 @@ extension WebsiteFullscreenChecks {
             other.makeKeyAndOrderFront(nil)
             try await wait("extension action alternate focus") { other.isKeyWindow }
         }
+        var cancellationObservation: NSKeyValueObservation?
+        var cancellationPhase: Int?, cancellationApplied = false, contextUnloaded = false
+        var cancellationScheduled = false, cancellationError: String?
+        if let cancellation {
+            guard let controller = options.configuration.webExtensionController,
+                  let context = controller.extensionContexts.first(where: { $0.baseURL.host == options.url?.host }) else {
+                throw Failure.fixture("original owned extension context before cancellation")
+            }
+            cancellationObservation = web.observe(\.fullscreenState, options: [.new]) { view, _ in
+                MainActor.assumeIsolated {
+                    guard view.fullscreenState == .exitingFullscreen, !cancellationScheduled else { return }
+                    cancellationScheduled = true
+                    DispatchQueue.main.async {
+                        guard web.fullscreenState == .exitingFullscreen, !store.isShuttingDown else {
+                            cancellationError = "missed actual exit phase"; return
+                        }
+                        cancellationPhase = Int(web.fullscreenState.rawValue)
+                        do {
+                            if cancellation.revoke {
+                                try store.setExtensionGrants(cancellation.id, profileID: cancellation.profile, grants: nil)
+                            } else {
+                                try store.setExtensionEnabled(cancellation.id, profileID: cancellation.profile, enabled: false)
+                            }
+                            let record = store.extensionRecords(profileID: cancellation.profile).first { $0.id == cancellation.id }
+                            cancellationApplied = record?.enabled == false && (!cancellation.revoke || record?.grants == nil)
+                            contextUnloaded = !controller.extensionContexts.contains(where: { $0 === context })
+                            print("FULLSCREEN_EXTENSION_CANCEL_APPLIED", "revoke", cancellation.revoke,
+                                  "phase", cancellationPhase ?? -1, "applied", cancellationApplied,
+                                  "contextUnloaded", contextUnloaded, "afterState", web.fullscreenState.rawValue)
+                        } catch { cancellationError = error.localizedDescription }
+                    }
+                }
+            }
+        }
+        defer { cancellationObservation?.invalidate() }
         _ = try await options.callAsyncJavaScript("""
             window.ownedFullscreenAction = {status:'pending'};
             try {
@@ -1245,6 +1283,30 @@ extension WebsiteFullscreenChecks {
             } catch(error) {window.ownedFullscreenAction = {status:'rejected',error:String(error.message ?? error)};}
             return true;
             """, arguments: ["id": sdkID, "removing": removing], in: nil, contentWorld: .page)
+        if let cancellation {
+            let restored = await effect {
+                web.fullscreenState == .notInFullscreen && !coordinator.isBorrowed &&
+                    !presentation.isVisible && web.window === window
+            }
+            guard cancellationPhase == 3, cancellationApplied, contextUnloaded, cancellationError == nil else {
+                print("FULLSCREEN_EXTENSION_CANCEL_SETUP", "phase", cancellationPhase ?? -1,
+                      "applied", cancellationApplied, "contextUnloaded", contextUnloaded,
+                      "error", cancellationError ?? "none", "restored", restored)
+                throw Failure.fixture("extension revocation before physical fullscreen return")
+            }
+            check(cancellationApplied && contextUnloaded,
+                  "The normal extension \(cancellation.revoke ? "revoke" : "disable") operation unloads its actual SDK context during native exit")
+            check(restored && window.isVisible && store.quickPage(sourceID) != nil && store.views[sourceID] === web &&
+                  app.quickWindows.values.contains(where: { $0.window === window }),
+                  "Revoking the requesting context cancels its deferred window close and preserves the real Quick page")
+            let sourceDraft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='captured command draft'&&window.ownedCommandToken===41")) as? Bool
+            let survivorDraft = try? await survivor?.evaluateJavaScript("document.getElementById('draft').value==='surviving extension window'&&window.ownedExtensionSurvivor===91")
+            check(restored && store.documentIdentity(for: web) === document && sourceDraft == true &&
+                  survivor != nil && store.documentIdentity(for: survivor!) === survivorDocument && survivorDraft as? Bool == true &&
+                  !owner.isClosed && !store.isShuttingDown && owner.leaseCount == 2 && NSApp.isRunning,
+                  "Cancelled SDK removal preserves both exact live documents, unsaved forms and window leases")
+            return
+        }
         var reply: [String: Any] = [:]
         try await wait("actual SDK window action reply") {
             reply = (try? await options.evaluateJavaScript("window.ownedFullscreenAction")) as? [String: Any] ?? [:]
@@ -1428,7 +1490,7 @@ extension WebsiteFullscreenChecks {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
         let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static", "suspend-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"]
-        let extensionFocusCases = ["extension-focus", "quick-extension-focus", "extension-focus-request", "quick-extension-focus-request", "quick-extension-close"]
+        let extensionFocusCases = ["extension-focus", "quick-extension-focus", "extension-focus-request", "quick-extension-focus-request", "quick-extension-close", "quick-extension-close-disable", "quick-extension-close-revoke"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
