@@ -605,7 +605,13 @@ extension WebsiteFullscreenChecks {
                             else if isQuick {
                                 do { try store.navigateForegroundQuickPage(targetID, input: replacement.absoluteString) }
                                 catch { print("FULLSCREEN_PENDING_QUICK_NAVIGATION_ERROR", error) }
-                            } else { store.commandOpensNewTab = false; store.navigate(replacement.absoluteString) }
+                            } else {
+                                // Primary Peek URL edits capture their target
+                                // through the actual address-command context.
+                                if isPeek { store.showCommand(new: false) }
+                                else { store.commandOpensNewTab = false }
+                                store.navigate(replacement.absoluteString)
+                            }
                         }
                         let sourceSettled = retiring ? (isPeek ? !sourceRegistered() : (store.views[targetID] == nil &&
                             (isQuick ? store.quickPage(targetID) == nil && !window.isVisible : store.tab(targetID) == nil))) :
