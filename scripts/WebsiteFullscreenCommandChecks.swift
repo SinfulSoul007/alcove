@@ -199,12 +199,19 @@ extension WebsiteFullscreenChecks {
                   "\(kind): page-output selection retains the fullscreen source")
             switch kind {
             case "archive-static":
-                let playback: WKMediaPlaybackState = await withCheckedContinuation { reply in
-                    web.requestMediaPlaybackState { reply.resume(returning: $0) }
+                // Entry uses the existing decoded-media fixture. Remove that
+                // media before measuring idle cleanup; this does not qualify
+                // fullscreen entry on a fresh no-media document.
+                _ = try await web.evaluateJavaScript("document.querySelectorAll('video,audio').forEach(node=>{node.pause();node.remove()});true")
+                var playback: WKMediaPlaybackState?
+                try await wait("fullscreen fixture has no active media") {
+                    let state: WKMediaPlaybackState = await withCheckedContinuation { reply in
+                        web.requestMediaPlaybackState { reply.resume(returning: $0) }
+                    }
+                    playback = state
+                    return state == .paused || state == .none
                 }
-                guard playback == .paused || playback == .none else {
-                    throw Failure.fixture("static fullscreen source must have no playing media")
-                }
+                print("FULLSCREEN_STATIC_PLAYBACK_STATE", playback?.rawValue ?? -1)
                 let control = store.newTab(url: base.appendingPathComponent("article"), activate: false)
                 let otherID = store.newTab(url: base.appendingPathComponent("article"))
                 let other = store.view(for: otherID)
