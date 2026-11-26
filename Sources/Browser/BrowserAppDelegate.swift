@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var paneFocusMonitor: Any?
     var updateTimer: Timer?
     private var terminating = false
+    private var fullscreenWindowCloseRequests: [ObjectIdentifier: UUID] = [:]
     override convenience init() { self.init(pageOutput: PageOutputCoordinator()) }
     init(pageOutput: PageOutputCoordinator, quitPresenter: PageOutputQuitPresenter? = nil) {
         self.pageOutput = pageOutput
@@ -420,12 +421,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         store.windowGroup?.recordFrame(BrowserWindowFrame(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height), for: store)
     }
     func windowShouldClose(_ window: NSWindow) -> Bool {
-        guard !terminating, let store = windows[window], store.extensionPopupProfileID != nil else { return true }
+        guard !terminating, let store = windows[window] else { return true }
+        if deferFullscreenWindowClose(window, store: store) { return false }
+        guard store.extensionPopupProfileID != nil else { return true }
         do { try store.closeExtensionPopupTabs(); return true }
         catch { store.message = error.localizedDescription; return false }
     }
+    private func deferFullscreenWindowClose(_ window: NSWindow, store: BrowserStore) -> Bool {
+        let key = ObjectIdentifier(window)
+        if fullscreenWindowCloseRequests[key] != nil { return true }
+        let pages = Array(store.views.values) + store.peekPages.values.map(\.web)
+        guard let web = pages.first(where: { web in
+            guard let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen else { return false }
+            return fullscreen.logicalWindow === window && (fullscreen.isBorrowed || web.fullscreenState != .notInFullscreen)
+        }), let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen else { return false }
+        guard let profile = store.profileID(for: web), let owner = primaryOwners[window],
+              let lease = primaryLeases[window] else { return true }
+        let document = store.documentIdentity(for: web), presentation = store.presentationIdentity(for: web)
+        store.cancelWebsitePrompts(for: web)
+        guard windows[window] === store, !store.isShuttingDown,
+              store.documentIdentity(for: web) === document, store.presentationIdentity(for: web) === presentation else { return true }
+        let token = UUID(); fullscreenWindowCloseRequests[key] = token
+        // Keep the content, registration and lease alive until WebKit has
+        // physically returned its page. Repeated close requests share this exit.
+        fullscreen.exitForRetirement { [weak self, weak window, weak store, weak web, weak owner] restored in
+            guard let self, self.fullscreenWindowCloseRequests[key] == token else { return }
+            self.fullscreenWindowCloseRequests.removeValue(forKey: key)
+            guard let window, let store, let web, let owner, !owner.isClosed, !store.isShuttingDown,
+                  self.windows[window] === store, self.primaryOwners[window] === owner,
+                  self.primaryLeases[window] == lease, store.profileID(for: web) == profile,
+                  store.documentIdentity(for: web) === document, store.presentationIdentity(for: web) === presentation else { return }
+            guard restored else {
+                store.message = "Couldn’t leave fullscreen to close this window. Exit fullscreen and try again."
+                return
+            }
+            // Re-enter the normal delegate path so another current presentation
+            // or an extension popup's durable close still receives its own check.
+            window.performClose(nil)
+        }
+        return true
+    }
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
+        fullscreenWindowCloseRequests.removeValue(forKey: ObjectIdentifier(window))
         pageOutput.cancel(in: window)
         let owner = primaryOwners.removeValue(forKey: window); let lease = primaryLeases.removeValue(forKey: window)
         let store = windows.removeValue(forKey: window); window.contentView = nil
