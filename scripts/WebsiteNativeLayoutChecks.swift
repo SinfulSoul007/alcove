@@ -17,6 +17,10 @@ extension WebsiteFullscreenChecks {
             keyReads += 1; return fixtureKey
         })
         store.finishOnboarding(); store.preferences.automaticUpdateChecks = false
+        if kind == "layout-no-motion-production" {
+            var appearance = store.appearance; appearance.animationsEnabled = false; store.appearance = appearance
+        }
+        if kind == "layout-collapsed-production" { store.sidebarVisible = false }
         let normalProfile: UUID?
         if isPrivate { normalProfile = nil }
         else {
@@ -27,6 +31,9 @@ extension WebsiteFullscreenChecks {
             }
         }
         let id = store.newTab(url: base.appendingPathComponent("page-no-media"))
+        if kind == "layout-single-tab-production" {
+            for other in store.space.tabs.map(\.id) where other != id { store.close(other) }
+        }
         let web = store.view(for: id)
         if let normalProfile {
             check(store.profileID(for: web) == normalProfile && web.configuration.websiteDataStore.identifier == normalProfile,
@@ -36,7 +43,8 @@ extension WebsiteFullscreenChecks {
         app.normalOwner = owner
         var preparedChrome: NativeWindowChrome?
         let window: NSWindow
-        if kind == "layout-production" || kind == "layout-normal-production" {
+        print("FULLSCREEN_LAYOUT_PHASE", kind, "mount")
+        if ["layout-production", "layout-normal-production", "layout-no-motion-production", "layout-collapsed-production", "layout-single-tab-production"].contains(kind) {
             app.openPrimary(owner)
             guard let primary = app.primaryOwners.first(where: { $0.value === owner })?.key else {
                 throw Failure.fixture("actual production layout window")
@@ -79,12 +87,15 @@ extension WebsiteFullscreenChecks {
             try? FileManager.default.removeItem(at: root)
             withExtendedLifetime(preparedChrome) {}
         }
-        print("FULLSCREEN_LAYOUT_CONTEXT", kind, "private", isPrivate)
+        print("FULLSCREEN_LAYOUT_CONTEXT", kind, "private", isPrivate, "tabs", store.space.tabs.count,
+              "animations", store.appearance.animationsEnabled, "sidebar", store.sidebarVisible)
+        print("FULLSCREEN_LAYOUT_PHASE", kind, "show")
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         try await wait("visible native layout source") {
             guard window.isVisible, web.window === window else { return false }
             return (try? await web.evaluateJavaScript("document.visibilityState==='visible'&&document.getElementById('draft')!==null")) as? Bool == true
         }
+        print("FULLSCREEN_LAYOUT_PHASE", kind, "ready")
         _ = try await web.evaluateJavaScript("document.getElementById('draft').value='native layout draft';window.ownedLayoutToken=73;true")
         let document = store.documentIdentity(for: web)
         check(window.toolbarStyle == .unifiedCompact && window.toolbar != nil,
@@ -99,6 +110,7 @@ extension WebsiteFullscreenChecks {
         print("FULLSCREEN_LAYOUT_SCREEN", screenBounds)
         for size in [NSSize(width: 1000, height: 640), NSSize(width: 800, height: 600), NSSize(width: 950, height: 620)] {
             let target = NSSize(width: min(size.width, screenBounds.width), height: min(size.height, screenBounds.height))
+            print("FULLSCREEN_LAYOUT_PHASE", kind, "resize", target)
             window.setFrame(NSRect(origin: screenBounds.origin, size: target), display: true)
             window.contentView?.layoutSubtreeIfNeeded()
             let fitted = await effect {
@@ -110,8 +122,10 @@ extension WebsiteFullscreenChecks {
             check(fitted,
                   "Native browser resizing gives the requested window size and a usable website at \(Int(target.width))×\(Int(target.height))")
         }
+        print("FULLSCREEN_LAYOUT_PHASE", kind, "sidebar-hide")
         store.sidebarVisible = false
         let hidden = await effect { window.contentView?.needsLayout == false }
+        print("FULLSCREEN_LAYOUT_PHASE", kind, "sidebar-show-theme")
         store.sidebarVisible = true; store.setTheme(.midnight)
         let visible = await effect { web.window === window && web.bounds.width > 80 && web.bounds.height > 80 }
         let draft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='native layout draft'&&window.ownedLayoutToken===73")) as? Bool

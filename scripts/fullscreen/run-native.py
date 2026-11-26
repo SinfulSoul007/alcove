@@ -166,7 +166,7 @@ def main():
         # The expanded matrix must finish every case; a partial aggregate run
         # cannot qualify a case it never reached. Run every group after failure.
         quit_cases = [prefix + kind for prefix in ['', 'private-', 'quick-', 'private-quick-'] for kind in ['quit', 'peek-quit']]
-        layout_cases = {'layout-production', 'layout-normal-production', 'layout-minimum-control', 'layout-fixed-control', 'layout-preconfigured-control', 'layout-content-minimum-control'}
+        layout_cases = {'layout-production', 'layout-normal-production', 'layout-no-motion-production', 'layout-collapsed-production', 'layout-single-tab-production', 'layout-minimum-control', 'layout-fixed-control', 'layout-preconfigured-control', 'layout-content-minimum-control'}
         selection = [name for name in env.get('ALCOVE_FULLSCREEN_COMMAND_CASES', '').split(',') if name]
         selected_quits = [name for name in selection if name in quit_cases] if selection else quit_cases
         selected_layout = [name for name in selection if name in layout_cases]
