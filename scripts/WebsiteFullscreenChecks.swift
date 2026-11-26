@@ -194,6 +194,24 @@ import Darwin
         var displays: UInt32 = 0
         CGGetActiveDisplayList(0, nil, &displays)
         print("FULLSCREEN_ACTIVE_DISPLAYS", displays)
+        if ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_QUIT_CLEANUP"] == "1" {
+            if #available(macOS 15.4, *) {
+                do {
+                    let stores = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
+                    let a = await controllers.cleanup(), b = await stores.cleanup()
+                    let pid = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_QUIT_PID"].flatMap(Int32.init)
+                    let windows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]]
+                    let gone = pid.map { child in
+                        child > 0 && child != ProcessInfo.processInfo.processIdentifier && (windows.map { rows in
+                            !rows.contains { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == child }
+                        } ?? false)
+                    } ?? false
+                    check(a && b && gone, "Actual Quit leaves no child window or journaled website/extension store behind")
+                    print("FULLSCREEN_QUIT_CLEANUP", a, b, "windowsGone", gone)
+                } catch { failures += 1; print("FULLSCREEN_QUIT_CLEANUP_ERROR", error) }
+            } else { failures += 1 }
+            return failures == 0 ? 0 : 1
+        }
         guard displays > 0, let input = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_FIXTURE_URL"],
               let base = URL(string: input), base.host == "127.0.0.1" else {
             print("FULLSCREEN_ENVIRONMENT_UNAVAILABLE"); return 2

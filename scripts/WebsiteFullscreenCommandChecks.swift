@@ -67,7 +67,8 @@ extension WebsiteFullscreenChecks {
             print("FULLSCREEN_COMMAND_CASE_COMPLETED", kind, "private", false, "quick", true)
             return
         }
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("alcove-fullscreen-command-" + UUID().uuidString)
+        let root = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_QUIT_ROOT"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("alcove-fullscreen-command-" + UUID().uuidString)
         let isProfileClear = kind == "profile-clear" || kind == "peek-profile-clear"
         var protection: WebsiteProtectionService?
         if kind == "warning" {
@@ -184,7 +185,7 @@ extension WebsiteFullscreenChecks {
         var targetID = id
         var handoff: (store: BrowserStore, window: NSWindow, survivorID: UUID, survivor: WKWebView, document: NSUUID)?
         var clearingSurvivor: (store: BrowserStore, window: NSWindow, id: UUID, web: WKWebView, profile: UUID, document: NSUUID)?
-        if kind == "peek-escape" || kind == "peek-expire-static" || kind == "peek-close-primary-window-direct" || kind.hasPrefix("peek-parent-") || kind.hasPrefix("peek-") && kind.hasSuffix("script-sheet") {
+        if kind == "peek-escape" || kind == "peek-expire-static" || kind == "peek-close-primary-window-direct" || kind == "peek-quit" || kind.hasPrefix("peek-parent-") || kind.hasPrefix("peek-") && kind.hasSuffix("script-sheet") {
             store.openPeek(base.appendingPathComponent("page"), from: underlying)
             guard let peek = isQuick ? store.quickPeekView(id) : store.primaryPeekView else { throw Failure.fixture("command Peek") }
             web = peek
@@ -293,6 +294,15 @@ extension WebsiteFullscreenChecks {
             check(app.outputTarget(in: presentation)?.web === web,
                   "\(kind): page-output selection retains the fullscreen source")
             switch kind {
+            case "quit", "peek-quit":
+                try await exerciseRealQuit(app: app, owner: owner, store: store, web: web, presentation: presentation) {
+                    if isPrivate { return keyReads == 0 && !FileManager.default.fileExists(atPath: writer.sessionURL.path) }
+                    guard let saved = try? MetadataStore(url: writer.sessionURL,
+                        key: SymmetricKey(data: Data(repeating: 87, count: 32))).load(BrowserDocument.self),
+                          saved.profiles?.contains(where: { $0.id == profile }) == true else { return false }
+                    return isQuick ? saved.library(for: profile).quickPages?.contains(where: { $0.id == id }) == true
+                        : saved.session.spaces.contains { $0.tabs.contains { $0.id == primaryID } }
+                }
             case "profile-clear", "peek-profile-clear":
                 guard let survivor = clearingSurvivor else { throw Failure.fixture("independent clearing survivor") }
                 let targetStore = web.configuration.websiteDataStore
@@ -1138,13 +1148,13 @@ extension WebsiteFullscreenChecks {
     static func exerciseCommands(base: URL) async throws {
         let owned = try OwnedWebsiteStores(), controllers = try OwnedExtensionControllers()
         guard await controllers.cleanup(), await owned.cleanup() else { throw Failure.fixture("command ownership recovery") }
-        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static", "suspend-static", "profile-clear", "peek-profile-clear"]
+        let regular = ["escape", "peek-escape", "location", "find", "close", "reader", "print", "pdf", "archive", "customize", "settings", "library", "coalesced", "coalesced-close", "focus-change", "new-tab", "sidebar", "next-tab", "next-space", "split", "file-prompt", "media-prompt", "warning", "script-alert", "script-confirm", "script-prompt", "archive-static", "suspend-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"]
         let scriptDialogs = ["script-alert", "script-confirm", "script-prompt"]
         let promptLifetimes = ["close-script-sheet", "navigate-script-sheet"]
         let peekLifetimes = ["peek-close-script-sheet", "peek-navigate-script-sheet", "peek-replace-script-sheet", "peek-replace-cancel-script-sheet"]
-        let compact = (["escape", "peek-escape", "location", "find", "reader", "close", "close-window-direct", "peek-parent-close", "peek-parent-model-close", "expire-static", "peek-expire-static", "profile-clear", "peek-profile-clear"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
+        let compact = (["escape", "peek-escape", "location", "find", "reader", "close", "close-window-direct", "peek-parent-close", "peek-parent-model-close", "expire-static", "peek-expire-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"] + scriptDialogs + promptLifetimes).map { "quick-" + $0 }
         let primaryWindowClosure = ["close-primary-window-direct", "peek-close-primary-window-direct"]
-        let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + primaryWindowClosure + (["escape", "location", "find", "reader", "close", "suspend-static", "profile-clear", "peek-profile-clear"] + scriptDialogs + promptLifetimes + peekLifetimes + primaryWindowClosure).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 } + ["quick-profile-delete", "quick-peek-profile-delete"]
+        let all = regular + ["close-direct", "close-direct-background", "handoff", "handoff-cancel", "handoff-close", "handoff-source-close", "handoff-source-navigate"] + promptLifetimes + peekLifetimes + primaryWindowClosure + (["escape", "location", "find", "reader", "close", "suspend-static", "profile-clear", "peek-profile-clear", "quit", "peek-quit"] + scriptDialogs + promptLifetimes + peekLifetimes + primaryWindowClosure).map { "private-" + $0 } + compact + compact.map { "private-" + $0 } + peekLifetimes.map { "quick-" + $0 } + peekLifetimes.map { "private-quick-" + $0 } + ["quick-profile-delete", "quick-peek-profile-delete"]
         let selected = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_CASES"].map { $0.split(separator: ",").map(String.init) } ?? []
         let group = ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_COMMAND_GROUP"] ?? ""
         guard ["", "primary", "private-primary", "quick"].contains(group), group.isEmpty || selected.isEmpty else {
@@ -1159,6 +1169,7 @@ extension WebsiteFullscreenChecks {
         for name in selected.isEmpty ? all : selected {
             let isPrivate = name.hasPrefix("private-"), presentation = isPrivate ? String(name.dropFirst(8)) : name
             let isQuick = presentation.hasPrefix("quick-"), kind = isQuick ? String(presentation.dropFirst(6)) : presentation
+            if ProcessInfo.processInfo.environment["ALCOVE_FULLSCREEN_SKIP_QUIT"] == "1" && ["quit", "peek-quit"].contains(kind) { continue }
             if group == "primary" && (isQuick || isPrivate) ||
                 group == "private-primary" && (isQuick || !isPrivate) ||
                 group == "quick" && !isQuick { continue }

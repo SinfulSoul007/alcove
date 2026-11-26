@@ -2,12 +2,14 @@
 """Build app-source regression and run only owned native windows/loopback pages."""
 import argparse
 import hashlib
+import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import threading
+import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -104,6 +106,7 @@ def main():
               'scripts/WebsiteFullscreenChecks.swift', 'scripts/WebsiteFullscreenContextChecks.swift',
               'scripts/WebsiteFullscreenCommandChecks.swift',
               'scripts/WebsiteFullscreenProfileDeletionChecks.swift',
+              'scripts/WebsiteFullscreenQuitChecks.swift',
               'scripts/OwnedWebsiteStores.swift', 'scripts/OwnedExtensionControllers.swift']
     if args.typecheck_only:
         command([*native, '-typecheck'])
@@ -152,12 +155,16 @@ def main():
         # Separate processes retain the same per-operation and process bounds.
         # The expanded matrix must finish every case; a partial aggregate run
         # cannot qualify a case it never reached. Run every group after failure.
-        selected = bool(env.get('ALCOVE_FULLSCREEN_COMMAND_CASES', ''))
-        groups = ['diagnostic'] if selected else ['primary', 'private-primary', 'quick']
+        quit_cases = [prefix + kind for prefix in ['', 'private-', 'quick-', 'private-quick-'] for kind in ['quit', 'peek-quit']]
+        selection = [name for name in env.get('ALCOVE_FULLSCREEN_COMMAND_CASES', '').split(',') if name]
+        selected_quits = [name for name in selection if name in quit_cases] if selection else quit_cases
+        ordinary = [name for name in selection if name not in quit_cases]
+        groups = (['diagnostic'] if ordinary else []) if selection else ['primary', 'private-primary', 'quick']
         failed = []
         for group in groups:
-            group_env = dict(env)
-            if selected:
+            group_env = dict(env, ALCOVE_FULLSCREEN_SKIP_QUIT='1')
+            if selection:
+                group_env['ALCOVE_FULLSCREEN_COMMAND_CASES'] = ','.join(ordinary)
                 group_env.pop('ALCOVE_FULLSCREEN_COMMAND_GROUP', None)
             else:
                 group_env['ALCOVE_FULLSCREEN_COMMAND_GROUP'] = group
@@ -169,6 +176,45 @@ def main():
                 print('FULLSCREEN_PROCESS_GROUP_FAILED', group, type(error).__name__, flush=True)
             else:
                 print('FULLSCREEN_PROCESS_GROUP_PASSED', group, flush=True)
+        for name in selected_quits:
+            with tempfile.TemporaryDirectory(prefix='owned-quit-', dir=OUT) as scratch:
+                child_env = dict(env, ALCOVE_FULLSCREEN_COMMAND_CASES=name, ALCOVE_FULLSCREEN_QUIT_ROOT=scratch)
+                child_env.pop('ALCOVE_FULLSCREEN_COMMAND_GROUP', None)
+                child_env.pop('ALCOVE_FULLSCREEN_SKIP_QUIT', None)
+                print('FULLSCREEN_QUIT_PROCESS_STARTED', name, flush=True)
+                pid = None
+                try:
+                    print('FULLSCREEN_STAGE', executable.name, 'actual native Quit', flush=True)
+                    process = subprocess.Popen([str(executable)], cwd=ROOT, env=child_env)
+                    pid = process.pid
+                    try:
+                        code = process.wait(timeout=325)
+                    except subprocess.TimeoutExpired:
+                        process.kill(); process.wait()
+                        raise
+                    if code != 0:
+                        raise subprocess.CalledProcessError(code, [str(executable)])
+                    result = json.loads((Path(scratch) / 'quit-result.json').read_text())
+                    assert result['formatVersion'] == 1 and result['case'] == name
+                    assert type(result['pid']) is int and result['pid'] == pid
+                    assert result['success'] is True and result['failures'] == 0 and result['checks'] > 0
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError, KeyError, AssertionError) as error:
+                    failed.append(name)
+                    print('FULLSCREEN_QUIT_PROCESS_FAILED', name, type(error).__name__, flush=True)
+                finally:
+                    cleanup_env = dict(env, ALCOVE_FULLSCREEN_QUIT_CLEANUP='1', ALCOVE_FULLSCREEN_QUIT_PID=str(pid or 0))
+                    try:
+                        command([str(executable)], timeout=325, env=cleanup_env)
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                        failed.append(name + '-cleanup')
+                        print('FULLSCREEN_QUIT_PROCESS_CLEANUP_FAILED', name, type(error).__name__, flush=True)
+                if name not in failed and name + '-cleanup' not in failed:
+                    private = name.startswith('private-')
+                    remainder = name[8:] if private else name
+                    quick = remainder.startswith('quick-')
+                    kind = remainder[6:] if quick else remainder
+                    print('FULLSCREEN_COMMAND_CASE_COMPLETED', kind, 'private', str(private).lower(), 'quick', str(quick).lower(), flush=True)
+                    print('FULLSCREEN_QUIT_PROCESS_EXITED', name, '0', flush=True)
         if failed:
             raise RuntimeError('Native fullscreen groups failed: ' + ', '.join(failed))
     finally:
