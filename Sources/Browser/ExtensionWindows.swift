@@ -108,7 +108,14 @@ struct NativeExtensionWindowKey:Hashable {let storeID:UUID,profileID:UUID,window
         if case .primary = reference.kind, !store.isPrivate, store.activeProfileID != key.profileID,
            let space = store.session.spaces.first(where:{$0.effectiveProfileID == key.profileID}) {store.selectSpace(space.id)}
         if case .quick(let id) = reference.kind {store.focusedQuickPageID = id}
-        if window.isMiniaturized {window.deminiaturize(nil)};window.makeKeyAndOrderFront(nil);completionHandler(nil)
+        if window.isMiniaturized {window.deminiaturize(nil)}
+        let target:NSWindow
+        if let web = fullscreenSource(in:window,store:store),let physical = web.window,
+           physical !== window,physical.isVisible,
+           (web as? SplitDropWebView)?.websiteFullscreen?.matches(physical) == true {
+            target = physical
+        } else {target = window}
+        target.makeKeyAndOrderFront(nil);completionHandler(nil)
     }
     func close(for context:WKWebExtensionContext,completionHandler:@escaping(Error?)->Void) {
         guard let (store,window) = live(context) else {completionHandler(ExtensionHostError.stale);return}
@@ -119,7 +126,30 @@ struct NativeExtensionWindowKey:Hashable {let storeID:UUID,profileID:UUID,window
                 completionHandler(ExtensionHostError.native("The main window contains other profiles. Close this account's tabs individually."));return
             }
         }
+        if let web = fullscreenSource(in:window,store:store),
+           let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen {
+            fullscreen.exitForRetirement { [weak self,weak window] restored in
+                guard restored else {
+                    completionHandler(ExtensionHostError.native("Could not leave fullscreen to close this window."));return
+                }
+                guard let self,let window,let (_,current) = self.live(context),current === window else {
+                    completionHandler(ExtensionHostError.stale);return
+                }
+                // Recheck profile protection and the current window delegate
+                // after the captured page has physically returned.
+                self.close(for:context,completionHandler:completionHandler)
+            }
+            return
+        }
         window.performClose(nil)
         completionHandler(store.extensionWindows[reference.kind] === reference ? ExtensionHostError.native("The window could not close.") : nil)
+    }
+    private func fullscreenSource(in window:NSWindow,store:BrowserStore) -> WKWebView? {
+        let profile = store.isPrivate ? BrowserProfile.defaultID : key.profileID
+        return (Array(store.views.values) + store.peekPages.values.map(\.web)).first { web in
+            guard store.profileID(for:web) == profile,
+                  let fullscreen = (web as? SplitDropWebView)?.websiteFullscreen else {return false}
+            return fullscreen.currentSource === web && fullscreen.logicalWindow === window
+        }
     }
 }
