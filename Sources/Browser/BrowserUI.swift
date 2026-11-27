@@ -302,7 +302,7 @@ struct BrowserUI: View {
                 Color.clear.frame(height: max(0, clearance - 8)).accessibilityHidden(true)
             }
             if !store.savingEnabled && !store.isPrivate {
-                HStack { Text("Local saving is paused. Your existing data is preserved."); Spacer(); Button(store.unlocking ? "Unlocking…" : "Unlock") { store.unlockLocalData() }.disabled(store.unlocking) }.font(.system(size: 11)).padding(9).background(Color.orange.opacity(0.18))
+                HStack { Text("Local saving is paused. Your existing data is preserved."); Spacer(); Button(store.metadataWriter.vault != nil ? (store.unlocking ? "Retrying…" : "Retry Saving") : (store.unlocking ? "Unlocking…" : "Unlock")) { store.unlockLocalData() }.disabled(store.unlocking) }.font(.system(size: 11)).padding(9).background(Color.orange.opacity(0.18))
             }
             if store.isPrivate { Text("PRIVATE WINDOW · History is not saved. Downloads stay on disk.").font(.system(size: 10)).foregroundStyle(.white).frame(maxWidth: .infinity).padding(6).background(.indigo) }
             if let web = store.currentView, let listing = store.extensionMarketplaceListing(for: web),

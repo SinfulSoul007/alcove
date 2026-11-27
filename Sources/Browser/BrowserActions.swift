@@ -10,7 +10,15 @@ extension BrowserStore {
         guard !isPrivate, !savingEnabled, !unlocking, !isShuttingDown else { return false }
         let writer = metadataWriter
         if writer !== self { return writer.unlockLocalData(keyProvider: keyProvider, persist: persist) }
-        let access = keyProvider.map { provider in MetadataKeyAccess { _, _ in try provider() } } ?? metadataKeyAccess
+        let access: MetadataKeyAccess
+        if let keyProvider {
+            access = MetadataKeyAccess { _, _ in try keyProvider() }
+        } else if !awaitingInitialMetadata, let unlocked = vault {
+            // A write failure does not lock an already authorized in-memory key.
+            // Keep the normal authenticated restore/merge path below intact.
+            let key = unlocked.key
+            access = MetadataKeyAccess { _, _ in key }
+        } else { access = metadataKeyAccess }
         if awaitingInitialMetadata { return beginInitialMetadataLoad(access: access, allowInteraction: true) }
         do { try acquireMetadataOwnership() }
         catch { message = error.localizedDescription; return false }

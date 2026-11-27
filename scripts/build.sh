@@ -47,6 +47,11 @@ run_easel_tab_checks() {
     "$MANUAL/easel-tab-checks"
 }
 if [[ "${1:-}" == "easel-tab-test" ]]; then run_easel_route_checks; run_easel_tab_checks; exit; fi
+run_metadata_cached_retry_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/MetadataCachedRetryChecks.swift -o "$MANUAL/metadata-cached-retry-checks"
+    "$MANUAL/metadata-cached-retry-checks"
+}
+if [[ "${1:-}" == "metadata-cached-retry-test" ]]; then run_metadata_cached_retry_checks; exit; fi
 run_bookmark_export_store_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/BookmarkExportStoreChecks.swift -o "$MANUAL/bookmark-export-store-checks"
     "$MANUAL/bookmark-export-store-checks"
@@ -474,6 +479,7 @@ if [[ "${1:-}" == "profile-store-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    run_metadata_cached_retry_checks
     run_easel_tab_checks
     run_easel_route_checks
     run_easel_core_checks
