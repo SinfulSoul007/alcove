@@ -63,6 +63,7 @@ extension BrowserStore {
         let operationLease = try MetadataOwnership.acquire(for:sessionURL);defer {operationLease.release()}
         let extensionControllerID = profiles[index].extensionControllerID,installedExtensions = extensionRecords(profileID:id)
         let extensionNamespaces = try retainedExtensionNamespaces(profileID:id)
+        let easelAssetErasure = try prepareEaselAssetErasure(for: id)
         deletingProfileID = id; defer { deletingProfileID = nil }
         var candidate = makeDocument(); candidate.profiles?[index].pendingDeletion = true
         var records = candidate.library(for: id)
@@ -70,6 +71,7 @@ extension BrowserStore {
         records.quickPages = []; candidate.setLibrary(records, for: id)
         try commitProfileDocument(candidate)
         existingEaselDrafts?.invalidate(profileID: id)
+        invalidateEaselImages(for: id)
         closeProfilePages(id)
         var erasureDataStore:WKWebsiteDataStore? = extensionNamespaces.isEmpty ? nil : (namedDataStores[id] ?? WKWebsiteDataStore(forIdentifier:id))
         namedDataStores.removeValue(forKey: id)
@@ -88,6 +90,7 @@ extension BrowserStore {
             try operationLease.validate()
             try await removeStore(id)
             guard !isShuttingDown else { throw CancellationError() }
+            try eraseEaselAssets(for: id, using: easelAssetErasure)
         }
         catch { message = "Couldn’t remove this profile’s website data. Its entry and library were kept so you can retry. \(error.localizedDescription)"; throw error }
         var finished = makeDocument()
@@ -118,6 +121,7 @@ extension BrowserStore {
         try await retireFullscreenProfilePages(id)
         try validateProfileClear(id)
         try existingEaselDrafts?.flush(profileID: id)
+        invalidateEaselImages(for: id)
         if !isPrivate { guard ProfileDataOperations.shared.begin(id) else { throw ProfileError.busy } }
         defer { if !isPrivate { ProfileDataOperations.shared.finish(id) } }
         let extensionControllerID = profiles.first(where:{$0.id == id})?.extensionControllerID

@@ -9,6 +9,7 @@ extension BrowserStore {
         let addresses = focusedID.map { pinnedAddressActions(for: $0) } ?? .unavailable
         return BrowserCommand.allCases.filter { command in
             switch command {
+            case .capturePage: return canRequestPageCapture
             case .reader: return (primaryPeekView ?? currentView).map { canToggleReader(for: $0) } ?? false
             case .pin: return canChangeTabMetadata && selectedTab?.url.isEmpty == false
             case .unpin: return canChangeTabMetadata && selectedTab?.pinned == true
@@ -40,6 +41,7 @@ extension BrowserStore {
         commandVisible = false; commandOpensNewTab = false
         switch command {
         case .newEasel: requestNewEasel()
+        case .capturePage: requestPageCapture()
         case .reader: if let web = primaryPeekView ?? currentView { toggleReader(web) }
         case .pin: if let tab = selectedTab, !tab.pinned { togglePin(tab.id) }
         case .unpin: if let tab = selectedTab, tab.pinned { togglePin(tab.id) }

@@ -68,6 +68,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var onboardingDidFinish: (() -> Void)?
     var quickPagesDidChange: (() -> Void)?
     var quickPageRequested: ((UUID) -> Void)?
+    var capturePageRequested: ((WKWebView) -> Void)?
     var focusedQuickPageID: UUID?
     var quickActivityTimes: [UUID: Date] = [:]
     var quickArchiveProbeID: UUID?
@@ -167,6 +168,10 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var extensionPrimaryWindowRequested:(()->Void)?
     var vault: MetadataStore?
     var retainedEaselDrafts: EaselDraftCoordinator?
+    var easelAssetStores: [UUID: EaselAssetStore] = [:]
+    var easelImageGenerations: [UUID: UUID] = [:]
+    let easelCanvasViews = NSHashTable<EaselCanvasView>.weakObjects()
+    var retainedEaselImagePreviews: EaselImagePreviewCache?
     @Published var savingEnabled = true { didSet { windowGroup?.writerStateDidChange(from: self) } }
     @Published var unlocking = false { didSet { windowGroup?.writerStateDidChange(from: self) } }
     @Published var awaitingInitialMetadata = false { didSet { windowGroup?.writerStateDidChange(from: self) } }
@@ -402,6 +407,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     func shutdown() {
         guard !isShuttingDown else { return }
         retainedEaselDrafts?.invalidate(); retainedEaselDrafts = nil
+        closeEaselAssets()
         tabSelectionGeneration = UUID(); fullscreenSelectionRequests.removeAll()
         cancelAllWebsitePrompts()
         closeExtensionManagers()

@@ -15,6 +15,11 @@ import Combine
     @Published private(set) var selection: Set<UUID> = []
     @Published private(set) var zoom: CGFloat = 1
     private let history = UndoManager()
+    private var historyImageIDs: Set<UUID> = []
+    func retainedImageIDs(profile: UUID) -> Set<UUID> {
+        guard let context, context.profileID == profile, isCurrentPresentation else { return [] }
+        return historyImageIDs
+    }
     private lazy var historyTarget = EaselCanvasHistory(owner: self)
     override var undoManager: UndoManager? { history }
     private struct Gesture {
@@ -37,6 +42,7 @@ import Combine
     init(store: BrowserStore, tabID: UUID) {
         self.store = store; self.tabID = tabID
         super.init(frame: .zero)
+        (store.isPrivate ? store : store.metadataWriter).easelCanvasViews.add(self)
         drawsBackground = false; borderType = .noBorder
         hasVerticalScroller = true; hasHorizontalScroller = true; autohidesScrollers = true
         allowsMagnification = true; minMagnification = 0.25; maxMagnification = 2
@@ -60,10 +66,12 @@ import Combine
     func reconcile() {
         guard let context else {
             for card in cards.values { card.removeFromSuperview() }
-            cards.removeAll(); renderedProfileID = nil; renderedEaselID = nil; return
+            cards.removeAll(); renderedProfileID = nil; renderedEaselID = nil
+            if !history.isUndoing && !history.isRedoing { history.removeAllActions() }; historyImageIDs.removeAll(); return
         }
         let board = context.easel
         if renderedProfileID != context.profileID || renderedEaselID != board.id {
+            if !history.isUndoing && !history.isRedoing { history.removeAllActions() }; historyImageIDs.removeAll()
             for card in cards.values { card.removeFromSuperview() }
             cards.removeAll(); renderedProfileID = context.profileID; renderedEaselID = board.id
         }
@@ -144,6 +152,9 @@ import Combine
         reconcile(); return true
     }
     private func registerUndo(_ snapshot: Easel, profileID: UUID, expected: UUID, name: String) {
+        historyImageIDs.formUnion(snapshot.items.compactMap { item -> UUID? in
+            if case .image(let id, _, _, _, _) = item.content { return id }; return nil
+        })
         let grouped = !history.isUndoing && !history.isRedoing
         if grouped { history.beginUndoGrouping() }
         history.registerUndo(withTarget: historyTarget) { target in
@@ -162,6 +173,14 @@ import Combine
             let changes: [EaselEdit] = [.remove(Set(current.items.map(\.id)))] + snapshot.items.map(EaselEdit.insert) + [.rename(snapshot.title)]
             _ = try commit(changes, expected: expected, name: name)
         } catch { store?.message = "Couldn’t undo this canvas edit. " + error.localizedDescription; reconcile() }
+    }
+    @discardableResult func addImage(_ raster: EaselRaster, to destination: EaselImageDestination) throws -> EaselItem {
+        guard activate(), let store, destination.tabID == tabID, let context else { throw EaselActionError.missing }
+        let item = try store.addEaselImage(raster, to: destination)
+        guard let after = self.context else { throw EaselActionError.missing }
+        registerUndo(context.easel, profileID: context.profileID, expected: after.easel.revision, name: "Add Image")
+        reconcile(); select(item.id); window?.makeFirstResponder(canvas)
+        return item
     }
     @discardableResult func addNote() -> UUID? { add(.note(text: ""), width: 320, height: 240, name: "Add Note") }
     @discardableResult func addLink(title: String, url: String) -> UUID? { add(.link(title: title, url: url), width: 300, height: 150, name: "Add Link") }

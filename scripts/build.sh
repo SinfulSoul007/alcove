@@ -61,6 +61,19 @@ run_easel_canvas_checks() {
     done
 }
 if [[ "${1:-}" == "easel-canvas-test" ]]; then run_easel_canvas_checks; exit; fi
+run_easel_image_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors Sources/Browser/EaselImageImport.swift scripts/EaselImageChecks.swift -o "$MANUAL/easel-image-checks"
+    "$MANUAL/easel-image-checks"
+    for fixture in EaselImagePublicationChecks EaselImagePreviewChecks; do
+        xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" "scripts/$fixture.swift" -o "$MANUAL/$fixture"
+        "$MANUAL/$fixture"
+    done
+    for fixture in EaselCaptureChecks EaselCaptureCoordinatorChecks; do
+        xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift "scripts/$fixture.swift" -o "$MANUAL/$fixture"
+        "$MANUAL/$fixture"
+    done
+}
+if [[ "${1:-}" == "easel-image-test" ]]; then run_easel_image_checks; exit; fi
 run_metadata_cached_retry_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/MetadataCachedRetryChecks.swift -o "$MANUAL/metadata-cached-retry-checks"
     "$MANUAL/metadata-cached-retry-checks"
@@ -497,6 +510,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_easel_tab_checks
     run_easel_draft_checks
     run_easel_canvas_checks
+    run_easel_image_checks
     run_easel_route_checks
     run_easel_core_checks
     run_bookmark_export_core_checks

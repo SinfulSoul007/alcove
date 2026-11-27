@@ -51,6 +51,7 @@ struct EaselPane: View {
                 Menu {
                     Button("Add Note") { canvas.addNote() }
                     Button("Add Link…") { canvas.requestLink() }
+                    Button("Add Image…") { canvas.requestImageImport() }
                     Button("Rename Easel…") { canvas.requestRename() }
                     Menu("Arrange Selected Cards") {
                         Button("Bring to Front") { canvas.bringSelectedToFront() }
@@ -83,6 +84,7 @@ struct EaselPane: View {
             }
             Button { canvas.addNote() } label: { Label("Note", systemImage: "note.text.badge.plus") }.help("Add a note")
             Button { canvas.requestLink() } label: { Label("Link", systemImage: "link.badge.plus") }.help("Add a link")
+            Button { canvas.requestImageImport() } label: { Label("Image", systemImage: "photo.badge.plus") }.help("Add an image")
             Menu {
                 Button("Bring to Front") { canvas.bringSelectedToFront() }
                 Button("Move Left") { canvas.moveSelected(dx: -20, dy: 0) }

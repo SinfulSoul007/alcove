@@ -39,6 +39,7 @@ extension BrowserStore {
         records.easels?.removeAll { $0.id == id }
         candidate.setLibrary(records, for: profileID)
         try commitQuickDocument(candidate, discarding: removed, beforePublish: { self.existingEaselDrafts?.invalidate(easelID: id, profileID: profileID) })
+        do { try pruneEaselAssets(for: profileID) } catch { message = "Canvas deleted. Unused image cleanup can be retried: " + error.localizedDescription }
     }
     func requestLibraryEaselRename(_ id: UUID, profileID: UUID) {
         guard activeProfileID == profileID, let board = library.easels?.first(where: { $0.id == id }) else { return }

@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var preparingMetadataOwners: Set<UUID> = []
     var pendingStartupQuickRequests:[UUID:Int] = [:]
     var quickWindows: [QuickWindowKey: QuickBrowseWindowController] = [:]
+    let easelCapture = EaselCaptureCoordinator()
     let pageOutput: PageOutputCoordinator
     lazy var bookmarkExports = BookmarkExportController(output: pageOutput)
     let outputTermination: PageOutputTermination
@@ -110,6 +111,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case .webArchive: pageOutput.save(web: target.web, store: target.store, window: target.window, format: .webArchive)
         }
     }
+    func performPageCapture(in window: NSWindow?) {
+        guard let target = outputTarget(in: window) else { return }
+        if deferFullscreenCommand(in: window, documentBound: true, perform: { [weak self, weak window = target.window] in
+            self?.performPageCapture(in: window)
+        }) { return }
+        easelCapture.capture(web: target.web, store: target.store, window: target.window)
+    }
+    @objc func capturePage() { performPageCapture(in: activeBrowserWindow) }
     @objc func toggleReader() {
         if deferFullscreenCommand(documentBound: true, perform: { [weak self] in self?.toggleReader() }) { return }
         if let target = outputTarget(in: activeBrowserWindow) { target.store.toggleReader(target.web) }
@@ -180,6 +189,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         return owner
     }
     private func configurePrimaryActions(_ store: BrowserStore, owner: BrowserWindowOwner) {
+        store.capturePageRequested = { [weak self, weak store] web in
+            guard let self, let store, let target = self.outputTarget(in: web.window), target.store === store, target.web === web else { return }
+            self.performPageCapture(in: web.window)
+        }
         store.privateWindowRequested = { [weak self] in self?.openWindow(isPrivate: true) }
         store.extensionPrimaryWindowRequested = { [weak self,weak owner] in if let owner {self?.openPrimary(owner)} }
         store.onboardingDidFinish = { [weak self, weak store] in if let store { self?.checkAutomaticallyIfNeeded(store) } }
@@ -568,6 +581,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(file, "Duplicate Tab", #selector(duplicateTab), "")
         add(file, "New Space…", #selector(newSpace), "n", [.command, .control]); add(file, "Open Location…", #selector(location), "l")
         add(file, "New Easel", #selector(newEasel), "")
+        add(file, "Capture Page to Easel…", #selector(capturePage), "")
         add(file, "New Folder…", #selector(newFolder), "")
         add(file, "Import Bookmarks HTML…", #selector(importBookmarks), "")
         add(file, "Export Bookmarks HTML…", #selector(exportBookmarks), "")
@@ -614,6 +628,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let target = outputTarget(in: activeBrowserWindow) else { return false }
             menuItem.title = target.store.readerSession(for: target.web) == nil ? "Show Reader" : "Exit Reader"
             return target.window.attachedSheet == nil && target.web.window?.attachedSheet == nil && target.store.canToggleReader(for: target.web)
+        }
+        if menuItem.action == #selector(capturePage) {
+            guard let target = outputTarget(in: activeBrowserWindow) else { return false }
+            return target.window.attachedSheet == nil && !easelCapture.isBusy(in: target.window) && target.store.canCapturePage(target.web)
         }
         let outputActions: Set<Selector> = [#selector(printPage), #selector(exportPDF), #selector(savePage)]
         if let action = menuItem.action, outputActions.contains(action) {

@@ -31,6 +31,8 @@ import BrowserCore
     let itemID: UUID
     var layerIndex = 0
     private(set) var noteView: EaselNoteTextView?
+    private(set) var imageContent: EaselImageCardContent?
+    private var imageSource: NSButton?
     private weak var owner: EaselCanvasView?
     private let textScroll = NSScrollView()
     private let dragHandle = EaselGestureHandle(resizing: false)
@@ -71,7 +73,10 @@ import BrowserCore
             button.bezelStyle = .inline; button.isBordered = false; button.alignment = .left; button.lineBreakMode = .byTruncatingTail
             button.font = .systemFont(ofSize: 15, weight: .medium); linkButton = button; addSubview(button)
         case .image:
-            let label = NSTextField(labelWithString: "Image"); label.alignment = .center; label.frame = bounds.insetBy(dx: 12, dy: 30); label.autoresizingMask = [.width, .height]; addSubview(label)
+            let content = EaselImageCardContent(frame: .zero); imageContent = content; addSubview(content)
+            let source = NSButton(title: "", target: self, action: #selector(openImageSource))
+            source.isBordered = false; source.alignment = .left; source.lineBreakMode = .byTruncatingTail
+            source.font = .systemFont(ofSize: 11); imageSource = source; addSubview(source)
         }
         update(item, updateFrame: true)
     }
@@ -80,7 +85,7 @@ import BrowserCore
         switch item.content {
         case .note: return noteView != nil
         case .link: return linkButton != nil
-        case .image: return noteView == nil && linkButton == nil
+        case .image: return imageContent != nil
         }
     }
     private var isCurrentScope: Bool {
@@ -109,7 +114,17 @@ import BrowserCore
             if let draftKey { store.easelDrafts.attach(self, for: draftKey) }
             setAccessibilityLabel("Note card")
         case .link(let title, let url): linkButton?.title = "↗  " + title; linkURL = url; linkButton?.toolTip = url; setAccessibilityLabel(title)
-        case .image: setAccessibilityLabel("Image card")
+        case .image(let asset, _, _, let url, let title):
+            savedItem = item
+            imageContent?.configure(store: store, profile: context.profileID, asset: asset, isCurrent: { [weak self] in
+                guard let self, self.isCurrent, let actual = self.owner?.context?.easel.items.first(where: { $0.id == self.itemID }),
+                      case .image(let currentAsset, _, _, _, _) = actual.content else { return false }
+                return currentAsset == asset
+            })
+            imageSource?.title = "↗  " + (title ?? url ?? "")
+            imageSource?.toolTip = url; imageSource?.isHidden = url == nil
+            imageSource?.setAccessibilityLabel(title ?? "Open image source")
+            setAccessibilityLabel(title.map { "Image from " + $0 } ?? "Image card")
         }
         needsLayout = true; needsDisplay = true
     }
@@ -119,6 +134,8 @@ import BrowserCore
         resizeHandle.frame = NSRect(x: bounds.width - 20, y: bounds.height - 20, width: 20, height: 20)
         textScroll.frame = NSRect(x: 12, y: 30, width: max(1, bounds.width - 24), height: max(1, bounds.height - 42))
         linkButton?.frame = NSRect(x: 16, y: 38, width: max(1, bounds.width - 32), height: max(1, bounds.height - 54))
+        imageContent?.frame = NSRect(x: 12, y: 30, width: max(1, bounds.width - 24), height: max(1, bounds.height - (imageSource?.isHidden == false ? 60 : 42)))
+        imageSource?.frame = NSRect(x: 12, y: bounds.height - 27, width: max(1, bounds.width - 36), height: 18)
         if let noteView { noteView.setFrameSize(NSSize(width: max(1, textScroll.contentSize.width), height: max(noteView.frame.height, textScroll.contentSize.height))) }
     }
     override func draw(_ dirtyRect: NSRect) {
@@ -145,6 +162,11 @@ import BrowserCore
     }
     func finishEaselDraftEditing() { noteView?.unmarkText() }
     @objc private func openLink() { if isCurrent, owner?.activate() == true, let linkURL, let url = URL(string: linkURL) { _ = owner?.store?.newTab(url: url) } }
+    @objc private func openImageSource() {
+        guard isCurrent, owner?.activate() == true, case .image(_, _, _, let source, _) = savedItem.content,
+              let source, let url = URL(string: source) else { return }
+        _ = owner?.store?.newTab(url: url)
+    }
     func beginDrag(resizing: Bool) -> Bool { isCurrent && (owner?.beginGesture(itemID: itemID, resizing: resizing) ?? false) }
     func previewDrag(dx: Double, dy: Double) { owner?.previewGesture(dx: dx, dy: dy) }
     func endDrag() { _ = owner?.endGesture() }

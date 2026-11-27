@@ -44,6 +44,13 @@ public final class EaselAssetStore {
         mutex.lock(); defer { mutex.unlock() }
         if let disk { try disk.remove(id) } else { memory.removeValue(forKey: id) }
     }
+    /// Call only with references from the already-durable profile library.
+    public func prune(retaining ids: Set<UUID>) throws {
+        mutex.lock(); defer { mutex.unlock() }
+        if let disk { try disk.prune(retaining: ids) }
+        else { memory = memory.filter { ids.contains($0.key) } }
+    }
+
 }
 
 /// Borrowed descriptors: verifies that a name still refers to the opened file
@@ -225,4 +232,45 @@ private final class EaselAssetDirectory {
         try validate()
         try entry(fd, id).removeIfOwned()
     }
+    func prune(retaining ids: Set<UUID>) throws {
+        try validate()
+        let fd = openat(profileFD, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { throw EaselAssetError.system(errno) }
+        guard let directory = fdopendir(fd) else { Darwin.close(fd); throw EaselAssetError.system(errno) }
+        defer { closedir(directory) }
+        var candidates: [String] = []
+        while true {
+            errno = 0
+            guard let next = readdir(directory) else {
+                guard errno == 0 else { throw EaselAssetError.system(errno) }; break
+            }
+            let name = withUnsafeBytes(of: &next.pointee.d_name) { String(cString: $0.baseAddress!.assumingMemoryBound(to: CChar.self)) }
+            let id: UUID?
+            if name.hasSuffix(".sealed") {
+                id = UUID(uuidString: String(name.dropLast(7)))
+                guard let id, name == self.name(id), !ids.contains(id) else { continue }
+            } else if name.hasPrefix(".pending-") {
+                id = UUID(uuidString: String(name.dropFirst(9)))
+                guard let id, name == ".pending-" + id.uuidString else { continue }
+            } else { continue }
+            guard candidates.count < 100000 else { throw EaselAssetError.unsafeEntry }
+            candidates.append(name)
+        }
+        // Validate all candidates before unlinking any. Every actual removal
+        // checks the held descriptor against its current named entry again.
+        func opened(_ name: String) throws -> Int32 {
+            let fd = openat(profileFD, name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+            guard fd >= 0 else { throw EaselAssetError.system(errno) }
+            do { _ = try EaselAssetEntry(descriptor: fd, directoryDescriptor: profileFD, name: name).validate(); return fd }
+            catch { Darwin.close(fd); throw error }
+        }
+        for name in candidates { let held = try opened(name); Darwin.close(held) }
+        for name in candidates {
+            try validate()
+            let held = try opened(name); defer { Darwin.close(held) }
+            _ = try EaselAssetEntry(descriptor: held, directoryDescriptor: profileFD, name: name).removeIfOwned()
+        }
+        try validate()
+    }
+
 }

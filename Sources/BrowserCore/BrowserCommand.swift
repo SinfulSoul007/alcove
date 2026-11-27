@@ -4,7 +4,7 @@ public enum BrowserCommand: String, CaseIterable, Identifiable {
     case collapsePinned, expandPinned, renameTab, duplicateTab
     case returnToPinnedURL, returnToPinnedURLKeepingPage
     case editPinnedURL, useCurrentPinnedURL, reader
-    case newEasel
+    case newEasel, capturePage
     public func matches(_ query: String) -> Bool {
         let searchable = self == .linkRouting ? title + " Link Preferences Air Traffic Control" : self == .boosts ? title + " Create Boost This Site" : title
         let words = searchable.lowercased().split(whereSeparator: { $0.isWhitespace })
@@ -15,6 +15,7 @@ public enum BrowserCommand: String, CaseIterable, Identifiable {
     public var title: String {
         switch self {
         case .newEasel: return "New Easel"
+        case .capturePage: return "Capture Page to Easel"
         case .reader: return "Toggle Reader Mode"
         case .pin: return "Pin Tab"
         case .unpin: return "Unpin Tab"

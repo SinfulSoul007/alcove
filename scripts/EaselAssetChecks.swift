@@ -158,6 +158,22 @@ import Darwin
         try privateStore.remove(privateID)
         check(try privateStore.read(privateID) == nil, "Removing a private capture releases its in-memory reference")
         check(try fm.subpathsOfDirectory(atPath: root.path).sorted() == snapshot, "Private operations create, modify or delete no filesystem entries")
+        let pruneRoot = try directory("pruning")
+        let pruning = try EaselAssetStore(root: pruneRoot, profileID: owner, key: key)
+        let keep = try pruning.put(bytes), orphan = try pruning.put(bytes)
+        let unowned = pruneRoot.appendingPathComponent("Easels/" + owner.uuidString + "/readme.txt")
+        try bytes.write(to: unowned)
+        try pruning.prune(retaining: [keep])
+        check(try pruning.read(keep) == bytes && pruning.read(orphan) == nil, "Pruning removes only unreferenced asset identities")
+        check(fm.fileExists(atPath: unowned.path), "Pruning leaves unrelated files alone")
+        let malicious = pruneRoot.appendingPathComponent("Easels/" + owner.uuidString + "/" + UUID().uuidString + ".sealed")
+        try fm.createSymbolicLink(at: malicious, withDestinationURL: unowned)
+        rejects("Pruning refuses an unowned link instead of following it") { try pruning.prune(retaining: []) }
+        check(fm.fileExists(atPath: unowned.path), "Rejected pruning never deletes a link target")
+        rejects("Revoked ownership prevents whole-profile pruning") { try leased.prune(retaining: []) }
+        let memoryKeep = try privateStore.put(bytes), memoryOrphan = try privateStore.put(bytes)
+        try privateStore.prune(retaining: [memoryKeep])
+        check(try privateStore.read(memoryKeep) == bytes && privateStore.read(memoryOrphan) == nil, "Private pruning keeps referenced bytes and releases orphan memory")
         print("Easel asset checks: \(checks) checked, \(failures) failed")
         exit(failures == 0 ? 0 : 1)
     }

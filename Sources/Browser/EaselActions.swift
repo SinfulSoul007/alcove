@@ -57,7 +57,7 @@ extension BrowserStore {
         return tabID
     }
 
-    private func insertEaselTab(_ board: Easel, in spaceID: UUID, document: inout BrowserDocument) throws -> UUID {
+    func insertEaselTab(_ board: Easel, in spaceID: UUID, document: inout BrowserDocument) throws -> UUID {
         guard let index = document.session.spaces.firstIndex(where: { $0.id == spaceID }) else { throw SpaceManagementError.missingSpace }
         let destination = EaselRoute(id: board.id).url.absoluteString
         var tab = BrowserCore.Tab(title: board.title, url: destination, pinned: true)
