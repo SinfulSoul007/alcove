@@ -449,6 +449,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func windowShouldClose(_ window: NSWindow) -> Bool {
         guard !terminating, let store = windows[window] else { return true }
         if deferFullscreenWindowClose(window, store: store) { return false }
+        guard store.flushEaselDrafts() else { return false }
         guard store.extensionPopupProfileID != nil else { return true }
         do { try store.closeExtensionPopupTabs(); return true }
         catch { store.message = error.localizedDescription; return false }
@@ -510,6 +511,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func terminationDecision(reply: @escaping (Bool) -> Void) -> NSApplication.TerminateReply { outputTermination.decision(reply: reply) }
     func resurfaceQuitChoices() -> Bool { outputTermination.resurface() }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        var seenDrafts = Set<ObjectIdentifier>()
+        for store in windows.values {
+            guard let drafts = store.existingEaselDrafts, seenDrafts.insert(ObjectIdentifier(drafts)).inserted else { continue }
+            do { try drafts.flushAll() }
+            catch { store.message = "A canvas note has unsaved changes. " + error.localizedDescription; return .terminateCancel }
+        }
         let decision = terminationDecision { [weak self] allowed in
             if allowed { self?.terminating = true }
             sender.reply(toApplicationShouldTerminate: allowed)

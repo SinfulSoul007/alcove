@@ -166,6 +166,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var extensionManagers:[UUID:ExtensionManagerWindowController] = [:]
     var extensionPrimaryWindowRequested:(()->Void)?
     var vault: MetadataStore?
+    var retainedEaselDrafts: EaselDraftCoordinator?
     @Published var savingEnabled = true { didSet { windowGroup?.writerStateDidChange(from: self) } }
     @Published var unlocking = false { didSet { windowGroup?.writerStateDidChange(from: self) } }
     @Published var awaitingInitialMetadata = false { didSet { windowGroup?.writerStateDidChange(from: self) } }
@@ -400,6 +401,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func shutdown() {
         guard !isShuttingDown else { return }
+        retainedEaselDrafts?.invalidate(); retainedEaselDrafts = nil
         tabSelectionGeneration = UUID(); fullscreenSelectionRequests.removeAll()
         cancelAllWebsitePrompts()
         closeExtensionManagers()
@@ -500,6 +502,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return tab.id
     }
     func close(_ id: UUID) {
+        guard flushEaselDrafts(tabID: id) else { return }
         for owner in pageStores {
             if let web = owner.views[id] { owner.fullscreenSelectionRequests.removeValue(forKey: ObjectIdentifier(web)) }
         }
@@ -633,6 +636,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
             let id = new && !reusableBlank ? newTab() : (focusedID ?? newTab())
             if let windowGroup, !windowGroup.claimPresentation(tabID: id, in: self) { throw SearchInputError.contextChanged }
             if !new, let web = views[id], extensionOriginPopups.contains(web) { throw ExtensionHostError.unsupportedWebsitePopup }
+            try existingEaselDrafts?.flush(tabID: id)
             commandVisible = false
             update(id) { $0.url = url.absoluteString; $0.title = url.host ?? "Page" }
             loadWebsite(view(for: id), to: url)

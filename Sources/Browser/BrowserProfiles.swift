@@ -69,6 +69,7 @@ extension BrowserStore {
         for page in records.quickPages ?? [] { if let archived = archivedQuickTab(page) { records.archive.insert(archived, at: 0) } }
         records.quickPages = []; candidate.setLibrary(records, for: id)
         try commitProfileDocument(candidate)
+        existingEaselDrafts?.invalidate(profileID: id)
         closeProfilePages(id)
         var erasureDataStore:WKWebsiteDataStore? = extensionNamespaces.isEmpty ? nil : (namedDataStores[id] ?? WKWebsiteDataStore(forIdentifier:id))
         namedDataStores.removeValue(forKey: id)
@@ -116,6 +117,7 @@ extension BrowserStore {
         try validateProfileClear(id)
         try await retireFullscreenProfilePages(id)
         try validateProfileClear(id)
+        try existingEaselDrafts?.flush(profileID: id)
         if !isPrivate { guard ProfileDataOperations.shared.begin(id) else { throw ProfileError.busy } }
         defer { if !isPrivate { ProfileDataOperations.shared.finish(id) } }
         let extensionControllerID = profiles.first(where:{$0.id == id})?.extensionControllerID
@@ -330,6 +332,7 @@ extension BrowserStore {
         guard let profile = profiles.first(where: { $0.id == id }), let index = session.spaces.firstIndex(where: { $0.id == spaceID }) else { throw ProfileError.missing }
         guard !profile.isPendingDeletion, !profile.isPendingClear else { throw ProfileError.pending }
         guard session.spaces[index].effectiveProfileID != id else { return }
+        try existingEaselDrafts?.flush(tabIDs: Set(session.spaces[index].tabs.map(\.id)))
         var candidate = makeDocument()
         candidate.session.spaces[index].tabs.removeAll { $0.favorite == true }
         candidate.session.spaces[index].profileID = id
@@ -342,6 +345,7 @@ extension BrowserStore {
         let changingProfile = !isPrivate && sourceProfile != dest.effectiveProfileID
         guard !changingProfile || allowProfileChange else { return false }
         guard isPrivate || (profiles.contains(where: { $0.id == dest.effectiveProfileID && !$0.isPendingDeletion && !$0.isPendingClear }) && !profileUnavailable(sourceProfile)) else { return false }
+        if changingProfile && !flushEaselDrafts(tabID: id) { return false }
         var candidate = makeDocument()
         if source == nil, let index = candidate.session.spaces.firstIndex(where: { $0.id == destination }) { candidate.session.spaces[index].tabs.append(original) }
         candidate.session.placeTab(id, in: destination, section: section, before: target)

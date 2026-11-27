@@ -52,6 +52,7 @@ extension BrowserStore {
     }
     @discardableResult func deleteSpace(_ id:UUID,now:Date = Date()) throws -> UUID {
         let index = try requireManagedSpace(id)
+        try existingEaselDrafts?.flush(tabIDs: Set(session.spaces[index].tabs.map(\.id)))
         let owner = isPrivate ? BrowserProfile.defaultID : session.spaces[index].effectiveProfileID
         var candidate = makeDocument(); SpaceSymbol.stabilize(in:&candidate.session)
         let removed = candidate.session.spaces.remove(at:index)

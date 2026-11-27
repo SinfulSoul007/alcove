@@ -241,9 +241,7 @@ struct BrowserUI: View {
                     SpacesPanel(store:store,topInset:chrome.height).frame(width:managerWidth).frame(maxHeight:.infinity)
                         .transition(reduceMotion ? .opacity : .move(edge:.leading).combined(with:.opacity))
                 }
-                if let message = store.message,!managerShown {
-                    VStack { Spacer(); BrowserStatusBanner(store:store,message:message).shadow(radius:10).padding(24) }.frame(maxWidth:.infinity)
-                }
+                if !managerShown { EaselDraftRecovery(store: store) }
                 if let switcher = store.visibleRecentTabSwitcher {
                     Color.black.opacity(0.24).ignoresSafeArea().onTapGesture { store.cancelRecentTabSwitcher() }
                         .accessibilityHidden(true)

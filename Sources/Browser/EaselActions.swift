@@ -70,6 +70,11 @@ extension BrowserStore {
     }
 
     @discardableResult func editEasel(in tabID: UUID, expectedRevision: UUID, edits: [EaselEdit], at date: Date = Date()) throws -> Easel {
+        try existingEaselDrafts?.flush(tabID: tabID)
+        return try commitEaselEdits(in: tabID, expectedRevision: expectedRevision, edits: edits, at: date)
+    }
+    /// The draft coordinator uses this transaction primitive to avoid recursive flushing.
+    @discardableResult func commitEaselEdits(in tabID: UUID, expectedRevision: UUID, edits: [EaselEdit], at date: Date = Date()) throws -> Easel {
         guard let tab = tab(tabID), let route = EaselRoute.parse(tab.url), let profile = profileID(for: tabID) else { throw EaselActionError.missing }
         try requireSpaceProfile(profile)
         if let windowGroup, windowGroup.presentation(tabID: tabID, in: self) != .owned { throw EaselActionError.notPresented }

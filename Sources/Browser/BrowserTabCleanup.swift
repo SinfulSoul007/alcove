@@ -145,6 +145,7 @@ extension BrowserStore {
 
     private var archiveExclusions: Set<UUID> {
         var protected = Set(session.spaces.compactMap(\.selected))
+        protected.formUnion(existingEaselDrafts?.dirtyTabIDs ?? [])
         protected.formUnion(fullscreenPageIDs)
         protected.formUnion(splitGroups.flatMap(\.tabIDs))
         if let windowGroup { protected.formUnion(windowGroup.protectedPaneIDs) }
