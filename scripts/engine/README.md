@@ -172,3 +172,31 @@ notices, including comments, remain in the full archive. This preparation does
 not determine applicable license obligations or establish compliance, successful
 rebuilding, native loading, signing or ordinary-app support. The final candidate
 must integrate the applicable notices and corresponding source availability.
+
+`source_notices.verify_engine_source_package(package, source_git,
+pinned_wrapper, original_runtime)` independently rechecks the full archive and
+notice copies against Git, the 18 patch hashes, producer recipe/order, combined
+diff, original build manifest and the three actual pinned framework images.
+It rejects a copied manifest without those images, changed/self-reported
+receipts, edited notices, symlinks, missing files and unexpected extra files.
+The source factory performs this check again before publishing its output.
+
+To include the source metadata and intact notice candidates in a qualification
+template, supply all three options to both `prepare-template` and
+`verify-template`:
+
+```sh
+  --source-package /owned/engine-source-package \
+  --source-git /owned/upstream-webkit.git \
+  --source-contract /verified/pinned-wrapper
+```
+
+The Python assembly/verification APIs accept the equivalent `source_inputs`
+dictionary with `package`, `repository` and `contract` Paths. The resulting
+`Contents/Resources/EngineSource` resources contain verified notices and source
+metadata. The full archive and patches remain in the required companion source
+package; the metadata explicitly records that it has not been published. A
+source-bearing template cannot be reverified without its independent context.
+The app, build and receipt destinations must stay outside these input trees.
+`sourceNoticesIntegrated` reports this resource integration only. Native,
+sandbox and ordinary-app qualification remain false and signing stays pending.

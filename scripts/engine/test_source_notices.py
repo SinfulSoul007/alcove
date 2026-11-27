@@ -186,3 +186,49 @@ class SourceNoticeChecks(unittest.TestCase):
         bare = self.root/'bare.git'
         subprocess.run(['git','clone','--bare','--quiet',str(self.repo),str(bare)],check=True)
         self.assertEqual(self.module.verify_modified_source(bare,revision,[source_patch],hashlib.sha256(expected).hexdigest()), expected)
+
+    def test_published_source_verifies_after_moving(self):
+        out = self.root/'published'
+        expected = self.module.prepare_source_notices(self.archive(),self.repo,self.revision,out)
+        moved = self.root/'moved'; out.rename(moved)
+        self.assertEqual(self.module.verify_prepared_source_notices(moved,self.repo,self.revision), expected)
+
+    def test_changed_notice_cannot_be_authorized_by_its_own_receipt(self):
+        import json
+        out = self.root/'published'
+        self.module.prepare_source_notices(self.archive(),self.repo,self.revision,out)
+        changed = b'Replaced original notice\n'; (out/'notices/LICENSE').write_bytes(changed)
+        metadata = out/'source-notices.json'; receipt = json.loads(metadata.read_text())
+        receipt['notices'][0].update(bytes=len(changed),sha256=hashlib.sha256(changed).hexdigest())
+        metadata.write_text(json.dumps(receipt))
+        with self.assertRaisesRegex(ValueError,'receipt|notice'):
+            self.module.verify_prepared_source_notices(out,self.repo,self.revision)
+
+    def test_missing_notice_and_unlisted_source_files_are_rejected(self):
+        for kind in ('missing','extra'):
+            with self.subTest(kind=kind):
+                out = self.root/kind
+                self.module.prepare_source_notices(self.archive(),self.repo,self.revision,out)
+                if kind == 'missing': (out/'notices/LICENSE').unlink()
+                else: (out/'unlisted-executable').write_bytes(b'extra')
+                with self.assertRaisesRegex(ValueError,'inventory|notice'):
+                    self.module.verify_prepared_source_notices(out,self.repo,self.revision)
+
+    def test_symbolic_notice_is_rejected_even_with_original_bytes(self):
+        out = self.root/'published'
+        self.module.prepare_source_notices(self.archive(),self.repo,self.revision,out)
+        notice = out/'notices/LICENSE'; notice.unlink(); notice.symlink_to(self.repo/'LICENSE')
+        with self.assertRaisesRegex(ValueError,'link|type|regular'):
+            self.module.verify_prepared_source_notices(out,self.repo,self.revision)
+
+    def test_runtime_source_binding_requires_actual_frameworks(self):
+        with self.assertRaisesRegex(ValueError,'regular|framework'):
+            self.module.verify_engine_framework_sources(self.root/'missing-runtime')
+
+    def test_runtime_source_binding_rejects_existing_changed_frameworks(self):
+        runtime = self.root/'runtime'
+        for name in ('JavaScriptCore','WebCore','WebKit'):
+            path = runtime/(name+'.framework')/'Versions/A'/name
+            path.parent.mkdir(parents=True);path.write_bytes(b'Changed framework bytes')
+        with self.assertRaisesRegex(ValueError,'framework differs'):
+            self.module.verify_engine_framework_sources(runtime)

@@ -13,6 +13,7 @@ from bundle_layout import is_owned_reference, plan_relocations
 from image_relocation import relocate_image_copy, verify_relocation
 from macho_metadata import inspect_image
 from package_candidate import runtime_images, verify_relocated_runtime_layout
+from source_notices import source_readme_bytes, verify_engine_source_package
 from verified_input import require
 
 HERE = Path(__file__).resolve().parent
@@ -91,7 +92,32 @@ def descriptor(name, data, mode):
     return {'destination':name, 'kind':'file', 'sha256':sha(data), 'mode':mode}
 
 
-def verify_unsigned_template(app, manifest, engine_receipt, runtime, original_main, witness, assets):
+def source_context(inputs):
+    if inputs is None: return None
+    require(isinstance(inputs, dict) and set(inputs) == {'package','repository','contract'} and
+            all(isinstance(path, Path) for path in inputs.values()), 'Complete source package/Git/contract inputs are required')
+    return inputs
+
+
+def source_template_data(inputs, runtime):
+    inputs = source_context(inputs)
+    if inputs is None: return {}, None
+    package = inputs['package']
+    receipt = verify_engine_source_package(package,inputs['repository'],inputs['contract'],runtime)
+    material = {'source':receipt, 'correspondingSource':{
+        'kind':'companion-source-package', 'archive':'WebKit-source.tar.gz',
+        'archiveSHA256':receipt['archiveSHA256'], 'published':False}}
+    files = {'Contents/Resources/EngineSource/SourceMaterial.json':(json.dumps(material,indent=2)+'\n').encode(),
+             'Contents/Resources/EngineSource/README.txt':source_readme_bytes()}
+    for notice in receipt['notices']:
+        data = (package/'upstream/notices'/notice['path']).read_bytes()
+        require(len(data) == notice['bytes'] and sha(data) == notice['sha256'], 'Source notice changed before template copy')
+        files['Contents/Resources/EngineSource/notices/'+notice['path']] = data
+    return files, receipt
+
+
+def verify_unsigned_template(app, manifest, engine_receipt, runtime, original_main, witness, assets, *, source_inputs=None):
+    source_context(source_inputs)
     app, runtime = Path(app), Path(runtime)
     inputs = verify_qualification_inputs(witness, assets)
     require(manifest['formatVersion'] == 1 and manifest['nativeAppQualified'] is False and
@@ -99,11 +125,14 @@ def verify_unsigned_template(app, manifest, engine_receipt, runtime, original_ma
             manifest['sandboxQualified'] is False, 'Invalid unqualified template receipt')
     require(manifest['frozenInputs'] == inputs and manifest['requiredAppEntitlements'] == APP_ENTITLEMENTS,
             'Qualification template provenance or signing intent changed')
+    source_files, source_receipt = source_template_data(source_inputs,runtime)
+    require(manifest.get('sourceMaterial') == source_receipt, 'Qualification source material changed or its context is missing')
     original = Path(original_main).read_bytes()
     plan = entry_plan(original, runtime, engine_receipt)
     require(manifest['entryPlan'] == plan and manifest['originalEntrySHA256'] == sha(original),
             'Qualification entry source/plan receipt changed')
-    expected = [descriptor(name, data, 0o644) for name,data in sorted(template_data(witness, assets).items())]
+    files = dict(template_data(witness, assets), **source_files)
+    expected = [descriptor(name, data, 0o644) for name,data in sorted(files.items())]
     after = (app/EXECUTABLE).read_bytes()
     proof = verify_relocation(original, after, plan)
     require(manifest['entryProof'] == proof, 'Qualification entry derivation receipt changed')
@@ -113,28 +142,35 @@ def verify_unsigned_template(app, manifest, engine_receipt, runtime, original_ma
     verify_relocated_runtime_layout(app, engine_receipt, runtime, additional_files=expected)
     return {'staticTemplateVerified':True, 'engineImages':len(engine_receipt['images']),
             'frozenWitnessSHA256':WITNESS_SHA, 'nativeAppQualified':False,
-            'ordinaryAppQualified':False, 'sandboxQualified':False, 'signingPending':True}
+            'ordinaryAppQualified':False, 'sandboxQualified':False, 'signingPending':True,
+            'sourceNoticesIntegrated':source_inputs is not None,
+            'sourceCompanionArchiveSHA256':source_receipt['archiveSHA256'] if source_receipt else None}
 
 
 def assemble_unsigned_template(engine_tree, engine_receipt, runtime, original_main, expected_main_sha,
-                               witness, assets, destination):
+                               witness, assets, destination, *, source_inputs=None):
+    source_context(source_inputs)
     destination, runtime = Path(destination), Path(runtime)
     require(not destination.exists() and not destination.is_symlink(), 'Qualification destination already exists')
     resolved = destination.resolve(strict=False)
     require(not resolved.is_relative_to(Path(engine_tree).resolve(strict=True)) and
             not resolved.is_relative_to(runtime.resolve(strict=True)),
             'Qualification destination is inside an immutable input tree')
+    if source_inputs is not None:
+        require(all(not resolved.is_relative_to(path.resolve(strict=False)) for path in source_inputs.values()),
+                'Qualification destination is inside a source input tree')
     inputs = verify_qualification_inputs(witness, assets)
     original = Path(original_main).read_bytes()
     require(sha(original) == expected_main_sha, 'Qualification entry input digest changed')
     plan = entry_plan(original, runtime, engine_receipt)
     verify_relocated_runtime_layout(Path(engine_tree), engine_receipt, runtime)
+    source_files, source_receipt = source_template_data(source_inputs,runtime)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.alcove-qualification-template-', dir=destination.parent) as raw:
         stage = Path(raw)/'Qualification.app'
         shutil.copytree(engine_tree, stage, symlinks=True)
         additional = []
-        for name, data in sorted(template_data(witness, assets).items()):
+        for name, data in sorted(dict(template_data(witness, assets), **source_files).items()):
             path = stage/name
             require(not path.exists() and not path.is_symlink(), 'Template file overlaps engine member')
             path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(data); path.chmod(0o644)
@@ -144,10 +180,11 @@ def assemble_unsigned_template(engine_tree, engine_receipt, runtime, original_ma
         manifest = {'formatVersion':1, 'frozenInputs':inputs, 'originalEntrySHA256':expected_main_sha,
                     'entryPlan':plan, 'entryProof':proof, 'additionalFiles':additional,
                     'requiredAppEntitlements':APP_ENTITLEMENTS.copy(),
+                    'sourceMaterial':source_receipt,
                     'nativeAppQualified':False, 'ordinaryAppQualified':False,
                     'sandboxQualified':False, 'signingPending':True}
         manifest['verification'] = verify_unsigned_template(stage, manifest, engine_receipt, runtime,
-            original_main, witness, assets)
+            original_main, witness, assets, source_inputs=source_inputs)
         require(not destination.exists() and not destination.is_symlink(), 'Qualification destination appeared during staging')
         stage.rename(destination)
     return manifest
@@ -260,6 +297,8 @@ def main():
         command = commands.add_parser(name)
         for flag in ('engine-receipt', 'runtime', 'assets', 'app', 'manifest'):
             command.add_argument('--'+flag, type=Path, required=True)
+        for flag in ('source-package', 'source-git', 'source-contract'):
+            command.add_argument('--'+flag, type=Path)
         if name == 'prepare-template':
             command.add_argument('--repository', type=Path, default=HERE.parent.parent)
             command.add_argument('--engine-tree', type=Path, required=True)
@@ -272,6 +311,11 @@ def main():
     witness = HERE/'FullUBlockQualificationChecks.swift'
     assets = {kind:args.assets/('uBlock0_1.76.4.chromium.'+kind) for kind in ASSETS}
     try:
+        supplied_source = [args.source_package,args.source_git,args.source_contract]
+        require(not any(path is not None for path in supplied_source) or
+                all(path is not None for path in supplied_source), 'Complete source package/Git/contract flags are required')
+        source_inputs = None if args.source_package is None else {
+            'package':args.source_package,'repository':args.source_git,'contract':args.source_contract}
         if args.command == 'prepare-template':
             require(not args.manifest.exists() and not args.manifest.is_symlink(), 'Template manifest destination already exists')
             require(not args.app.exists() and not args.app.is_symlink(), 'Template app destination already exists')
@@ -286,15 +330,22 @@ def main():
             verify_qualification_inputs(witness, assets)
             engine_receipt = json.loads(args.engine_receipt.read_text())
             verify_relocated_runtime_layout(args.engine_tree, engine_receipt, args.runtime)
+            if source_inputs is not None:
+                for output in (app,build,manifest):
+                    require(all(not output.is_relative_to(path.resolve(strict=False)) for path in source_inputs.values()),
+                            'Template destination is inside a source input tree')
+                source_template_data(source_inputs,args.runtime)
             compiled = compile_qualification_entry(args.repository, args.build, args.sdk)
             result = assemble_unsigned_template(args.engine_tree, engine_receipt, args.runtime,
-                args.build/'original-main', compiled['originalEntrySHA256'], witness, assets, args.app)
+                args.build/'original-main', compiled['originalEntrySHA256'], witness, assets, args.app,
+                source_inputs=source_inputs)
             args.manifest.parent.mkdir(parents=True, exist_ok=True)
             with args.manifest.open('x') as stream: json.dump(result, stream, indent=2); stream.write('\n')
             proof = result['verification']
         else:
             proof = verify_unsigned_template(args.app, json.loads(args.manifest.read_text()),
-                json.loads(args.engine_receipt.read_text()), args.runtime, args.entry, witness, assets)
+                json.loads(args.engine_receipt.read_text()), args.runtime, args.entry, witness, assets,
+                source_inputs=source_inputs)
         print(json.dumps(proof, sort_keys=True))
         return 0
     except (ValueError, OSError, KeyError) as error:

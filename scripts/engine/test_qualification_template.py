@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import importlib
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -31,6 +32,31 @@ class QualificationInputChecks(unittest.TestCase):
         bad = self.root/'changed.swift'; bad.write_bytes(b'changed qualification test')
         with self.assertRaisesRegex(ValueError, 'witness'):
             self.module.verify_qualification_inputs(bad, {})
+
+    def test_partial_source_context_is_rejected_before_input_io(self):
+        for context in ({}, {'package':self.root/'source'},
+                        {'package':self.root/'source','repository':self.root/'git','contract':self.root/'contract','extra':self.root}):
+            with self.subTest(context=context):
+                with self.assertRaisesRegex(ValueError,'source|Source'):
+                    self.module.assemble_unsigned_template(self.root/'missing-engine', {}, self.root/'missing-runtime',
+                        self.root/'missing-main','0'*64,self.witness,{},self.root/'out.app',source_inputs=context)
+                self.assertFalse((self.root/'out.app').exists())
+
+    def test_source_verification_context_is_required_when_rechecking_source_template(self):
+        with self.assertRaisesRegex(ValueError,'source|Source'):
+            self.module.verify_unsigned_template(self.root/'missing-app',{}, {},self.root/'missing-runtime',
+                self.root/'missing-main',self.witness,{},source_inputs={'package':self.root/'source'})
+
+    def test_template_destination_cannot_mutate_source_material(self):
+        engine = self.root/'engine';engine.mkdir()
+        runtime = self.root/'runtime';runtime.mkdir()
+        source = self.root/'source';source.mkdir()
+        context = {'package':source,'repository':self.root/'git','contract':self.root/'contract'}
+        out = source/'nested.app'
+        with self.assertRaisesRegex(ValueError,'destination|input tree'):
+            self.module.assemble_unsigned_template(engine,{},runtime,self.root/'missing-main',
+                '0'*64,self.witness,{},out,source_inputs=context)
+        self.assertFalse(out.exists())
 
     def test_missing_archive_variant_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'archive|asset'):
@@ -82,6 +108,14 @@ class QualificationInputChecks(unittest.TestCase):
             '--engine-receipt', str(receipt), '--runtime', str(runtime),
             '--assets', str(self.root/'missing-assets'), '--build', str(self.root/'build'),
             '--app', str(self.root/'app.app'), '--manifest', str(manifest)]
+
+    def test_cli_rejects_partial_source_flags_before_compilation(self):
+        result = subprocess.run(self.command(self.root/'manifest.json')+['--source-package',str(self.root/'source')],
+            stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=10)
+        self.assertEqual(result.returncode,1)
+        self.assertIn('source',json.loads(result.stdout)['error'].lower())
+        self.assertFalse((self.root/'build').exists())
+        self.assertFalse((self.root/'app.app').exists())
 
     def test_cli_preserves_existing_manifest_and_publishes_nothing(self):
         manifest = self.root/'keep.json'; manifest.write_bytes(b'keep manifest')

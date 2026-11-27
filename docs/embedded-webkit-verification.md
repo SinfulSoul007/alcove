@@ -118,3 +118,40 @@ now streams raw Git blobs; bare Git diff needs explicit pinned attributes to
 reproduce the producer's Objective-C hunk headers. Both have regression cases.
 This source material is not yet integrated into a signed candidate and makes
 no license-compliance, rebuilding, native, sandbox or ordinary-app claim.
+
+## Source-bearing qualification template
+
+The current component suite passes100 checks with genuine vendor archives and
+no skips. New cases cover independent source rechecks after moving, tampered
+notices with edited receipts, missing/extra/symbolic files, absent/changed actual
+frameworks, incomplete source contexts, input-tree output protection and partial
+CLI flags. A copied build manifest without the actual framework images was
+observed to pass the initial new verifier; the actual three pinned binary
+digests are now mandatory. This was verified RED to GREEN and retained as a
+focused boundary check.
+
+The complete unsealed frozen-witness app now includes281 notice candidates and
+verified source metadata:288 declared additional files total, including its
+existing entry, Info, frozen witness and original ZIP/CRX resources. Assembly
+reuses the previously verified unsealed entry, with no source recompilation or
+code/data changes. The app was moved and reverified independently, including
+through `verify-template` with all three source options. Omitting the source
+context is rejected. The full companion source archive remains separate from
+the app, and its SHA-256 is bound in the app's metadata; no source publication
+is claimed. The source factory also completed a fresh actual preparation with
+its independent prepublication check.
+
+`sourceNoticesIntegrated` is true for this prepared app. All21 engine images
+and the unchanged witness are still statically verified. Native, sandbox and
+ordinary-app qualification remain false, and the app has never been launched or
+signed. Applicable notice classification, public source distribution, public
+per-role signing policy, legitimate signing and native witness/cleanup remain
+required.
+
+The pinned WebKit entitlement script gives normal WebContent the public JIT
+permission, while development helper signatures also contain permissions that
+this candidate forbids. Those input signatures are not copied as policy.
+Apple documents [public JIT permission](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.allow-jit)
+and distinguishes [spawned-child sandbox inheritance from XPC services](https://developer.apple.com/library/archive/documentation/Miscellaneous/Reference/EntitlementKeyReference/Chapters/EnablingAppSandbox.html).
+A spawned-child inheritance recipe is therefore not proof of a valid policy
+for these XPC services. Helper permissions still need actual native evidence.

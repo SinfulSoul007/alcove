@@ -139,6 +139,89 @@ def prepare_source_notices(archive, repository, revision, destination):
     return receipt
 
 
+def verify_engine_framework_sources(runtime):
+    for framework, sha in PIN['frameworkSHA256'].items():
+        image = runtime/framework/'Versions/A'/framework.removesuffix('.framework')
+        require(digest(image) == sha, 'Original engine framework differs from source producer: '+framework)
+
+
+def verify_engine_source_package(package, source_repository, contract_checkout, runtime):
+    """Reverify prepared source material against pinned Git/producer inputs."""
+    regular_inventory(package)
+    contract = verify_source_contract(contract_checkout)
+    manifest_path = runtime/'AlcoveEngineBuild.json'
+    require(manifest_path.is_file() and not manifest_path.is_symlink(), 'Missing regular engine build manifest')
+    manifest = manifest_path.read_bytes()
+    verify_build_manifest(json.loads(manifest), contract['patches'])
+    verify_engine_framework_sources(runtime)
+    workflow = subprocess.run(['git', '-C', str(contract_checkout), 'show',
+        PIN['wrapperCommit']+':.github/workflows/build-microtask-entry.yml'], capture_output=True, timeout=30)
+    require(workflow.returncode == 0 and workflow.stdout, 'Pinned engine build recipe is missing')
+    order_lines = re.findall(r'^\s*for name in ([^;\n]+); do$',workflow.stdout.decode('utf-8'),re.MULTILINE)
+    require(len(order_lines) == 1, 'Pinned engine patch order is missing')
+    order = [name+'.patch' for name in order_lines[0].split()]
+    require(len(order) == len(set(order)) == PIN['patchCount'] and set(order) == set(contract['patches']),
+            'Pinned engine patch order differs')
+    for name, sha in contract['patches'].items():
+        require(digest(package/'patches'/name) == sha, 'Prepared engine patch differs: '+name)
+    require(digest(package/'modified-source.patch') == PIN['appliedSourceSHA256'],
+            'Prepared combined source diff differs')
+    require((package/'AlcoveEngineBuild.json').read_bytes() == manifest, 'Prepared engine build manifest differs')
+    require((package/'build-microtask-entry.yml').read_bytes() == workflow.stdout, 'Prepared engine recipe differs')
+    require((package/'README.txt').read_bytes() == source_readme_bytes(), 'Prepared engine source instructions differ')
+    upstream = verify_prepared_source_notices(package/'upstream', source_repository, PIN['webkitRevision'])
+    expected = dict(upstream, wrapperCommit=PIN['wrapperCommit'], patches=contract['patches'], patchOrder=order,
+        appliedSourceSHA256=PIN['appliedSourceSHA256'], buildRecipeSHA256=hashlib.sha256(workflow.stdout).hexdigest(),
+        engineBuildManifestSHA256=hashlib.sha256(manifest).hexdigest())
+    require(json.loads((package/'engine-source.json').read_text()) == expected, 'Engine source receipt differs')
+    files = {'README.txt','AlcoveEngineBuild.json','modified-source.patch','build-microtask-entry.yml',
+             'engine-source.json','upstream/WebKit-source.tar.gz','upstream/source-notices.json'}
+    files.update('patches/'+name for name in contract['patches'])
+    files.update('upstream/notices/'+item['path'] for item in upstream['notices'])
+    verify_inventory(package, files)
+    return expected
+
+
+def regular_inventory(root):
+    require(root.is_dir() and not root.is_symlink(), 'Expected regular source package directory')
+    files, directories = set(), set()
+    for item in root.rglob('*'):
+        require(not item.is_symlink(), 'Source package contains a symbolic link')
+        name = item.relative_to(root).as_posix()
+        require(canonical_path(name), 'Source package contains an invalid path')
+        if item.is_file(): files.add(name)
+        else:
+            require(item.is_dir(), 'Source package contains an unsupported member type')
+            directories.add(name)
+    return files, directories
+
+
+def verify_inventory(root, expected_files):
+    files, directories = regular_inventory(root)
+    require(files == expected_files, 'Source package file inventory differs')
+    expected_directories = set()
+    for name in expected_files:
+        parent = PurePosixPath(name).parent
+        while str(parent) != '.':
+            expected_directories.add(str(parent)); parent = parent.parent
+    require(directories == expected_directories, 'Source package directory inventory differs')
+
+
+def verify_prepared_source_notices(package, repository, revision):
+    """Reauthenticate the source and notices independently of their own receipt."""
+    regular_inventory(package)
+    receipt = verify_source_archive(package/'WebKit-source.tar.gz', repository, revision)
+    files = {'WebKit-source.tar.gz', 'source-notices.json'}
+    files.update('notices/'+item['path'] for item in receipt['notices'])
+    verify_inventory(package, files)
+    require(json.loads((package/'source-notices.json').read_text()) == receipt, 'Source notice receipt differs')
+    for item in receipt['notices']:
+        path = package/'notices'/item['path']
+        require(path.stat().st_size == item['bytes'] and digest(path) == item['sha256'],
+                'Original source notice differs: '+item['path'])
+    return receipt
+
+
 def verify_modified_source(repository, revision, patches, expected_sha256):
     """Reconstruct producer changes in an isolated index, never its worktree/ref."""
     require(re.fullmatch(r'[0-9a-f]{40}', revision) and
@@ -163,6 +246,25 @@ def verify_modified_source(repository, revision, patches, expected_sha256):
         require(diff.returncode == 0 and hashlib.sha256(diff.stdout).hexdigest() == expected_sha256,
                 'Modified source diff differs from producer')
         return diff.stdout
+
+
+def source_readme_bytes():
+    return ('Alcove experimental WebKit engine source material\n\n'
+            'The upstream archive is the complete unmodified Git tree at '+PIN['webkitRevision']+'.\n'
+            'Original source bytes, file modes, link targets and notice files were verified against Git.\n'
+            'All 18 modifications are supplied as unchanged patches; their hashes are in the manifest.\n'
+            'The copied pinned producer workflow records patch order, configuration and build commands.\n'
+            'Apply patches in that workflow order, not filename order. The build used SDK '+PIN['sdk']+'.\n'
+            'modified-source.patch reconstructs the exact combined producer diff; its digest was verified.\n'
+            'AlcoveEngineBuild.json records the original producer source/build and framework hashes.\n\n'
+            'Upstream: https://github.com/WebKit/WebKit/tree/'+PIN['webkitRevision']+'\n'
+            'Producer: https://github.com/SinfulSoul007/alcove/tree/'+PIN['wrapperCommit']+'\n'
+            'Bundle transformation and installation references: scripts/engine/README.md and\n'
+            'docs/embedded-webkit-verification.md on feature/embedded-webkit in that repository.\n\n'
+            'The notices directory is a filename-based index and can include test/tool notices.\n'
+            'The full archive retains all source-level notices, including those in code comments.\n'
+            'This material alone does not establish license compliance, successful rebuilding,\n'
+            'final signing, native qualification, ordinary-app support or release readiness.\n').encode("utf-8")
 
 
 def prepare_engine_source(archive, contract_checkout, runtime, destination, *, source_repository=None):
@@ -206,23 +308,7 @@ def prepare_engine_source(archive, contract_checkout, runtime, destination, *, s
         (stage/'AlcoveEngineBuild.json').write_bytes(manifest_data)
         (stage/'modified-source.patch').write_bytes(modified)
         (stage/'build-microtask-entry.yml').write_bytes(workflow.stdout)
-        (stage/'README.txt').write_text(
-            'Alcove experimental WebKit engine source material\n\n'
-            'The upstream archive is the complete unmodified Git tree at '+PIN['webkitRevision']+'.\n'
-            'Original source bytes, file modes, link targets and notice files were verified against Git.\n'
-            'All 18 modifications are supplied as unchanged patches; their hashes are in the manifest.\n'
-            'The copied pinned producer workflow records patch order, configuration and build commands.\n'
-            'Apply patches in that workflow order, not filename order. The build used SDK '+PIN['sdk']+'.\n'
-            'modified-source.patch reconstructs the exact combined producer diff; its digest was verified.\n'
-            'AlcoveEngineBuild.json records the original producer source/build and framework hashes.\n\n'
-            'Upstream: https://github.com/WebKit/WebKit/tree/'+PIN['webkitRevision']+'\n'
-            'Producer: https://github.com/SinfulSoul007/alcove/tree/'+PIN['wrapperCommit']+'\n'
-            'Bundle transformation and installation references: scripts/engine/README.md and\n'
-            'docs/embedded-webkit-verification.md on feature/embedded-webkit in that repository.\n\n'
-            'The notices directory is a filename-based index and can include test/tool notices.\n'
-            'The full archive retains all source-level notices, including those in code comments.\n'
-            'This material alone does not establish license compliance, successful rebuilding,\n'
-            'final signing, native qualification, ordinary-app support or release readiness.\n')
+        (stage/'README.txt').write_bytes(source_readme_bytes())
         receipt = dict(receipt, wrapperCommit=PIN['wrapperCommit'], patches=contract['patches'], patchOrder=patch_order,
                        appliedSourceSHA256=PIN['appliedSourceSHA256'],
                        buildRecipeSHA256=hashlib.sha256(workflow.stdout).hexdigest(),
@@ -230,6 +316,8 @@ def prepare_engine_source(archive, contract_checkout, runtime, destination, *, s
         (stage/'engine-source.json').write_text(json.dumps(receipt, indent=2)+'\n')
         verify_source_contract(contract_checkout)
         require(manifest_path.read_bytes() == manifest_data, 'Engine build manifest changed during preparation')
+        require(verify_engine_source_package(stage, source_repository, contract_checkout, runtime) == receipt,
+                'Prepared engine source failed independent verification')
         require(not destination.exists() and not destination.is_symlink(), 'Source destination already exists')
         stage.rename(destination)
     return receipt
