@@ -200,3 +200,28 @@ source-bearing template cannot be reverified without its independent context.
 The app, build and receipt destinations must stay outside these input trees.
 `sourceNoticesIntegrated` reports this resource integration only. Native,
 sandbox and ordinary-app qualification remain false and signing stays pending.
+
+### Per-role signing investigation
+
+The pinned [WebKit entitlement generator](https://github.com/WebKit/WebKit/blob/26695efdefc6076049ec50713a2c4e54b90b4d47/Source/WebKit/Scripts/process-entitlements.sh)
+has SHA256`f144055aa9478eefa62765a94ec21d823341154f122bd0eca111008f6fab19af`.
+Direct generation into owned temporary plists, with macOS26, `RC_XBS=YES`,
+restricted entitlements disabled and fatal-exception additions disabled, yields:
+
+| Role | Generated additions |
+| --- | --- |
+| Standard WebContent | `com.apple.security.cs.allow-jit` |
+| Development WebContent, Development variant | Allow-JIT and prohibited disabled library validation |
+| CaptivePortal / GPU / Networking | Empty dictionary |
+| EnhancedSecurity | `com.apple.security.hardened-process.checked-allocations.no-tagged-receive` |
+| Model | Generator reports unsupported/unknown product |
+
+Apple documents [Allow-JIT](https://developer.apple.com/documentation/BundleResources/Entitlements/com.apple.security.cs.allow-jit)
+and limits [sandbox inheritance](https://developer.apple.com/library/archive/documentation/Miscellaneous/Reference/EntitlementKeyReference/Chapters/EnablingAppSandbox.html)
+to spawned child processes; that inheritance example does not qualify XPC services.
+The source matrix leaves the complete public per-role policy, legitimate
+matching-Team signing, XPC confinement and native witness pending. Development
+permissions must not be copied. Empty generated dictionaries establish no
+effective sandbox or runtime permission. The EnhancedSecurity and Model roles
+still require explicit justification and direct evidence. No app was signed or
+launched by this investigation.
