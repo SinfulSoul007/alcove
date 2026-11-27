@@ -87,7 +87,15 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p .build/fullscreen
-          caffeinate -is python3 scripts/fullscreen/run-native.py 2>&1 | tee .build/fullscreen/native.log
+          caffeinate -is python3 scripts/fullscreen/run-native.py --compile-only 2>&1 | tee .build/fullscreen/compile.log
+          cp scripts/fullscreen/current-focus/fixture.py scripts/fullscreen/current-focus/page.html scripts/fullscreen/current-focus/run-checks.py .build/fullscreen/
+          cd .build/fullscreen
+          python3 fixture.py "$PWD/port" > fixture.log 2>&1 &
+          ALCOVE_OWNED_FIXTURE_PID=$!
+          trap 'kill "$ALCOVE_OWNED_FIXTURE_PID" 2>/dev/null || true; wait "$ALCOVE_OWNED_FIXTURE_PID" 2>/dev/null || true' EXIT
+          for attempt in {1..500}; do [[ -s port ]] && break; sleep 0.02; done
+          test -s port
+          caffeinate -is python3 run-checks.py 2>&1 | tee native.log
       - name: Preserve the native command result before regression groups
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
