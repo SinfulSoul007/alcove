@@ -110,7 +110,7 @@ run_easel_review_checks() {
     { printf '@testable import AlcoveReviewFixtures\n'; cat scripts/PageOutputFixtures.swift; } > "$review_module/PageOutputFixtures.swift"
     for fixture in EaselReviewDraftChecks EaselReviewHistoryChecks EaselReviewRouteChecks EaselReviewMissingRecoveryChecks EaselReviewExtensionChecks EaselReviewPresentationChecks EaselReviewCaptureRefreshChecks; do
         { printf '@testable import AlcoveReviewFixtures\n'; cat "scripts/$fixture.swift"; } > "$review_module/$fixture.swift"
-        xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -I "$review_module" -L "$review_module" -lAlcoveReviewFixtures -Xlinker -rpath -Xlinker "$review_module" -Xlinker -rpath -Xlinker "$MANUAL" "$review_module/$fixture.swift" "$review_module/PageOutputFixtures.swift" scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$review_module/$fixture"
+        xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -I "$review_module" -L "$review_module" -L "$MANUAL" -lAlcoveReviewFixtures -lBrowserCore -Xlinker -rpath -Xlinker "$review_module" -Xlinker -rpath -Xlinker "$MANUAL" "$review_module/$fixture.swift" "$review_module/PageOutputFixtures.swift" scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$review_module/$fixture"
         "$review_module/$fixture" || review_status=1
     done
     return "$review_status"
