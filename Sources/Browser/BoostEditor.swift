@@ -100,6 +100,18 @@ import BrowserCore
             return true
         } catch { self.error = error.localizedDescription; return false }
     }
+    func copyAppearance(in store: BrowserStore, to board: NSPasteboard? = nil) throws {
+        try requireOwner(store)
+        try store.requireQuickProfile(profileID)
+        guard !store.isPrivate || profileID == BrowserProfile.defaultID else { throw ProfileError.missing }
+        var value = draft
+        if let original {
+            guard let current = store.boostCatalog(profileID: profileID).entries.first(where: { $0.id == original.id }) else { throw BoostError.missing }
+            guard current.content == original.content else { throw BoostError.stale }
+            value.hiddenSelectors = current.hiddenSelectors
+        }
+        try BoostClipboard.copy(value, to: board)
+    }
     @discardableResult func pasteAppearance(from board: NSPasteboard) -> Bool {
         guard !isSaving else { return false }
         guard !isDirty else { error = "Save or cancel the current draft before pasting another appearance."; return false }

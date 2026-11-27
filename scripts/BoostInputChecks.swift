@@ -67,13 +67,28 @@ enum BoostInputCheckError: Error { case failed }
         try store.addBoostZap(live.id, profileID: f.profile, selector: "#ad", expected: store.boostCatalog(profileID: f.profile).entries[0])
         let savedPreserved = await preserved.save(in: store)
         check(savedPreserved && !store.boostCatalog(profileID: f.profile).entries[0].enabled && store.boostCatalog(profileID: f.profile).entries[0].hiddenSelectors == ["#ad"], "Native code Save preserves newer variant and hidden-element controls")
+        let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
+        preserved.draft.content.name = "Unfinished shared title"
+        preserved.draft.content.css = "p{line-height:1.9}"
+        let unfinishedDraft = preserved.draft
         try store.removeBoostZap(live.id, profileID: f.profile, selector: "#ad")
         check(store.boostCatalog(profileID: f.profile).entries[0].hiddenSelectors.isEmpty, "An individual hidden element can be restored atomically")
+        try preserved.copyAppearance(in: store, to: board)
+        let afterUnhide = try BoostClipboard.read(from: board)
+        check(afterUnhide.hiddenSelectors.isEmpty, "Copy Appearance after individual Unhide does not re-hide a restored element")
         try store.addBoostZap(live.id, profileID: f.profile, selector: "#one", expected: store.boostCatalog(profileID: f.profile).entries[0])
         try store.addBoostZap(live.id, profileID: f.profile, selector: "#two", expected: store.boostCatalog(profileID: f.profile).entries[0])
+        try store.undoBoostZap(live.id, profileID: f.profile)
+        try preserved.copyAppearance(in: store, to: board)
+        let afterUndo = try BoostClipboard.read(from: board)
+        check(afterUndo.hiddenSelectors == ["#one"], "Copy Appearance after Undo includes only the elements still hidden")
         try store.clearBoostZaps(live.id, profileID: f.profile)
         check(store.boostCatalog(profileID: f.profile).entries[0].hiddenSelectors.isEmpty, "Unhide All clears the saved list in one durable operation")
-        let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
+        try preserved.copyAppearance(in: store, to: board)
+        let afterUnhideAll = try BoostClipboard.read(from: board)
+        check(afterUnhideAll.hiddenSelectors.isEmpty, "Copy Appearance after Unhide All exports no hidden elements")
+        check(afterUnhideAll.content.name == "Unfinished shared title" && afterUnhideAll.content.css == "p{line-height:1.9}" && afterUnhideAll.content.appearance == appearance, "Copy Appearance includes unsaved name and CSS with the current appearance")
+        check(preserved.draft == unfinishedDraft && afterUnhideAll.content.javascript.isEmpty && afterUnhideAll.approvedJavaScriptHash == nil && !afterUnhideAll.enabled, "Copying does not mutate the draft or share executable scripts, approval or activation")
         try BoostClipboard.copy(store.boostCatalog(profileID: f.profile).entries[0], to: board)
         let copied = board.string(forType: .string) ?? ""
         check(!copied.contains("window.owned") && !copied.contains("approvedJavaScriptHash"), "The actual owned pasteboard receives appearance data without executable code or approval")

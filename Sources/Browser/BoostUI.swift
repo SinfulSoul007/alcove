@@ -74,7 +74,7 @@ import BrowserCore
             if let error = editor.error { Text(error).font(.system(size: 11 * scale)).foregroundStyle(.red).lineLimit(3).help(error).accessibilityLabel("Boost error: \(error)") }
             HStack(spacing: 10) {
                 Menu("Share Appearance") {
-                    Button("Copy Appearance") { perform { try BoostClipboard.copy(editor.draft) } }
+                    Button("Copy Appearance") { perform { try editor.copyAppearance(in: store) } }
                     Button("Paste Appearance") { _ = editor.pasteAppearance(from: .general) }
                 }.disabled(editor.isSaving)
                 Spacer()
