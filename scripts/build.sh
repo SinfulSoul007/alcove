@@ -8,8 +8,7 @@ fi
 ARCH="${BROWSER_ARCH:-$(uname -m)}"
 OUT="${BROWSER_OUTPUT:-build/Alcove.app}"
 MANUAL="$PWD/.build/manual/$ARCH"
-BASE_FLAGS=(-sdk "$SDK" -module-cache-path "$PWD/.build/cache" -target "$ARCH-apple-macosx14.0")
-FLAGS=("${BASE_FLAGS[@]}")
+FLAGS=(-sdk "$SDK" -module-cache-path "$PWD/.build/cache" -target "$ARCH-apple-macosx14.0")
 mkdir -p "$MANUAL" "$OUT/Contents/MacOS"
 python3 scripts/refresh-website-protection.py --verify Resources/WebsiteProtection
 mkdir -p "$MANUAL/ReaderAssets"
@@ -43,17 +42,6 @@ run_bookmark_export_core_checks() {
 if [[ "${1:-}" == "bookmark-export-core-test" ]]; then run_bookmark_export_core_checks; exit; fi
 STORE_SOURCES=()
 for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
-# Probe the real sources, imports and module-emission boundary used by native tests.
-AUTH_PROBE=("${BASE_FLAGS[@]}" -parse-as-library -warnings-as-errors -enable-testing -emit-module -module-name AlcoveAuthenticationSDKProbe -I "$MANUAL" "${STORE_SOURCES[@]}" -emit-module-path "$MANUAL/AlcoveAuthenticationSDKProbe.swiftmodule")
-if xcrun swiftc "${AUTH_PROBE[@]}" > "$MANUAL/auth-callback-modern.log" 2>&1; then
-    printf 'Foundation authentication callbacks: Sendable\n'
-elif xcrun swiftc "${AUTH_PROBE[@]}" -D ALCOVE_AUTH_CALLBACK_MAIN_ACTOR > "$MANUAL/auth-callback-main-actor.log" 2>&1; then
-    FLAGS+=(-D ALCOVE_AUTH_CALLBACK_MAIN_ACTOR)
-    printf 'Foundation authentication callbacks: MainActor Sendable\n'
-else
-    cat "$MANUAL/auth-callback-modern.log" "$MANUAL/auth-callback-main-actor.log"
-    exit 1
-fi
 run_easel_tab_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/EaselTabChecks.swift -o "$MANUAL/easel-tab-checks"
     "$MANUAL/easel-tab-checks"
@@ -115,15 +103,10 @@ run_easel_export_checks() {
 }
 if [[ "${1:-}" == "easel-export-test" ]]; then run_easel_export_checks; exit; fi
 run_easel_review_checks() {
-    local review_module="$MANUAL/easel-review" fixture review_status=0
-    mkdir -p "$review_module"
-    # The review cases share the actual application module; compile it once.
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -enable-testing -module-name AlcoveReviewFixtures -emit-module -emit-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" -emit-module-path "$review_module/AlcoveReviewFixtures.swiftmodule" -o "$review_module/libAlcoveReviewFixtures.dylib"
-    { printf '@testable import AlcoveReviewFixtures\n'; cat scripts/PageOutputFixtures.swift; } > "$review_module/PageOutputFixtures.swift"
+    local fixture review_status=0
     for fixture in EaselReviewDraftChecks EaselReviewHistoryChecks EaselReviewRouteChecks EaselReviewMissingRecoveryChecks EaselReviewExtensionChecks EaselReviewPresentationChecks EaselReviewCaptureRefreshChecks; do
-        { printf '@testable import AlcoveReviewFixtures\n'; cat "scripts/$fixture.swift"; } > "$review_module/$fixture.swift"
-        xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -I "$review_module" -L "$review_module" -L "$MANUAL" -lAlcoveReviewFixtures -lBrowserCore -Xlinker -rpath -Xlinker "$review_module" -Xlinker -rpath -Xlinker "$MANUAL" "$review_module/$fixture.swift" "$review_module/PageOutputFixtures.swift" scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$review_module/$fixture"
-        "$review_module/$fixture" || review_status=1
+        xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" "scripts/$fixture.swift" scripts/PageOutputFixtures.swift scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$MANUAL/$fixture"
+        "$MANUAL/$fixture" || review_status=1
     done
     return "$review_status"
 }
@@ -294,13 +277,7 @@ run_website_protection_surface_checks() {
 }
 if [[ "${1:-}" == "website-protection-surface-test" ]]; then run_website_protection_surface_checks; exit; fi
 run_extension_download_checks() {
-    for mode in modern main-actor; do
-        local callback_flags=("${BASE_FLAGS[@]}")
-        [[ "$mode" != main-actor ]] || callback_flags+=(-D ALCOVE_AUTH_CALLBACK_MAIN_ACTOR)
-        xcrun swiftc "${callback_flags[@]}" -parse-as-library -warnings-as-errors Sources/Browser/ExtensionAuthenticationCallback.swift scripts/ExtensionAuthenticationCallbackChecks.swift -o "$MANUAL/auth-callback-$mode-checks"
-        "$MANUAL/auth-callback-$mode-checks"
-    done
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/ExtensionAuthenticationCallback.swift Sources/Browser/ExtensionStoreDownload.swift scripts/ExtensionDownloadChecks.swift scripts/ExtensionZIPChecks.swift scripts/ExtensionCRXChecks.swift -o "$MANUAL/extension-download-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/ExtensionStoreDownload.swift scripts/ExtensionDownloadChecks.swift scripts/ExtensionZIPChecks.swift scripts/ExtensionCRXChecks.swift -o "$MANUAL/extension-download-checks"
     "$MANUAL/extension-download-checks"
 }
 if [[ "${1:-}" == "extension-download-test" ]]; then run_extension_download_checks; exit; fi

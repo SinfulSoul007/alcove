@@ -165,7 +165,7 @@ Install Apple Command Line Tools or Xcode with a modern macOS SDK that includes 
 open build/Alcove.app
 ```
 
-No package downloads required. `Package.swift` also supports `swift build` on a healthy SwiftPM installation, but that executable is not the sandboxed app bundle: use the build script for app testing. The direct compiler scripts work around the original development machine’s inconsistent SwiftPM installation. `BROWSER_SDK` overrides SDK selection; `BROWSER_ARCH` and `BROWSER_OUTPUT` override architecture and app output. When installed, MacOSX26.5.sdk is preferred on that machine. Minimum target stays macOS 14. The build script probes Foundation’s authentication callback annotations automatically. For a raw SwiftPM build with an SDK that requires main-actor authentication completions, use `swift build -Xswiftc -D -Xswiftc ALCOVE_AUTH_CALLBACK_MAIN_ACTOR`.
+No package downloads required. `Package.swift` also supports `swift build` on a healthy SwiftPM installation, but that executable is not the sandboxed app bundle: use the build script for app testing. The direct compiler scripts work around the original development machine’s inconsistent SwiftPM installation. `BROWSER_SDK` overrides SDK selection; `BROWSER_ARCH` and `BROWSER_OUTPUT` override architecture and app output. When installed, MacOSX26.5.sdk is preferred on that machine. Minimum target stays macOS 14.
 
 Create verified universal release archives with:
 
