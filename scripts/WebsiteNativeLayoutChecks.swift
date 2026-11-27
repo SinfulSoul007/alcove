@@ -439,7 +439,7 @@ extension WebsiteFullscreenChecks {
         if let directory = ProcessInfo.processInfo.environment["ALCOVE_OWNED_WINDOW_CAPTURE_DIR"],
            kind == "layout-normal-ready-focus-production" {
             try await NativeOwnedWindowCapture.capture(window, kind: kind, directory: directory)
-            try await exerciseOwnedVisualStates(store: store, web: web, window: window, originalID: id, directory: directory)
+            try await exerciseOwnedKeyboardWelcome(store: store, web: web, window: window, directory: directory)
         }
         print("FULLSCREEN_LAYOUT_CASE_COMPLETED", kind)
     }
@@ -866,5 +866,38 @@ extension WebsiteFullscreenChecks {
         let preservedDraft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='native layout draft'&&window.ownedLayoutToken===73")) as? Bool
         check(store.views[originalID] === web && preservedDraft == true,
               "Welcome, themes and four-pane review preserve the original live document and unsaved input")
+    }
+}
+
+@available(macOS 15.4, *)
+extension WebsiteFullscreenChecks {
+    @MainActor static func exerciseOwnedKeyboardWelcome(store: BrowserStore, web: WKWebView,
+                                                         window: NSWindow, directory: String) async throws {
+        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        print("OWNED_REDUCED_MOTION",reduced)
+        check(reduced,"The welcome test uses actual macOS Reduce Motion")
+        guard reduced else { throw Failure.fixture("actual Reduce Motion required") }
+        var settings = store.appearance; settings.animationsEnabled = true; store.appearance = settings
+        store.preferences.onboardingCompleted = false;store.onboardingVisible = true
+        let start = ContinuousClock.now
+        try await Task.sleep(for:.milliseconds(250))
+        try await NativeOwnedWindowCapture.capture(window,kind:"reduced-welcome-ready",directory:directory)
+        for label in ["reduced-welcome-style","reduced-welcome-options","reduced-welcome-complete"] {
+            guard window.isKeyWindow,
+                  let down = NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:[],timestamp:ProcessInfo.processInfo.systemUptime,
+                    windowNumber:window.windowNumber,context:nil,characters:"\r",charactersIgnoringModifiers:"\r",isARepeat:false,keyCode:36),
+                  let up = NSEvent.keyEvent(with:.keyUp,location:.zero,modifierFlags:[],timestamp:ProcessInfo.processInfo.systemUptime+0.02,
+                    windowNumber:window.windowNumber,context:nil,characters:"\r",charactersIgnoringModifiers:"\r",isARepeat:false,keyCode:36) else {
+                throw Failure.fixture("owned welcome Return event")
+            }
+            NSApp.postEvent(down,atStart:false);NSApp.postEvent(up,atStart:false)
+            try await Task.sleep(for:.milliseconds(250))
+            try await NativeOwnedWindowCapture.capture(window,kind:label,directory:directory)
+        }
+        check(!store.onboardingVisible && store.preferences.onboardingCompleted == true,
+              "Return advances and completes the actual reduced-motion welcome controls")
+        let draft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='native layout draft'&&window.ownedLayoutToken===73")) as? Bool
+        check(draft == true,"Welcome keyboard events leave the underlying page and draft intact")
+        print("OWNED_KEYBOARD_WELCOME_ELAPSED",start.duration(to:.now))
     }
 }
