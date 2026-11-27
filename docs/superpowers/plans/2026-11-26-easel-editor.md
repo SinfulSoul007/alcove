@@ -47,9 +47,9 @@
 
 **Interfaces:** main-actor `EaselDraftCoordinator` owned by the metadata/private-group writer; draft key is profile/board/tab/item, distinguishing independent editors and surviving view unmount. `update(_ text: String, tabID: UUID, itemID: UUID, from source: BrowserStore) throws` captures original content/revision and actual presenter; `flush(tabID: UUID) throws`, `flushAll() throws`, `discard(_ key: EaselDraftKey)` and `saveAsNewNote(_ key: EaselDraftKey) throws -> UUID` provide explicit recovery. Rebase only if the latest item content still equals the captured original; otherwise keep both texts and require Copy/Save as New Note/Discard. It consumes Task 1 `editEasel` and never overwrites a stale revision. Dirty state stays retained while its view is unmounted. Register/unregister native editor attachments without retaining NSViews.
 
-- [ ] Write real store/draft tests: debounce, flush-before-action, typing/IME byte bounds, two-editor conflict, unmount retention, failing metadata save, close/window/quit cancellation, explicit discard, and clear/delete/shutdown invalidation. Expected: missing API/behavior failures.
-- [ ] Implement draft retention and synchronous flush hooks before destructive actions; native error UI offers retry or explicit discard, preserving the entire draft. Expected: no closure or stale callback silently loses text; private drafts use zero key/files.
-- [ ] Run VM draft plus existing tab/window/quit/metadata ownership checks. Expected: all pass. Commit and task-done with recorded commands/results.
+- [x] Write real store/draft tests: debounce, flush-before-action, typing/IME byte bounds, two-editor conflict, unmount retention, failing metadata save, close/window/quit cancellation, explicit discard, and clear/delete/shutdown invalidation. Expected: missing API/behavior failures.
+- [x] Implement draft retention and synchronous flush hooks before destructive actions; native error UI offers retry or explicit discard, preserving the entire draft. Expected: no closure or stale callback silently loses text; private drafts use zero key/files.
+- [x] Run VM draft plus existing tab/window/quit/metadata ownership checks. Expected: all pass. Commit and task-done with recorded commands/results.
 
 ### Task 3: Native canvas and Library entry points
 
