@@ -24,6 +24,11 @@ run_easel_core_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselAssetChecks.swift -o "$MANUAL/easel-asset-checks"
     "$MANUAL/easel-asset-checks"
 }
+run_easel_drawing_core_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselDrawingCoreChecks.swift -o "$MANUAL/easel-drawing-core-checks"
+    "$MANUAL/easel-drawing-core-checks"
+}
+if [[ "${ALCOVE_EASEL_DRAWING_CORE_ONLY:-0}" == 1 ]]; then run_easel_core_checks; run_easel_drawing_core_checks; exit; fi
 if [[ "${ALCOVE_EASEL_CORE_ONLY:-0}" == 1 ]]; then run_easel_core_checks; exit; fi
 run_easel_route_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselRouteChecks.swift -o "$MANUAL/easel-route-checks"
@@ -552,6 +557,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_easel_review_checks
     run_easel_route_checks
     run_easel_core_checks
+    run_easel_drawing_core_checks
     run_bookmark_export_core_checks
     run_bookmark_export_store_checks
     run_reader_load_checks
