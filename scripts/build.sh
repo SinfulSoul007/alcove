@@ -21,6 +21,8 @@ xcrun swiftc "${FLAGS[@]}" -emit-module -emit-library -enable-testing -module-na
 run_easel_core_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselCoreChecks.swift -o "$MANUAL/easel-core-checks"
     "$MANUAL/easel-core-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselAssetChecks.swift -o "$MANUAL/easel-asset-checks"
+    "$MANUAL/easel-asset-checks"
 }
 if [[ "${ALCOVE_EASEL_CORE_ONLY:-0}" == 1 ]]; then run_easel_core_checks; exit; fi
 run_window_model_checks() {
