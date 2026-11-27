@@ -90,7 +90,7 @@ import BrowserCore
                 check(store.libraryVisible && store.librarySection == .downloads && BrowserCommand.downloads.matches("downloads")
                       && NSApp.mainMenu?.items.first(where: { $0.title == "Library" })?.submenu?.items.contains(where: { $0.action == #selector(AppDelegate.showDownloads) }) == true,
                       "Show Downloads is available in the menu and command bar and selects the Downloads collection")
-                let web = WKWebView()
+                let web = store.view(for: store.selectedTab!.id)
                 store.message = "Before policy change"
                 store.webView(web, didFailProvisionalNavigation: nil, withError: NSError(domain: "WebKitErrorDomain", code: 102))
                 check(store.message == "Before policy change", "Switching from navigation to a download does not show a frame error")
