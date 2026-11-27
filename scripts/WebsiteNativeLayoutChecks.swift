@@ -439,6 +439,7 @@ extension WebsiteFullscreenChecks {
         if let directory = ProcessInfo.processInfo.environment["ALCOVE_OWNED_WINDOW_CAPTURE_DIR"],
            kind == "layout-normal-ready-focus-production" {
             try await NativeOwnedWindowCapture.capture(window, kind: kind, directory: directory)
+            try await exerciseOwnedVisualStates(store: store, web: web, window: window, originalID: id, directory: directory)
         }
         print("FULLSCREEN_LAYOUT_CASE_COMPLETED", kind)
     }
@@ -754,5 +755,107 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
         try JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted, .sortedKeys])
             .write(to: root.appendingPathComponent(kind + "-window.json"), options: .atomic)
         print("OWNED_WINDOW_CAPTURE_COMPLETE", kind, image.width, image.height)
+    }
+}
+
+@available(macOS 15.4, *)
+extension WebsiteFullscreenChecks {
+    @MainActor static func exerciseOwnedVisualStates(store: BrowserStore, web: WKWebView, window: NSWindow,
+                                                     originalID: UUID, directory: String) async throws {
+        func settle() async { try? await Task.sleep(for: .milliseconds(250)); window.contentView?.layoutSubtreeIfNeeded() }
+        func capture(_ name: String) async throws {
+            await settle()
+            try await NativeOwnedWindowCapture.capture(window.attachedSheet ?? window, kind: name, directory: directory)
+        }
+        func buttons(_ root: NSView) -> [NSButton] {
+            (root as? NSButton).map { [$0] } ?? root.subviews.flatMap(buttons)
+        }
+        func press(_ name: String) async throws {
+            guard let root = (window.attachedSheet ?? window).contentView else { throw Failure.fixture("owned control root") }
+            let controls = buttons(root)
+            guard let control = controls.first(where: {
+                $0.title == name || $0.accessibilityLabel() == name || $0.accessibilityTitle() == name
+            }), control.isEnabled else {
+                print("OWNED_VISUAL_BUTTONS", controls.map { [$0.title, $0.accessibilityLabel() ?? "", $0.accessibilityTitle() ?? ""] })
+                throw Failure.fixture("owned native button unavailable: " + name)
+            }
+            control.performClick(nil)
+            await settle()
+        }
+        let projects = try store.createTabFolder(name: "Projects", in: store.space.id)
+        let notes = try store.createTabFolder(name: "Field notes", in: store.space.id, parent: projects)
+        let titles = ["Reading list", "Design review", "Project roadmap", "Reference library", "Research notes"]
+        let pins = titles.enumerated().map { index, title -> BrowserCore.Tab in
+            var tab = BrowserCore.Tab(title: title, url: "about:blank", pinned: true)
+            tab.folder = index < 3 ? projects : notes
+            return tab
+        }
+        store.session.spaces[store.spaceIndex].tabs += pins
+        var library = store.library
+        library.favoriteTabs = ["Mail", "Calendar", "GitHub", "Docs", "Notes", "Music"].map {
+            var tab = BrowserCore.Tab(title: $0, url: "about:blank", pinned: true); tab.favorite = true; return tab
+        }
+        store.library = library; store.save()
+        for width in [196.0, 236.0, 340.0] {
+            UserDefaults.standard.set(width, forKey: "sidebarWidth")
+            try await capture("sidebar-\(Int(width))")
+            check(web.window === window && web.bounds.width > 80, "A real website remains mounted with sidebar width \(Int(width))")
+        }
+        UserDefaults.standard.set(236.0, forKey: "sidebarWidth")
+        var settings = store.appearance; let originalAppearance = settings
+        settings.textScale = 1.35; store.appearance = settings
+        try await capture("sidebar-large-text")
+        store.appearance = originalAppearance
+        for theme in [SidebarTheme.sage, .ocean] {
+            store.setTheme(theme); try await capture("theme-"+theme.rawValue)
+        }
+        var custom = store.activeTheme.palette
+        custom.background = .init(0.15,0.12,0.28); custom.secondary = .init(0.10,0.28,0.25)
+        custom.accent = .init(0.94,0.68,0.42); custom.useGradient = true
+        store.setCustomTheme(custom); try await capture("theme-custom")
+        store.appearanceVisible = true
+        try await wait("owned appearance sheet") { window.attachedSheet != nil }
+        try await capture("appearance-sheet")
+        store.appearanceVisible = false
+        try await wait("owned appearance sheet dismissed") { window.attachedSheet == nil }
+        store.setTheme(.midnight)
+        settings = store.appearance; settings.animationsEnabled = true; store.appearance = settings
+        print("OWNED_WELCOME_MOTION", "reduceMotion", NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        store.preferences.onboardingCompleted = false
+        store.onboardingVisible = true
+        let start = ContinuousClock.now
+        for (seconds, label) in [(0.25,"welcome-0250"),(1.20,"welcome-1200"),(2.60,"welcome-2600"),(4.20,"welcome-4200")] {
+            try await Task.sleep(until: start + .seconds(seconds), clock: .continuous)
+            try await NativeOwnedWindowCapture.capture(window, kind: label, directory: directory)
+        }
+        try await press("Continue"); try await capture("welcome-style")
+        try await press("Continue"); try await capture("welcome-options")
+        try await press("Start browsing")
+        check(!store.onboardingVisible && store.preferences.onboardingCompleted == true,
+              "The actual native welcome controls complete setup and save the choice")
+        try await capture("welcome-complete")
+        let ids = (1...4).map { index in store.newTab(url: URL(string:"about:blank#owned-compositor-pane-\(index)")) }
+        store.select(ids[0]); for id in ids.dropFirst() { store.openInSplit(id) }
+        let colors = ["#f8e8dd","#e5f0ed","#e6ebf7","#f1e5ee"]
+        let names = ["Field Notes","Project Plan","Reference","Reading List"]
+        for (index,id) in ids.enumerated() {
+            let page = store.view(for:id)
+            page.loadHTMLString("<meta name='viewport' content='width=device-width'><title>\(names[index])</title><style>body{background:\(colors[index]);font:16px system-ui;margin:16px;color:#202031}h1{font-size:20px}input{box-sizing:border-box;width:100%;max-width:220px}</style><h1>\(names[index])</h1><input id='note' aria-label='Note'>", baseURL:nil)
+            try await wait("owned compositor pane ready") { (try? await page.evaluateJavaScript("document.getElementById('note')!==null")) as? Bool == true }
+            _ = try await page.evaluateJavaScript("document.getElementById('note').value='Draft \(index+1)'")
+        }
+        if let bounds = (window.screen ?? NSScreen.main)?.visibleFrame {
+            window.setFrame(NSRect(origin:bounds.origin,size:NSSize(width:min(1260,bounds.width),height:min(740,bounds.height))),display:true)
+        }
+        if store.splitLayout?.axis != .columns { store.flipSplit() }
+        try await capture("four-columns")
+        store.flipSplit(); try await capture("four-rows")
+        var drafts: [String] = []
+        for id in ids { drafts.append((try await store.view(for:id).evaluateJavaScript("document.getElementById('note').value")) as? String ?? "") }
+        check(drafts == ["Draft 1","Draft 2","Draft 3","Draft 4"], "All four visible pane drafts survive the real-window orientation change")
+        store.clearSplit(); store.selectAny(originalID)
+        let preservedDraft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='native layout draft'&&window.ownedLayoutToken===73")) as? Bool
+        check(store.views[originalID] === web && preservedDraft == true,
+              "Welcome, themes and four-pane review preserve the original live document and unsaved input")
     }
 }
