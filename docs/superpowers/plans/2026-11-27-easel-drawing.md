@@ -34,9 +34,9 @@
 
 **Interfaces:** Public immutable Codable/Equatable/Sendable `EaselDrawingPoint(x:y:)`, `EaselDrawingStyle(color:lineWidth:opacity:)`, `EaselDrawingKind`, `EaselDrawing(kind:viewBoxWidth:viewBoxHeight:points:style:)`. Derived `EaselDrawingPath(commands:filled:)` and `EaselDrawingCommand` move/line/quadratic/cubic/close cases; no geometry cache in encoded data.
 
-- [ ] Write independent fixtures for JSON roundtrip/canonical color, all input bounds, incremental oversized decode, wrong endpoint counts/zero-area shapes, hand-derived rectangle/ellipse/arrow geometry, pen smoothing and visible coincident-point dots. Run before implementation; expect missing APIs.
-- [ ] Implement types and deterministic local paths with stroke-safe bounds. Run pure drawing checks plus the existing complete core/asset command; expect all green without launching an app.
-- [ ] Integrate `ALCOVE_EASEL_DRAWING_CORE_ONLY=1 scripts/build.sh` and the default core check. Strict compile the actual application sources with the new model. Commit and task-done using the focused+core command.
+- [x] Write independent fixtures for JSON roundtrip/canonical color, all input bounds, incremental oversized decode, wrong endpoint counts/zero-area shapes, hand-derived rectangle/ellipse/arrow geometry, pen smoothing and visible coincident-point dots. Run before implementation; expect missing APIs.
+- [x] Implement types and deterministic local paths with stroke-safe bounds. Run pure drawing checks plus the existing complete core/asset command; expect all green without launching an app.
+- [x] Integrate `ALCOVE_EASEL_DRAWING_CORE_ONLY=1 scripts/build.sh` and the default core check. Strict compile the actual application sources with the new model. Commit and task-done using the focused+core command.
 
 ### Task 2: Document integration, rendering and export
 
