@@ -118,6 +118,9 @@ extension BrowserDocument {
         let liveOwners = Dictionary(uniqueKeysWithValues: session.spaces.flatMap { space in space.tabs.map { ($0.id, space.effectiveProfileID) } })
         let liveFavorites = Set(session.spaces.flatMap(\.tabs).filter { $0.favorite == true }.map(\.id))
         for index in (profileLibraries ?? []).indices {
+            if let saved = profileLibraries![index].library.easels {
+                profileLibraries![index].library.easels = Easel.merged(saved, [])
+            }
             if let saved = profileLibraries![index].library.siteBoosts {
                 profileLibraries![index].library.siteBoosts = BoostCatalog(saved).entries
             }
@@ -177,6 +180,7 @@ extension BrowserDocument {
 
 extension BrowserLibrary {
     public mutating func mergePreservingRecords(_ other: BrowserLibrary) {
+        if easels != nil || other.easels != nil { easels = Easel.merged(easels ?? [], other.easels ?? []) }
         if extensions != nil || other.extensions != nil { extensions = ExtensionCatalog.merged(extensions ?? [],other.extensions ?? []) }
         if siteBoosts != nil || other.siteBoosts != nil { siteBoosts = BoostCatalog((siteBoosts ?? []) + (other.siteBoosts ?? [])).entries }
         func pages(_ current: [PageRecord], _ incoming: [PageRecord]) -> [PageRecord] {

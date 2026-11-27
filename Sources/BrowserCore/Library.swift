@@ -8,6 +8,7 @@ public struct PageRecord: Codable, Identifiable, Equatable, Sendable {
     public init(title: String, url: String, date: Date = Date()) { id = UUID(); self.title = title; self.url = url; self.date = date }
 }
 public struct BrowserLibrary: Codable {
+    public var easels: [Easel]?
     public var extensions: [BrowserExtensionRecord]?
     public var siteBoosts: [SiteBoost]?
     public var deletedSpaces: [DeletedSpace]?
@@ -47,7 +48,7 @@ public struct Preferences: Codable {
     public init() {}
 }
 public struct BrowserDocument: Codable {
-    public static let currentFormatVersion = 8
+    public static let currentFormatVersion = 9
     /// Identifies the live window-group snapshot used to prepare a transaction.
     /// Excluded from disk data and the encrypted document format.
     public var workingRevision: UUID? = nil

@@ -18,6 +18,11 @@ for resource in domains.txt source.json LICENSE.PhishDestroy.txt; do
     cp "Resources/WebsiteProtection/$resource" "$MANUAL/WebsiteProtection/$resource"
 done
 xcrun swiftc "${FLAGS[@]}" -emit-module -emit-library -enable-testing -module-name BrowserCore Sources/BrowserCore/*.swift -o "$MANUAL/libBrowserCore.dylib" -emit-module-path "$MANUAL/BrowserCore.swiftmodule"
+run_easel_core_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselCoreChecks.swift -o "$MANUAL/easel-core-checks"
+    "$MANUAL/easel-core-checks"
+}
+if [[ "${ALCOVE_EASEL_CORE_ONLY:-0}" == 1 ]]; then run_easel_core_checks; exit; fi
 run_window_model_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/BrowserWindowWorkspaceChecks.swift -o "$MANUAL/window-workspace-checks"
     "$MANUAL/window-workspace-checks"
@@ -457,6 +462,7 @@ if [[ "${1:-}" == "profile-store-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    run_easel_core_checks
     run_bookmark_export_core_checks
     run_bookmark_export_store_checks
     run_reader_load_checks
