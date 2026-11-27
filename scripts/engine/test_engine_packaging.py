@@ -2,6 +2,7 @@
 import hashlib
 import importlib
 import copy
+import shutil
 import struct
 import tarfile
 import tempfile
@@ -121,6 +122,150 @@ class MachOPackagingChecks(unittest.TestCase):
         struct.pack_into('<I', after, 32 + 232 + 12, 0x000E0000)
         with self.assertRaisesRegex(ValueError, 'load command|platform'):
             self.metadata.verify_derivation(before, bytes(after), {'removeDeveloperEnvironment': True})
+
+
+def relocation_fixture(identity, dependency='/usr/lib/libSystem.B.dylib', rpath='@loader_path', environment=()):
+    original = fixture(())
+    table_end = 32 + struct.unpack_from('<I', original, 20)[0]
+    cursor = 32
+    commands = []
+    while cursor < table_end:
+        kind, size = struct.unpack_from('<II', original, cursor)
+        if kind != 0xD:
+            commands.append(original[cursor:cursor+size])
+        cursor += size
+    for kind, value in ((0xD, identity), (0xC, dependency)):
+        commands.append(command(kind, struct.pack('<IIII', 24, 0, 0x10000, 0x10000) + value.encode() + b'\0'))
+    commands.append(command(0x8000001C, struct.pack('<I', 12) + rpath.encode() + b'\0'))
+    for value in environment:
+        commands.append(command(0x27, struct.pack('<I', 12) + value.encode() + b'\0'))
+    table = b''.join(commands)
+    header = bytearray(original[:32])
+    struct.pack_into('<II', header, 16, len(commands), len(table))
+    return bytes(header) + table + bytes(4096-32-len(table)) + original[4096:]
+
+
+class EngineRelocationChecks(unittest.TestCase):
+    def setUp(self):
+        try:
+            self.relocation = importlib.import_module('image_relocation')
+        except ModuleNotFoundError:
+            self.fail('The engine image relocation verifier is missing')
+        self.plan = {'identity':'@rpath/Owned.framework/Owned', 'changes':{},
+                     'removeRpaths':['/developer/runtime'], 'addRpath':'@loader_path/../..'}
+        self.before = relocation_fixture('/System/Library/Frameworks/Owned.framework/Owned',
+            rpath='/developer/runtime', environment=['DYLD_FRAMEWORK_PATH=/developer/runtime'])
+        self.after = relocation_fixture('@rpath/Owned.framework/Owned', rpath='@loader_path/../..')
+
+    def test_accepts_only_planned_metadata_and_keeps_sections_unchanged(self):
+        receipt = self.relocation.verify_relocation(self.before, self.after, self.plan)
+        self.assertTrue(receipt['sectionBytesAndOffsetsUnchanged'])
+        self.assertFalse(receipt['nativeAppQualified'])
+        self.assertEqual(receipt['outputSHA256'], hashlib.sha256(self.after).hexdigest())
+
+    def test_accepts_exact_owned_dependency_change_and_preserves_system_dependency(self):
+        before = relocation_fixture('/System/Library/Frameworks/Owned.framework/Owned',
+            dependency='/System/Library/Frameworks/Other.framework/Other', rpath='/developer/runtime',
+            environment=['DYLD_FRAMEWORK_PATH=/developer/runtime'])
+        after = relocation_fixture('@rpath/Owned.framework/Owned',
+            dependency='@rpath/Other.framework/Other', rpath='@loader_path/../..')
+        plan = dict(self.plan, changes={'/System/Library/Frameworks/Other.framework/Other':'@rpath/Other.framework/Other'})
+        self.relocation.verify_relocation(before, after, plan)
+        wrong = relocation_fixture('@rpath/Owned.framework/Owned', dependency='/usr/lib/foreign.dylib', rpath='@loader_path/../..')
+        with self.assertRaisesRegex(ValueError, 'command|dependency'):
+            self.relocation.verify_relocation(self.before, wrong, self.plan)
+
+    def test_rejects_remaining_developer_environment(self):
+        after = relocation_fixture('@rpath/Owned.framework/Owned', rpath='@loader_path/../..',
+                                   environment=['DYLD_FRAMEWORK_PATH=/developer/runtime'])
+        with self.assertRaisesRegex(ValueError, 'environment'):
+            self.relocation.verify_relocation(self.before, after, self.plan)
+
+    def test_rejects_code_and_data_changes(self):
+        for offset in (4096, 4112):
+            with self.subTest(offset=offset):
+                after = bytearray(self.after); after[offset] ^= 1
+                with self.assertRaisesRegex(ValueError, 'section|content'):
+                    self.relocation.verify_relocation(self.before, bytes(after), self.plan)
+
+    def test_rejects_changed_minimum_os_and_header_flags(self):
+        for offset in (24, 32+232+12):
+            with self.subTest(offset=offset):
+                after = bytearray(self.after); after[offset] ^= 1
+                with self.assertRaisesRegex(ValueError, 'header|platform|command'):
+                    self.relocation.verify_relocation(self.before, bytes(after), self.plan)
+
+    def test_rejects_changed_dylib_compatibility_version(self):
+        after = bytearray(self.after)
+        start = bytes(after).index(b'@rpath/Owned.framework/Owned')
+        after[start-4] ^= 1
+        with self.assertRaisesRegex(ValueError, 'command'):
+            self.relocation.verify_relocation(self.before, bytes(after), self.plan)
+
+    def test_rejects_unplanned_runtime_search_path(self):
+        after = relocation_fixture('@rpath/Owned.framework/Owned', rpath='/developer/unapproved')
+        with self.assertRaisesRegex(ValueError, 'rpath|search'):
+            self.relocation.verify_relocation(self.before, after, self.plan)
+
+    def test_rejects_plan_that_does_not_describe_the_input(self):
+        for plan in (dict(self.plan, removeRpaths=[]), dict(self.plan, changes={'/missing.dylib':'@rpath/missing.dylib'})):
+            with self.subTest(plan=plan), self.assertRaisesRegex(ValueError, 'plan|dependency|rpath'):
+                self.relocation.verify_relocation(self.before, self.after, plan)
+
+    def test_rejects_changes_outside_load_commands_even_before_first_section(self):
+        after = bytearray(self.after); after[4095] = 1
+        with self.assertRaisesRegex(ValueError, 'content|padding'):
+            self.relocation.verify_relocation(self.before, bytes(after), self.plan)
+
+    @unittest.skipUnless(shutil.which('install_name_tool'), 'Requires Apple metadata relocation tooling')
+    def test_apple_tool_relocates_a_new_copy_without_changing_input(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw); source = root/'source'; destination = root/'relocated'
+            source.write_bytes(self.before); source.chmod(0o755)
+            receipt = self.relocation.relocate_image_copy(source, destination, self.plan,
+                hashlib.sha256(self.before).hexdigest())
+            self.assertEqual(source.read_bytes(), self.before)
+            self.assertEqual(source.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(destination.stat().st_mode & 0o777, 0o755)
+            self.assertTrue(receipt['sectionBytesAndOffsetsUnchanged'])
+            self.assertFalse(receipt['nativeAppQualified'])
+            self.relocation.verify_relocation(self.before, destination.read_bytes(), self.plan)
+
+    def test_existing_output_is_preserved(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw); source = root/'source'; destination = root/'relocated'
+            source.write_bytes(self.before); destination.write_bytes(b'keep existing output')
+            with self.assertRaisesRegex(ValueError, 'destination'):
+                self.relocation.relocate_image_copy(source, destination, self.plan,
+                    hashlib.sha256(self.before).hexdigest())
+            self.assertEqual(destination.read_bytes(), b'keep existing output')
+
+    def test_wrong_input_digest_or_symbolic_link_is_rejected_without_output(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw); source = root/'source'; destination = root/'relocated'
+            source.write_bytes(self.before)
+            with self.assertRaisesRegex(ValueError, 'input|digest'):
+                self.relocation.relocate_image_copy(source, destination, self.plan, '0'*64)
+            self.assertFalse(destination.exists())
+            link = root/'link'; link.symlink_to('source')
+            with self.assertRaisesRegex(ValueError, 'input|file|link'):
+                self.relocation.relocate_image_copy(link, destination, self.plan,
+                    hashlib.sha256(self.before).hexdigest())
+            self.assertFalse(destination.exists())
+            self.assertEqual(source.read_bytes(), self.before)
+
+    @unittest.skipUnless(shutil.which('install_name_tool'), 'Requires Apple metadata relocation tooling')
+    def test_insufficient_header_space_keeps_input_and_publishes_nothing(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw); source = root/'source'; destination = root/'relocated'
+            source.write_bytes(self.before)
+            plan = dict(self.plan, addRpath='@loader_path/'+'x'*4096)
+            with self.assertRaisesRegex(ValueError, 'Apple relocation tool|padding|section'):
+                self.relocation.relocate_image_copy(source, destination, plan,
+                    hashlib.sha256(self.before).hexdigest())
+            self.assertEqual(source.read_bytes(), self.before)
+            self.assertFalse(destination.exists())
+            self.assertEqual({p.name for p in root.iterdir()}, {'source'})
 
 
 class EngineInputChecks(unittest.TestCase):

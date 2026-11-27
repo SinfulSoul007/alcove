@@ -10,6 +10,26 @@ All 21 actual regular Mach-O images were inspected. Developer-environment comman
 
 The complete focused Python suite passes 32 tests, including malformed metadata, section/code/data/platform changes, unsafe or omitted dependencies, duplicate IDs, escaping members, the canonical optional input link, atomic staged output, bad service aliases, resource tampering/omission, unexpected extra output and verification after relocation. Test-only qualification journal derivation passes 14 actual Foundation checks and both ordinary and qualification helper variants typecheck without warnings. Qualification journals derive from an explicit run UUID under the app's writable container cache, rather than writing beside the executable in a signed bundle. Actual packaged sandbox recovery remains to be run.
 
+## Metadata-relocation checkpoint
+
+The focused component suite now passes45 tests with zero failures. Nine new
+verifier tests first failed because relocation verification was absent; four
+real-tool/filesystem tests then exposed the missing copy operation. The
+implemented operation preserves authenticated input bytes/modes, rejects an
+existing destination, uses Apple tooling on a temporary copy, verifies exact
+allowed changes and atomically publishes a new file without replacement.
+Insufficient header space and bad input publish nothing.
+
+All21 actual images from the authenticated engine were independently relocated
+through this operation. Every code/data section byte and offset, platform/OS
+metadata, dylib version and unrelated command remains unchanged; only planned
+install names/dependencies/rpaths and approved developer-search metadata changed.
+Input files retain their original hashes. This qualifies these static image
+copies only. Complete transformed-bundle assembly, signing, resources/notices,
+native service execution and original-uBlock/ordinary-app/package gates remain
+open. The original copied signatures are not valid after relocation and are not
+used as native qualification evidence. See [component usage](../scripts/engine/README.md).
+
 ## Concrete signing gate
 
 VM `job-956-engine-library-validation` built an owned C app and bundled C library. Both were ad hoc signed with Hardened Runtime, and the app retained exactly the existing six sandbox entitlements. `codesign --verify --deep --strict` passed. Launch with developer variables absent failed before `main` (exit -6): dyld rejected the bundled library because the process and mapped non-platform image had different Team IDs. No library-validation exception, sandbox removal or private entitlement was added.
