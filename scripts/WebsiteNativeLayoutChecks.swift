@@ -1,4 +1,5 @@
 import AppKit
+import ScreenCaptureKit
 import SwiftUI
 import WebKit
 import CryptoKit
@@ -435,6 +436,10 @@ extension WebsiteFullscreenChecks {
               "Sidebar and theme updates preserve the browser's usable resize limit")
         if motionCheck { try await exerciseSidebarMotion(store: store, web: web, window: window, document: document) }
         if resizeCheck { try await exerciseLiveSidebarResize(store: store, web: web, window: window, document: document) }
+        if let directory = ProcessInfo.processInfo.environment["ALCOVE_OWNED_WINDOW_CAPTURE_DIR"],
+           kind == "layout-normal-ready-focus-production" {
+            try await NativeOwnedWindowCapture.capture(window, kind: kind, directory: directory)
+        }
         print("FULLSCREEN_LAYOUT_CASE_COMPLETED", kind)
     }
 
@@ -703,5 +708,51 @@ extension WebsiteFullscreenChecks {
             check(store.documentIdentity(for: web) === document && web.window === window && draft == true,
                   "The actual sidebar transition preserves its exact live page, document and unsaved form")
         }
+    }
+}
+
+
+private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
+    let description: String
+}
+
+@MainActor private enum NativeOwnedWindowCapture {
+    static func capture(_ window: NSWindow, kind: String, directory: String) async throws {
+        guard CGPreflightScreenCaptureAccess() else {
+            print("OWNED_WINDOW_CAPTURE_ENVIRONMENT_UNAVAILABLE screenRecordingNotAlreadyGranted")
+            throw OwnedWindowCaptureError(description: "Owned-window capture needs an existing Screen Recording grant; no permission was requested or changed")
+        }
+        guard window.isVisible, window.windowNumber > 0 else {
+            throw OwnedWindowCaptureError(description: "The owned native window is not visible")
+        }
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        let pid = ProcessInfo.processInfo.processIdentifier
+        guard let owned = content.windows.first(where: {
+            $0.windowID == CGWindowID(window.windowNumber) && $0.owningApplication?.processID == pid
+        }) else {
+            throw OwnedWindowCaptureError(description: "The exact owned window is unavailable to the OS compositor")
+        }
+        let configuration = SCStreamConfiguration()
+        configuration.width = Int(owned.frame.width.rounded(.up))
+        configuration.height = Int(owned.frame.height.rounded(.up))
+        configuration.showsCursor = false
+        let image = try await SCScreenshotManager.captureImage(
+            contentFilter: SCContentFilter(desktopIndependentWindow: owned), configuration: configuration)
+        guard image.width >= 400, image.height >= 300,
+              let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+            throw OwnedWindowCaptureError(description: "The OS compositor did not return a usable owned-window image")
+        }
+        let root = URL(fileURLWithPath: directory, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let name = kind + "-window.png"
+        try png.write(to: root.appendingPathComponent(name), options: .atomic)
+        let record: [String: Any] = ["method": "SCScreenshotManager.desktopIndependentWindow",
+            "case": kind, "ownedProcessID": pid, "ownedWindowID": owned.windowID,
+            "width": image.width, "height": image.height,
+            "sha256": SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined(),
+            "screenRecordingAlreadyGranted": true]
+        try JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted, .sortedKeys])
+            .write(to: root.appendingPathComponent(kind + "-window.json"), options: .atomic)
+        print("OWNED_WINDOW_CAPTURE_COMPLETE", kind, image.width, image.height)
     }
 }

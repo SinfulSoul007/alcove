@@ -84,6 +84,7 @@ jobs:
         env:
           ALCOVE_FULLSCREEN_COMMAND_CASES: ${{ inputs.command_case }}
           ALCOVE_FULLSCREEN_OPTIMIZED: ${{ inputs.optimized }}
+          ALCOVE_OWNED_WINDOW_CAPTURE_DIR: ${{ github.workspace }}/.build/fullscreen/owned-window-captures
         run: |
           set -o pipefail
           mkdir -p .build/fullscreen
@@ -226,5 +227,7 @@ jobs:
           path: |
             .build/fullscreen/*.log
             .build/fullscreen/sidebar-snapshots/*.png
+            .build/fullscreen/owned-window-captures/*.png
+            .build/fullscreen/owned-window-captures/*.json
           if-no-files-found: warn
           retention-days: 14
