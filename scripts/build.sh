@@ -11,17 +11,6 @@ MANUAL="$PWD/.build/manual/$ARCH"
 BASE_FLAGS=(-sdk "$SDK" -module-cache-path "$PWD/.build/cache" -target "$ARCH-apple-macosx14.0")
 FLAGS=("${BASE_FLAGS[@]}")
 mkdir -p "$MANUAL" "$OUT/Contents/MacOS"
-# Match the SDK's actual Foundation callback types rather than its version name.
-AUTH_PROBE=("${FLAGS[@]}" -warnings-as-errors -typecheck Sources/Browser/ExtensionAuthenticationCallback.swift scripts/ExtensionAuthenticationCallbackProbe.swift)
-if xcrun swiftc "${AUTH_PROBE[@]}" > "$MANUAL/auth-callback-modern.log" 2>&1; then
-    printf 'Foundation authentication callbacks: Sendable\n'
-elif xcrun swiftc "${AUTH_PROBE[@]}" -D ALCOVE_AUTH_CALLBACK_MAIN_ACTOR > "$MANUAL/auth-callback-main-actor.log" 2>&1; then
-    FLAGS+=(-D ALCOVE_AUTH_CALLBACK_MAIN_ACTOR)
-    printf 'Foundation authentication callbacks: MainActor Sendable\n'
-else
-    cat "$MANUAL/auth-callback-modern.log" "$MANUAL/auth-callback-main-actor.log"
-    exit 1
-fi
 python3 scripts/refresh-website-protection.py --verify Resources/WebsiteProtection
 mkdir -p "$MANUAL/ReaderAssets"
 cp Sources/Browser/ReaderAssets/* "$MANUAL/ReaderAssets/"
@@ -54,6 +43,17 @@ run_bookmark_export_core_checks() {
 if [[ "${1:-}" == "bookmark-export-core-test" ]]; then run_bookmark_export_core_checks; exit; fi
 STORE_SOURCES=()
 for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
+# Probe the real sources, imports and module-emission boundary used by native tests.
+AUTH_PROBE=("${BASE_FLAGS[@]}" -parse-as-library -warnings-as-errors -enable-testing -emit-module -module-name AlcoveAuthenticationSDKProbe -I "$MANUAL" "${STORE_SOURCES[@]}" -emit-module-path "$MANUAL/AlcoveAuthenticationSDKProbe.swiftmodule")
+if xcrun swiftc "${AUTH_PROBE[@]}" > "$MANUAL/auth-callback-modern.log" 2>&1; then
+    printf 'Foundation authentication callbacks: Sendable\n'
+elif xcrun swiftc "${AUTH_PROBE[@]}" -D ALCOVE_AUTH_CALLBACK_MAIN_ACTOR > "$MANUAL/auth-callback-main-actor.log" 2>&1; then
+    FLAGS+=(-D ALCOVE_AUTH_CALLBACK_MAIN_ACTOR)
+    printf 'Foundation authentication callbacks: MainActor Sendable\n'
+else
+    cat "$MANUAL/auth-callback-modern.log" "$MANUAL/auth-callback-main-actor.log"
+    exit 1
+fi
 run_easel_tab_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/EaselTabChecks.swift -o "$MANUAL/easel-tab-checks"
     "$MANUAL/easel-tab-checks"
