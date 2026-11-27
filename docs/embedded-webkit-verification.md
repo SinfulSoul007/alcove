@@ -30,6 +30,27 @@ native service execution and original-uBlock/ordinary-app/package gates remain
 open. The original copied signatures are not valid after relocation and are not
 used as native qualification evidence. See [component usage](../scripts/engine/README.md).
 
+## Complete relocated engine tree
+
+The component suite passes53 tests after complete-tree assembly and verification
+were added. The new cases exercise full resource/service preservation, a moved
+tree, unmapped dependencies, staging failure cleanup, existing destinations,
+changed input/output/resources, unexpected code and missing/duplicated proofs.
+
+The actual authenticated10,568-member engine graph was assembled with all21
+metadata-relocated images. Full resource provenance and relative dependency
+closure passed. The resulting tree was moved and independently verified again
+against the immutable input; every original input member/hash remained unchanged.
+This is a complete prepared engine fragment, without an app entry point or valid
+post-transform signatures. `nativeAppQualified` and `ordinaryAppQualified` remain
+false, and `signingPending` remains true. It is not a downloadable browser.
+
+The dedicated VM's current public identity inventory reports zero valid
+code-signing identities and no full Xcode installation. No private key was read,
+exported or used. Signing/native service execution, licensing/source notices,
+the frozen original-uBlock witness, ordinary app integration and distribution
+qualification remain open.
+
 ## Concrete signing gate
 
 VM `job-956-engine-library-validation` built an owned C app and bundled C library. Both were ad hoc signed with Hardened Runtime, and the app retained exactly the existing six sandbox entitlements. `codesign --verify --deep --strict` passed. Launch with developer variables absent failed before `main` (exit -6): dyld rejected the bundled library because the process and mapped non-platform image had different Team IDs. No library-validation exception, sandbox removal or private entitlement was added.

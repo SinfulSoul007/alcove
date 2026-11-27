@@ -4,11 +4,14 @@ The caller must first authenticate and freshly extract the pinned archive with
 verified_input.verify_and_extract. A prepared layout is not a runnable app.
 """
 from pathlib import Path, PurePosixPath
+import copy
 import shutil
 import stat
 import tempfile
 
-from bundle_layout import FRAMEWORK_DIRECTORY, SERVICE_DIRECTORY, SERVICES, map_member
+from bundle_layout import FRAMEWORK_DIRECTORY, SERVICE_DIRECTORY, SERVICES, map_member, plan_relocations, is_owned_reference
+from image_relocation import relocate_image_copy, verify_relocation
+from macho_metadata import inspect_image
 from verified_input import digest, require
 
 
@@ -110,5 +113,114 @@ def prepare_runtime_layout(runtime, destination):
                                          'target':'../Resources/AlcoveEngine/ANGLEMetalLib.metallib'})
         receipt['verification'] = verify_layout_copy(stage,receipt)
         require(not destination.exists() and not destination.is_symlink(), 'Prepared layout destination appeared during staging')
+        stage.rename(destination)
+    return receipt
+
+
+def runtime_images(runtime, members):
+    images = []
+    magic = {b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe', b'\xfe\xed\xfa\xcf',
+             b'\xfe\xed\xfa\xce', b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca',
+             b'\xca\xfe\xba\xbf', b'\xbf\xba\xfe\xca'}
+    for member in members:
+        if member['kind'] != 'file':
+            continue
+        path = runtime/member['source']
+        with path.open('rb') as file:
+            prefix = file.read(4)
+        if prefix in magic:
+            images.append({**inspect_image(path.read_bytes()), 'path':member['source']})
+    require(images, 'No engine image inventory')
+    return images
+
+
+def verify_relocated_runtime_layout(destination, receipt, runtime):
+    root, runtime = destination.resolve(strict=True), runtime.resolve(strict=True)
+    require(receipt['formatVersion'] == 1 and receipt['nativeAppQualified'] is False and
+            receipt['ordinaryAppQualified'] is False and receipt['signingPending'] is True,
+            'Invalid relocated layout receipt')
+    original = receipt['inputLayout']
+    require(original['members'] == inventory_layout(runtime), 'Engine input provenance changed')
+    generated = []
+    destinations = {member['destination'] for member in original['members']}
+    optional = FRAMEWORK_DIRECTORY+'/WebCore.framework/Versions/A/Frameworks'
+    if (runtime/'WebCore.framework').is_dir() and optional not in destinations:
+        generated.append({'destination':optional, 'kind':'directory'})
+    if (runtime/'ANGLEMetalLib.metallib').is_file():
+        generated.append({'destination':FRAMEWORK_DIRECTORY+'/ANGLEMetalLib.metallib', 'kind':'link',
+                          'target':'../Resources/AlcoveEngine/ANGLEMetalLib.metallib'})
+    require(original['generated'] == generated, 'Unexpected generated layout provenance')
+    verify_layout_copy(root, receipt['outputLayout'])
+    images = runtime_images(runtime, original['members'])
+    plans = plan_relocations(images)
+    records = receipt['images']
+    require(len(records) == len(images) and {record['source'] for record in records} == set(plans),
+            'Incomplete or duplicate image receipt inventory')
+    records = {record['source']:record for record in records}
+    expected = copy.deepcopy(original)
+    output_members = {member['source']:member for member in expected['members']}
+    embedded = {}
+    observed = []
+    for image in images:
+        name = image['path']; plan = plans[name]; record = records[name]
+        require(record['plan'] == plan and record['destination'] == plan['destination'],
+                'Image relocation plan receipt changed')
+        path = root/plan['destination']
+        proof = verify_relocation((runtime/name).read_bytes(), path.read_bytes(), plan)
+        require(record['proof'] == proof, 'Image derivation receipt changed')
+        output_members[name]['sha256'] = proof['outputSHA256']
+        info = inspect_image(path.read_bytes())
+        if info['identity'] is not None:
+            require(info['identity'] not in embedded, 'Duplicate relocated image identity')
+            embedded[info['identity']] = path
+        observed.append((path, info))
+    require(receipt['outputLayout'] == expected, 'Relocated output provenance receipt changed')
+    frameworks = (root/FRAMEWORK_DIRECTORY).resolve(strict=True)
+    for path, info in observed:
+        require(len(info['rpaths']) == 1 and info['rpaths'][0].startswith('@loader_path'),
+                'Unplanned relocated image rpath')
+        relative = info['rpaths'][0].removeprefix('@loader_path').lstrip('/')
+        require((path.parent/relative).resolve(strict=True) == frameworks,
+                'Relocated loader search path misses bundle frameworks')
+        for dependency in info['dependencies']:
+            if dependency.startswith('@rpath/'):
+                target = embedded.get(dependency)
+                require(target is not None, 'Unmapped relocated engine dependency')
+                resolved = (frameworks/dependency.removeprefix('@rpath/')).resolve(strict=True)
+                require(resolved.is_relative_to(frameworks) and resolved == target.resolve(strict=True),
+                        'Relocated engine dependency escapes or resolves to another image')
+            else:
+                require(dependency.startswith(('/System/Library/', '/usr/lib/')) and
+                        not is_owned_reference(dependency), 'Unmapped relocated image dependency')
+    return {'imageCount':len(images), 'dependencyClosureVerified':True,
+            'resourceProvenanceVerified':True, 'nativeAppQualified':False,
+            'ordinaryAppQualified':False, 'signingPending':True}
+
+
+def prepare_relocated_runtime_layout(runtime, destination):
+    runtime, destination = Path(runtime), Path(destination)
+    require(not destination.exists() and not destination.is_symlink(), 'Relocated layout destination already exists')
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.alcove-engine-relocation-', dir=destination.parent) as raw:
+        scratch = Path(raw); stage = scratch/'layout'
+        original = prepare_runtime_layout(runtime, stage)
+        images = runtime_images(runtime, original['members'])
+        plans = plan_relocations(images)
+        output = copy.deepcopy(original)
+        members = {member['source']:member for member in output['members']}
+        records = []
+        for image in images:
+            name = image['path']; plan = plans[name]
+            transformed = scratch/'images'/plan['destination']
+            proof = relocate_image_copy(runtime/name, transformed, plan, members[name]['sha256'])
+            transformed.replace(stage/plan['destination'])
+            members[name]['sha256'] = proof['outputSHA256']
+            records.append({'source':name, 'destination':plan['destination'], 'plan':plan, 'proof':proof})
+        receipt = {'formatVersion':1, 'inputLayout':original, 'outputLayout':output,
+                   'images':records, 'nativeAppQualified':False, 'ordinaryAppQualified':False,
+                   'signingPending':True}
+        receipt['verification'] = verify_relocated_runtime_layout(stage, receipt, runtime)
+        require(not destination.exists() and not destination.is_symlink(),
+                'Relocated layout destination appeared during staging')
         stage.rename(destination)
     return receipt

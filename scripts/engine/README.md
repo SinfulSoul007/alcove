@@ -2,7 +2,7 @@
 
 This development checkpoint authenticates the pinned engine input, stages its
 complete bundle layout, plans relative dependencies and relocates individual
-image copies. It does not yet produce a signed candidate app. The ordinary app
+image copies or the complete engine tree. It does not yet produce a signed candidate app. The ordinary app
 and public downloads continue to use system WebKit.
 
 Run the complete component suite from the repository root:
@@ -32,6 +32,22 @@ The component sequence is:
    that file. The expected digest comes from the authenticated input receipt.
    Existing output is preserved; tool failure and insufficient header space
    publish no image. The source bytes and mode remain unchanged.
+
+For the complete graph, use
+`package_candidate.prepare_relocated_runtime_layout(authenticated_runtime, new_destination)`.
+It stages every member/resource/service, computes the full dependency map,
+relocates all image copies, checks their derivations, and verifies the whole
+tree before publishing the prepared engine fragment. Failed staging publishes
+no destination. Input remains immutable.
+
+Reverify a prepared or moved tree with
+`package_candidate.verify_relocated_runtime_layout(destination, receipt, authenticated_runtime)`.
+Keep the original authenticated runtime in the build workspace as the independent
+reference; it is not copied into the app. Verification recomputes the image map
+and exact derivations, checks resource bytes/modes and the complete member/link
+inventory, rejects missing/duplicate image proofs, and resolves every owned load
+and loader search path within the bundle. An output's self-reported file hashes
+alone do not establish source provenance.
 
 The relocation verifier requires unchanged code/data section bytes and offsets,
 platform/minimum-OS metadata, dylib versions and unrelated load commands. Only

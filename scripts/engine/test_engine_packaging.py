@@ -135,12 +135,16 @@ def relocation_fixture(identity, dependency='/usr/lib/libSystem.B.dylib', rpath=
             commands.append(original[cursor:cursor+size])
         cursor += size
     for kind, value in ((0xD, identity), (0xC, dependency)):
+        if value is None:
+            continue
         commands.append(command(kind, struct.pack('<IIII', 24, 0, 0x10000, 0x10000) + value.encode() + b'\0'))
     commands.append(command(0x8000001C, struct.pack('<I', 12) + rpath.encode() + b'\0'))
     for value in environment:
         commands.append(command(0x27, struct.pack('<I', 12) + value.encode() + b'\0'))
     table = b''.join(commands)
     header = bytearray(original[:32])
+    if identity is None:
+        struct.pack_into('<I', header, 12, 2)
     struct.pack_into('<II', header, 16, len(commands), len(table))
     return bytes(header) + table + bytes(4096-32-len(table)) + original[4096:]
 
@@ -472,6 +476,111 @@ class StagedLayoutChecks(unittest.TestCase):
         receipt=self.package.prepare_runtime_layout(self.source,self.destination)
         moved=self.root/'moved';self.destination.rename(moved)
         self.package.verify_layout_copy(moved,receipt)
+
+
+@unittest.skipUnless(shutil.which('install_name_tool'), 'Requires Apple engine relocation tooling')
+class RelocatedRuntimeChecks(unittest.TestCase):
+    def setUp(self):
+        self.package = importlib.import_module('package_candidate')
+        self.metadata = importlib.import_module('macho_metadata')
+        self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name); self.source = self.root/'input'; self.source.mkdir()
+        self.destination = self.root/'relocated'
+        self.jsc = 'JavaScriptCore.framework/Versions/A/JavaScriptCore'
+        self.web = 'WebKit.framework/Versions/A/WebKit'
+        self.service = 'com.apple.WebKit.WebContent.xpc'
+        self.service_image = self.service+'/Contents/MacOS/owned'
+        self.resource = 'WebKit.framework/Versions/A/Resources/owned.txt'
+        for relative, identity, dependency in [
+            (self.jsc, '/System/Library/Frameworks/'+self.jsc, '/usr/lib/libSystem.B.dylib'),
+            (self.web, '/System/Library/Frameworks/'+self.web, '/System/Library/Frameworks/'+self.jsc),
+            (self.service_image, None, '/System/Library/Frameworks/'+self.web)]:
+            path = self.source/relative; path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(relocation_fixture(identity, dependency=dependency, rpath='/developer/runtime',
+                environment=['DYLD_FRAMEWORK_PATH=/developer/runtime']))
+            path.chmod(0o755)
+        resource = self.source/self.resource; resource.parent.mkdir(parents=True); resource.write_bytes(b'keep complete resource')
+        alias = self.source/'WebKit.framework/Versions/A/XPCServices'/self.service
+        alias.parent.mkdir(parents=True); alias.symlink_to('../../../../'+self.service)
+        (self.source/'ANGLEMetalLib.metallib').write_bytes(b'keep metal resource')
+
+    def test_complete_graph_relocates_with_resources_services_and_input_preserved(self):
+        before = {p.relative_to(self.source).as_posix():p.read_bytes()
+                  for p in self.source.rglob('*') if p.is_file() and not p.is_symlink()}
+        receipt = self.package.prepare_relocated_runtime_layout(self.source, self.destination)
+        self.assertEqual((self.destination/'Contents/Frameworks'/self.resource).read_bytes(), b'keep complete resource')
+        self.assertEqual((self.destination/'Contents/Frameworks/ANGLEMetalLib.metallib').read_bytes(), b'keep metal resource')
+        service = self.destination/'Contents/Frameworks/WebKit.framework/Versions/A/XPCServices'/self.service
+        self.assertTrue(service.is_dir() and not service.is_symlink())
+        info = self.metadata.inspect_image((self.destination/'Contents/Frameworks'/self.web).read_bytes())
+        self.assertEqual(info['identity'], '@rpath/WebKit.framework/Versions/A/WebKit')
+        self.assertEqual(info['dependencies'], ['@rpath/JavaScriptCore.framework/Versions/A/JavaScriptCore'])
+        self.assertEqual(info['rpaths'], ['@loader_path/../../..'])
+        self.assertEqual(info['environment'], [])
+        for relative, data in before.items(): self.assertEqual((self.source/relative).read_bytes(), data)
+        self.assertFalse(receipt['nativeAppQualified'])
+        verified = self.package.verify_relocated_runtime_layout(self.destination, receipt, self.source)
+        self.assertEqual(verified['imageCount'], 3)
+        self.assertTrue(verified['dependencyClosureVerified'])
+
+    def test_relocated_complete_output_verifies_after_moving(self):
+        receipt = self.package.prepare_relocated_runtime_layout(self.source, self.destination)
+        moved = self.root/'moved'; self.destination.rename(moved)
+        self.package.verify_relocated_runtime_layout(moved, receipt, self.source)
+
+    def test_unmapped_owned_dependency_publishes_no_bundle(self):
+        path = self.source/self.web
+        path.write_bytes(relocation_fixture('/System/Library/Frameworks/'+self.web,
+            dependency='/System/Library/Frameworks/WebCore.framework/Versions/A/WebCore', rpath='/developer/runtime'))
+        with self.assertRaisesRegex(ValueError, 'Unmapped owned'):
+            self.package.prepare_relocated_runtime_layout(self.source, self.destination)
+        self.assertFalse(self.destination.exists())
+        self.assertEqual({p.name for p in self.root.iterdir()}, {'input'})
+
+    def test_preserves_existing_output(self):
+        self.destination.mkdir(); (self.destination/'user.txt').write_bytes(b'keep')
+        with self.assertRaisesRegex(ValueError, 'destination'):
+            self.package.prepare_relocated_runtime_layout(self.source, self.destination)
+        self.assertEqual((self.destination/'user.txt').read_bytes(), b'keep')
+
+    def test_image_error_after_staging_publishes_no_partial_bundle(self):
+        path = self.source/self.web
+        broken = relocation_fixture('/System/Library/Frameworks/'+self.web,
+            dependency='/System/Library/Frameworks/'+self.jsc, rpath='/developer/runtime',
+            environment=['DYLD_UNREVIEWED_KEY=/developer/runtime'])
+        path.write_bytes(broken)
+        with self.assertRaisesRegex(ValueError, 'environment'):
+            self.package.prepare_relocated_runtime_layout(self.source, self.destination)
+        self.assertEqual(path.read_bytes(), broken)
+        self.assertFalse(self.destination.exists())
+        self.assertEqual({p.name for p in self.root.iterdir()}, {'input'})
+
+    def test_changed_resource_or_extra_image_is_rejected_after_assembly(self):
+        receipt = self.package.prepare_relocated_runtime_layout(self.source, self.destination)
+        resource = self.destination/'Contents/Frameworks'/self.resource
+        resource.write_bytes(b'changed resource')
+        with self.assertRaisesRegex(ValueError, 'content|resource'):
+            self.package.verify_relocated_runtime_layout(self.destination, receipt, self.source)
+        resource.write_bytes(b'keep complete resource')
+        (self.destination/'Contents/Frameworks/unlisted.dylib').write_bytes(b'unknown executable')
+        with self.assertRaisesRegex(ValueError, 'Unexpected|member'):
+            self.package.verify_relocated_runtime_layout(self.destination, receipt, self.source)
+
+    def test_changed_input_and_false_image_receipt_are_rejected(self):
+        receipt = self.package.prepare_relocated_runtime_layout(self.source, self.destination)
+        false = copy.deepcopy(receipt); false['images'][0]['proof']['inputSHA256'] = '0'*64
+        with self.assertRaisesRegex(ValueError, 'receipt|derivation|provenance'):
+            self.package.verify_relocated_runtime_layout(self.destination, false, self.source)
+        (self.source/self.resource).write_bytes(b'changed authenticated input')
+        with self.assertRaisesRegex(ValueError, 'input|provenance'):
+            self.package.verify_relocated_runtime_layout(self.destination, receipt, self.source)
+
+    def test_missing_or_duplicated_image_receipt_cannot_hide_incomplete_verification(self):
+        receipt = self.package.prepare_relocated_runtime_layout(self.source, self.destination)
+        for images in (receipt['images'][:-1], receipt['images']+[receipt['images'][0]]):
+            with self.subTest(count=len(images)), self.assertRaisesRegex(ValueError, 'image|inventory|receipt'):
+                bad = copy.deepcopy(receipt); bad['images'] = images
+                self.package.verify_relocated_runtime_layout(self.destination, bad, self.source)
 
 
 if __name__ == '__main__':
