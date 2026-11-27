@@ -765,21 +765,28 @@ extension WebsiteFullscreenChecks {
         func settle() async { try? await Task.sleep(for: .milliseconds(250)); window.contentView?.layoutSubtreeIfNeeded() }
         func capture(_ name: String) async throws {
             await settle()
-            try await NativeOwnedWindowCapture.capture(window.attachedSheet ?? window, kind: name, directory: directory)
-        }
-        func buttons(_ root: NSView) -> [NSButton] {
-            (root as? NSButton).map { [$0] } ?? root.subviews.flatMap(buttons)
+            try await NativeOwnedWindowCapture.capture(window, kind: name, directory: directory)
         }
         func press(_ name: String) async throws {
-            guard let root = (window.attachedSheet ?? window).contentView else { throw Failure.fixture("owned control root") }
-            let controls = buttons(root)
-            guard let control = controls.first(where: {
-                $0.title == name || $0.accessibilityLabel() == name || $0.accessibilityTitle() == name
-            }), control.isEnabled else {
-                print("OWNED_VISUAL_BUTTONS", controls.map { [$0.title, $0.accessibilityLabel() ?? "", $0.accessibilityTitle() ?? ""] })
-                throw Failure.fixture("owned native button unavailable: " + name)
+            var seen = Set<ObjectIdentifier>()
+            var found: (any NSAccessibilityProtocol)?
+            var labels: [String] = []
+            func visit(_ value: Any, depth: Int) {
+                guard depth < 60, let node = value as? any NSAccessibilityProtocol,
+                      seen.insert(ObjectIdentifier(node as AnyObject)).inserted else { return }
+                if node.accessibilityRole() == .button {
+                    let label = node.accessibilityLabel() ?? node.accessibilityTitle() ?? ""
+                    labels.append(label)
+                    if label == name && node.isAccessibilityEnabled() { found = node }
+                }
+                for child in node.accessibilityChildren() ?? [] { visit(child, depth: depth+1) }
             }
-            control.performClick(nil)
+            visit(window, depth: 0)
+            guard let control = found else {
+                print("OWNED_VISUAL_ACCESSIBILITY_BUTTONS", labels)
+                throw Failure.fixture("owned accessible button unavailable: " + name)
+            }
+            guard control.accessibilityPerformPress() else { throw Failure.fixture("owned accessible button declined press: " + name) }
             await settle()
         }
         let projects = try store.createTabFolder(name: "Projects", in: store.space.id)
@@ -797,11 +804,12 @@ extension WebsiteFullscreenChecks {
         }
         store.library = library; store.save()
         for width in [196.0, 236.0, 340.0] {
-            UserDefaults.standard.set(width, forKey: "sidebarWidth")
+            store.windowSidebarWidth = width
             try await capture("sidebar-\(Int(width))")
-            check(web.window === window && web.bounds.width > 80, "A real website remains mounted with sidebar width \(Int(width))")
+            let pageX = web.convert(web.bounds, to: window.contentView).minX
+            check(web.window === window && abs(pageX - (width+8)) < 2, "The real website and header use sidebar width \(Int(width))")
         }
-        UserDefaults.standard.set(236.0, forKey: "sidebarWidth")
+        store.windowSidebarWidth = 236.0
         var settings = store.appearance; let originalAppearance = settings
         settings.textScale = 1.35; store.appearance = settings
         try await capture("sidebar-large-text")
