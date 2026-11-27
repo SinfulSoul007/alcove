@@ -48,12 +48,18 @@ def inventory_layout(runtime):
     return members
 
 
-def verify_layout_copy(destination, receipt):
+def verify_layout_copy(destination, receipt, additional_files=()):
     root = destination.resolve(strict=True)
     require(receipt['formatVersion'] == 1 and receipt['nativeAppQualified'] is False,
             'Invalid prepared-layout receipt')
+    base = receipt['members'] + receipt['generated']
+    declared = {item['destination'] for item in base}
+    for item in additional_files:
+        require(item['kind'] == 'file' and item['destination'] not in declared,
+                'Invalid additional template file or overlapping engine member')
+        declared.add(item['destination'])
     expected = set()
-    for item in receipt['members'] + receipt['generated']:
+    for item in base + list(additional_files):
         relative = item['destination']
         require(not PurePosixPath(relative).is_absolute() and '..' not in PurePosixPath(relative).parts,
                 'Unsafe prepared output member')
@@ -134,7 +140,7 @@ def runtime_images(runtime, members):
     return images
 
 
-def verify_relocated_runtime_layout(destination, receipt, runtime):
+def verify_relocated_runtime_layout(destination, receipt, runtime, additional_files=()):
     root, runtime = destination.resolve(strict=True), runtime.resolve(strict=True)
     require(receipt['formatVersion'] == 1 and receipt['nativeAppQualified'] is False and
             receipt['ordinaryAppQualified'] is False and receipt['signingPending'] is True,
@@ -150,7 +156,7 @@ def verify_relocated_runtime_layout(destination, receipt, runtime):
         generated.append({'destination':FRAMEWORK_DIRECTORY+'/ANGLEMetalLib.metallib', 'kind':'link',
                           'target':'../Resources/AlcoveEngine/ANGLEMetalLib.metallib'})
     require(original['generated'] == generated, 'Unexpected generated layout provenance')
-    verify_layout_copy(root, receipt['outputLayout'])
+    verify_layout_copy(root, receipt['outputLayout'], additional_files)
     images = runtime_images(runtime, original['members'])
     plans = plan_relocations(images)
     records = receipt['images']

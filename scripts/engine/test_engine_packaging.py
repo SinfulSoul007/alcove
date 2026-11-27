@@ -582,6 +582,28 @@ class RelocatedRuntimeChecks(unittest.TestCase):
                 bad = copy.deepcopy(receipt); bad['images'] = images
                 self.package.verify_relocated_runtime_layout(self.destination, bad, self.source)
 
+    def test_explicit_template_file_does_not_relax_engine_verification(self):
+        receipt = self.package.prepare_relocated_runtime_layout(self.source, self.destination)
+        path = self.destination/'Contents/MacOS/Qualification'; path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'owned template entry'); path.chmod(0o755)
+        extra = {'destination':'Contents/MacOS/Qualification', 'kind':'file',
+                 'sha256':hashlib.sha256(b'owned template entry').hexdigest(), 'mode':0o755}
+        with self.assertRaisesRegex(ValueError, 'Unexpected|member'):
+            self.package.verify_relocated_runtime_layout(self.destination, receipt, self.source)
+        proof = self.package.verify_relocated_runtime_layout(self.destination, receipt, self.source, additional_files=[extra])
+        self.assertTrue(proof['dependencyClosureVerified'])
+        self.assertFalse(proof['nativeAppQualified'])
+        path.write_bytes(b'changed entry')
+        with self.assertRaisesRegex(ValueError, 'content'):
+            self.package.verify_relocated_runtime_layout(self.destination, receipt, self.source, additional_files=[extra])
+
+    def test_template_files_cannot_redeclare_engine_members_or_add_links(self):
+        receipt = self.package.prepare_relocated_runtime_layout(self.source, self.destination)
+        member = copy.deepcopy(next(m for m in receipt['outputLayout']['members'] if m['source']==self.web))
+        for extra in ([member], [{'destination':'Contents/Resources/alias','kind':'link','target':'/tmp'}]):
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, 'additional|template|overlap'):
+                self.package.verify_relocated_runtime_layout(self.destination, receipt, self.source, additional_files=extra)
+
 
 if __name__ == '__main__':
     unittest.main()

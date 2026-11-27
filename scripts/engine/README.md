@@ -2,14 +2,26 @@
 
 This development checkpoint authenticates the pinned engine input, stages its
 complete bundle layout, plans relative dependencies and relocates individual
-image copies or the complete engine tree. It does not yet produce a signed candidate app. The ordinary app
+image copies or the complete engine tree, and builds an unsealed qualification
+app template. Signing and native app qualification remain pending. The ordinary app
 and public downloads continue to use system WebKit.
 
-Run the complete component suite from the repository root:
+Run the component suite from the repository root:
 
 ```sh
 python3 -B -m unittest discover -s scripts/engine -p 'test_*.py' -v
 ```
+
+The genuine-archive qualification cases require the pinned original ZIP and CRX
+inputs. Include them with:
+
+```sh
+ALCOVE_QUALIFICATION_ASSETS=/absolute/path/to/vendor-archives \
+  python3 -B -m unittest discover -s scripts/engine -p 'test_*.py' -v
+```
+
+Those archive cases are explicitly skipped when their inputs are absent. No
+vendor archives are committed or automatically downloaded by the tests.
 
 The Apple-tool cases require macOS and `install_name_tool`. They exercise real
 metadata updates, including rejection when new load commands do not fit in the
@@ -62,6 +74,53 @@ remain required. Signing must preserve Hardened Runtime, library validation and
 the established sandbox policy. Native success, the optimized ordinary app and
 an installed/downloaded release are separate gates; none follows from these
 component checks.
+
+## Frozen qualification app template
+
+`qualification.py` compiles the frozen witness without changing its bytes, using
+app source baseline `efeedfd8bf7e64284762bbcaa3bc8ed4a6134ea9` and the scoped
+qualification journal helpers. The baseline Git object must be available in the
+checkout. It statically links BrowserCore, relocates the entry's engine loads,
+and bundles the unchanged uBlock Origin1.76.4 ZIP/CRX as read-only resources.
+Only the five specifically named app files may accompany the verified engine
+tree; unlisted code and overlapping engine members are rejected.
+
+Use separate new destinations outside the immutable engine/runtime inputs:
+
+```sh
+python3 scripts/engine/qualification.py prepare-template \
+  --engine-tree /absolute/path/to/relocated-engine \
+  --engine-receipt /absolute/path/to/engine-receipt.json \
+  --runtime /absolute/path/to/authenticated-runtime \
+  --assets /absolute/path/to/vendor-archives \
+  --build /absolute/path/to/new-build \
+  --app /absolute/path/to/NewQualification.app \
+  --manifest /absolute/path/to/new-template-receipt.json
+
+python3 scripts/engine/qualification.py verify-template \
+  --engine-receipt /absolute/path/to/engine-receipt.json \
+  --runtime /absolute/path/to/authenticated-runtime \
+  --assets /absolute/path/to/vendor-archives \
+  --entry /absolute/path/to/new-build/original-main \
+  --app /absolute/path/to/NewQualification.app \
+  --manifest /absolute/path/to/new-template-receipt.json
+```
+
+The compiler currently selects SDK metadata26.5 and targets arm64/macOS26.5.
+Its receipt separately records the actual linked SDK label (27.0.0 on the tested
+toolchain); that label is preserved during relocation. The deployment floor must
+remain26.5 and the SDK cannot predate it. The entry is linked unsealed with
+reserved load-command space so Apple tooling can relocate it without modifying
+code/data or rewriting a temporary linker signature. Final legitimate signing
+remains mandatory before execution.
+
+These commands compile, assemble and statically verify; they never launch or
+sign the app. Successful output retains `nativeAppQualified: false`,
+`ordinaryAppQualified: false`, `sandboxQualified: false` and
+`signingPending: true`. The exact six app entitlements are recorded as signing
+intent, not claimed as effective sandboxing. Public per-role signing policy,
+source/license notices, the actual sandboxed frozen witness, cleanup/recovery,
+ordinary-app integration and installed/public package gates remain open.
 
 Apple documents [the matching-Team library-validation requirement](https://developer.apple.com/library/archive/documentation/Security/Conceptual/CodeSigningGuide/Procedures/Procedures.html)
 and [free Xcode Personal Teams](https://developer.apple.com/help/account/basics/about-your-developer-account/).

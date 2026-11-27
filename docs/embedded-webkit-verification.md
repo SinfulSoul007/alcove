@@ -51,6 +51,32 @@ exported or used. Signing/native service execution, licensing/source notices,
 the frozen original-uBlock witness, ordinary app integration and distribution
 qualification remain open.
 
+## Unsealed frozen-witness app template
+
+The component suite passes73 tests with the actual pinned vendor archives.
+The frozen witness retains SHA-256
+`2155d8b27904ca8105f3debee0d3f30242fa387c13d39d0072ed3fcdfea7b725`.
+It compiles with the exact app-source baselineefeedfd8 and the scoped ownership
+journal helpers; no test assertion or vendor code was edited. BrowserCore is
+statically linked, and the complete engine plus original ZIP/CRX are packaged
+with the qualification bundle ID and the26.5 deployment floor.
+
+The actual optimized entry compiled with selected SDK metadata26.5, linked
+SDK27.0.0 and deployment26.5. A too-strict initial SDK-equality guard was corrected
+to preserve the actual SDK label while requiring the deployment floor and a
+compatible SDK. Apple tooling's automatic rewrite of linker ad-hoc signatures
+then triggered the strict file-length guard. The entry is now linked unsealed,
+with normal reserved header space, and all code/data/platform derivation checks
+remain intact. The prepared app was moved and reverified successfully, including
+through the terminal command. It has never been launched.
+
+This is static template evidence only. Its results explicitly retain native,
+ordinary-app and sandbox qualification as false, with signing pending. The six
+public app entitlements are signing intent. A legitimate identity, per-role
+public signing policy, source/license notices, actual signed sandbox/service
+execution, the unchanged native full-uBlock proof and cleanup/recovery remain
+required. Public tags, updater compatibility and the default browser are unchanged.
+
 ## Concrete signing gate
 
 VM `job-956-engine-library-validation` built an owned C app and bundled C library. Both were ad hoc signed with Hardened Runtime, and the app retained exactly the existing six sandbox entitlements. `codesign --verify --deep --strict` passed. Launch with developer variables absent failed before `main` (exit -6): dyld rejected the bundled library because the process and mapped non-platform image had different Team IDs. No library-validation exception, sandbox removal or private entitlement was added.
