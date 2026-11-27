@@ -21,6 +21,7 @@ struct EaselRaster {
     static let maximumBytes = 33_554_432
     let data: Data
     let pixelWidth: Int, pixelHeight: Int
+    private let decodedBytesPerPixelBound: Int
     private static let formats: Set<String> = ["public.png", "public.jpeg", "com.compuserve.gif", "public.tiff", "public.heic", "public.heif", "org.webmproject.webp", "com.microsoft.bmp"]
 
     init(data: Data) throws {
@@ -37,6 +38,8 @@ struct EaselRaster {
               w <= 16384, h <= 16384, w <= 40_000_000 / h else { throw EaselImageError.size }
         let orientation = (properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
         guard (1...8).contains(orientation) else { throw EaselImageError.damaged }
+        let depth = (properties[kCGImagePropertyDepth] as? NSNumber)?.intValue ?? 32
+        decodedBytesPerPixelBound = max(4, ((min(64, max(1, depth)) + 7) / 8) * 4)
         self.data = data
         pixelWidth = (5...8).contains(orientation) ? h : w
         pixelHeight = (5...8).contains(orientation) ? w : h
@@ -95,6 +98,18 @@ struct EaselRaster {
         try self.init(data: bytes)
     }
 
+    /// Reserve room for row alignment before asking ImageIO to decode. In
+    /// particular a 16-bit RGBA image needs twice the usual bytes per pixel.
+    func exportThumbnail(maxPixelSize: Int) throws -> CGImage {
+        guard (1...8192).contains(maxPixelSize) else { throw EaselImageError.size }
+        let pixels = Double(64 * 1024 * 1024 / decodedBytesPerPixelBound)
+        let aspect = Double(min(pixelWidth, pixelHeight)) / Double(max(pixelWidth, pixelHeight))
+        let side = min(maxPixelSize, max(1, Int(sqrt(pixels / aspect).rounded(.down))))
+        let image = try thumbnail(maxPixelSize: side)
+        guard image.bytesPerRow * image.height <= 96 * 1024 * 1024 else { throw EaselImageError.size }
+        return image
+    }
+
     func thumbnail(maxPixelSize: Int) throws -> CGImage {
         guard (1...8192).contains(maxPixelSize) else { throw EaselImageError.size }
         guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
@@ -102,8 +117,21 @@ struct EaselRaster {
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceShouldAllowFloat: false,
                 kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
               ] as CFDictionary), image.width <= maxPixelSize, image.height <= maxPixelSize else { throw EaselImageError.damaged }
         return image
+    }
+}
+
+extension EaselRaster {
+    static func png(_ image: CGImage) throws -> EaselRaster {
+        guard image.width > 0, image.height > 0, image.width <= 16384, image.height <= 16384,
+              image.width <= 40_000_000 / image.height else { throw EaselImageError.size }
+        let bytes = NSMutableData()
+        guard let encoder = CGImageDestinationCreateWithData(bytes, "public.png" as CFString, 1, nil) else { throw EaselImageError.damaged }
+        CGImageDestinationAddImage(encoder, image, nil)
+        guard CGImageDestinationFinalize(encoder) else { throw EaselImageError.damaged }
+        return try EaselRaster(data: bytes as Data)
     }
 }

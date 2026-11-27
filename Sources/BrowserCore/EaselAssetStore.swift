@@ -16,7 +16,7 @@ public enum EaselAssetError: LocalizedError {
 
 /// The caller publishes an asset UUID in metadata only after put succeeds.
 /// Private instances have neither a disk location nor a key dependency.
-public final class EaselAssetStore {
+public final class EaselAssetStore: @unchecked Sendable {
     public let profileID: UUID
     private let disk: EaselAssetDirectory?
     private var memory: [UUID: Data] = [:]

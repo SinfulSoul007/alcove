@@ -53,6 +53,10 @@ struct EaselPane: View {
                     Button("Add Link…") { canvas.requestLink() }
                     Button("Add Image…") { canvas.requestImageImport() }
                     Button("Rename Easel…") { canvas.requestRename() }
+                    Menu("Export Easel") {
+                        Button("PNG Image…") { canvas.requestExport(.png) }
+                        Button("Portable HTML…") { canvas.requestExport(.html) }
+                    }
                     Menu("Arrange Selected Cards") {
                         Button("Bring to Front") { canvas.bringSelectedToFront() }
                         Button("Move Left") { canvas.moveSelected(dx: -20, dy: 0) }
@@ -99,6 +103,10 @@ struct EaselPane: View {
                 Divider()
                 Button("Delete Selected Cards", role: .destructive) { canvas.deleteSelected() }
             } label: { Label("Arrange", systemImage: "square.3.layers.3d") }.disabled(canvas.selection.isEmpty)
+            Menu {
+                Button("PNG Image…") { canvas.requestExport(.png) }
+                Button("Portable HTML…") { canvas.requestExport(.html) }
+            } label: { Label("Export", systemImage: "square.and.arrow.up") }
             Divider().frame(height: 18)
             Button { canvas.setZoom(canvas.magnification / 1.2) } label: { Image(systemName: "minus.magnifyingglass") }.help("Zoom out").accessibilityLabel("Zoom out")
             Menu {

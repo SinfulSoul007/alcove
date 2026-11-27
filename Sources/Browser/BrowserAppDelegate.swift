@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let easelCapture = EaselCaptureCoordinator()
     let pageOutput: PageOutputCoordinator
     lazy var bookmarkExports = BookmarkExportController(output: pageOutput)
+    lazy var easelExports = EaselExportController(output: pageOutput)
     let outputTermination: PageOutputTermination
     let updates = UpdateController(installedTag: Bundle.main.object(forInfoDictionaryKey: "AlcoveReleaseTag") as? String ?? "unknown")
     var normalWindow: NSWindow?
@@ -118,6 +119,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }) { return }
         easelCapture.capture(web: target.web, store: target.store, window: target.window)
     }
+    func performEaselExport(_ format: EaselExportFormat, in window: NSWindow?) {
+        guard let canvas = easelCanvas(in: window) else { return }
+        _ = easelExports.start(canvas: canvas, format: format)
+    }
+    @objc func exportEaselPNG() { performEaselExport(.png, in: activeBrowserWindow) }
+    @objc func exportEaselHTML() { performEaselExport(.html, in: activeBrowserWindow) }
     @objc func capturePage() { performPageCapture(in: activeBrowserWindow) }
     @objc func toggleReader() {
         if deferFullscreenCommand(documentBound: true, perform: { [weak self] in self?.toggleReader() }) { return }
@@ -189,6 +196,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         return owner
     }
     private func configurePrimaryActions(_ store: BrowserStore, owner: BrowserWindowOwner) {
+        store.easelExportRequested = { [weak self, weak store] format in
+            guard let self, let store, let window = self.activeBrowserWindow, self.windows[window] === store else { return }
+            self.performEaselExport(format, in: window)
+        }
         store.capturePageRequested = { [weak self, weak store] web in
             guard let self, let store, let target = self.outputTarget(in: web.window), target.store === store, target.web === web else { return }
             self.performPageCapture(in: web.window)
@@ -582,6 +593,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(file, "New Space…", #selector(newSpace), "n", [.command, .control]); add(file, "Open Location…", #selector(location), "l")
         add(file, "New Easel", #selector(newEasel), "")
         add(file, "Capture Page to Easel…", #selector(capturePage), "")
+        add(file, "Export Easel as PNG…", #selector(exportEaselPNG), "")
+        add(file, "Export Easel as HTML…", #selector(exportEaselHTML), "")
         add(file, "New Folder…", #selector(newFolder), "")
         add(file, "Import Bookmarks HTML…", #selector(importBookmarks), "")
         add(file, "Export Bookmarks HTML…", #selector(exportBookmarks), "")
@@ -628,6 +641,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let target = outputTarget(in: activeBrowserWindow) else { return false }
             menuItem.title = target.store.readerSession(for: target.web) == nil ? "Show Reader" : "Exit Reader"
             return target.window.attachedSheet == nil && target.web.window?.attachedSheet == nil && target.store.canToggleReader(for: target.web)
+        }
+        if menuItem.action == #selector(exportEaselPNG) || menuItem.action == #selector(exportEaselHTML) {
+            guard let canvas = easelCanvas(in: activeBrowserWindow) else { return false }
+            return easelExports.canBegin(canvas: canvas)
         }
         if menuItem.action == #selector(capturePage) {
             guard let target = outputTarget(in: activeBrowserWindow) else { return false }

@@ -10,6 +10,7 @@ extension BrowserStore {
         return BrowserCommand.allCases.filter { command in
             switch command {
             case .capturePage: return canRequestPageCapture
+            case .exportEaselPNG, .exportEaselHTML: return canModifyLocalMetadata && focusedID.flatMap { easelContext(for: $0) } != nil
             case .reader: return (primaryPeekView ?? currentView).map { canToggleReader(for: $0) } ?? false
             case .pin: return canChangeTabMetadata && selectedTab?.url.isEmpty == false
             case .unpin: return canChangeTabMetadata && selectedTab?.pinned == true
@@ -42,6 +43,8 @@ extension BrowserStore {
         switch command {
         case .newEasel: requestNewEasel()
         case .capturePage: requestPageCapture()
+        case .exportEaselPNG: easelExportRequested?(.png)
+        case .exportEaselHTML: easelExportRequested?(.html)
         case .reader: if let web = primaryPeekView ?? currentView { toggleReader(web) }
         case .pin: if let tab = selectedTab, !tab.pinned { togglePin(tab.id) }
         case .unpin: if let tab = selectedTab, tab.pinned { togglePin(tab.id) }

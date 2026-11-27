@@ -69,6 +69,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     var quickPagesDidChange: (() -> Void)?
     var quickPageRequested: ((UUID) -> Void)?
     var capturePageRequested: ((WKWebView) -> Void)?
+    var easelExportRequested: ((EaselExportFormat) -> Void)?
     var focusedQuickPageID: UUID?
     var quickActivityTimes: [UUID: Date] = [:]
     var quickArchiveProbeID: UUID?

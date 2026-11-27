@@ -5,15 +5,6 @@ import ImageIO
 import BrowserCore
 
 extension EaselRaster {
-    static func png(_ image: CGImage) throws -> EaselRaster {
-        guard image.width > 0, image.height > 0, image.width <= 16384, image.height <= 16384,
-              image.width <= 40_000_000 / image.height else { throw EaselImageError.size }
-        let bytes = NSMutableData()
-        guard let encoder = CGImageDestinationCreateWithData(bytes, "public.png" as CFString, 1, nil) else { throw EaselImageError.damaged }
-        CGImageDestinationAddImage(encoder, image, nil)
-        guard CGImageDestinationFinalize(encoder) else { throw EaselImageError.damaged }
-        return try EaselRaster(data: bytes as Data)
-    }
     func cropped(to unit: CGRect) throws -> EaselRaster {
         guard [unit.minX, unit.minY, unit.width, unit.height].allSatisfy(\.isFinite),
               unit.minX >= 0, unit.minY >= 0, unit.width > 0, unit.height > 0,

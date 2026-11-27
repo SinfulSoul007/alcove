@@ -61,6 +61,21 @@ run_easel_canvas_checks() {
     done
 }
 if [[ "${1:-}" == "easel-canvas-test" ]]; then run_easel_canvas_checks; exit; fi
+run_easel_capture_website_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/EaselCaptureWebsiteChecks.swift -o "$MANUAL/easel-capture-website-checks"
+    local capture_port capture_pid capture_result
+    capture_port="$(mktemp "$MANUAL/capture-port.XXXXXX")"
+    python3 scripts/ReaderFixture.py "$capture_port" > "$MANUAL/capture-fixture.log" 2>&1 &
+    capture_pid=$!
+    trap 'kill "$capture_pid" 2>/dev/null || true; wait "$capture_pid" 2>/dev/null || true; rm -f "$capture_port"' EXIT
+    for attempt in {1..500}; do [[ -s "$capture_port" ]] && break; kill -0 "$capture_pid" 2>/dev/null || break; sleep 0.02; done
+    [[ -s "$capture_port" ]] || { cat "$MANUAL/capture-fixture.log"; return 1; }
+    capture_result=0
+    ALCOVE_CAPTURE_FIXTURE_URL="http://127.0.0.1:$(cat "$capture_port")/" "$MANUAL/easel-capture-website-checks" || capture_result=$?
+    kill "$capture_pid" 2>/dev/null || true; wait "$capture_pid" 2>/dev/null || true
+    rm -f "$capture_port"; trap - EXIT
+    return "$capture_result"
+}
 run_easel_image_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors Sources/Browser/EaselImageImport.swift scripts/EaselImageChecks.swift -o "$MANUAL/easel-image-checks"
     "$MANUAL/easel-image-checks"
@@ -72,8 +87,21 @@ run_easel_image_checks() {
         xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift "scripts/$fixture.swift" -o "$MANUAL/$fixture"
         "$MANUAL/$fixture"
     done
+    run_easel_capture_website_checks
 }
 if [[ "${1:-}" == "easel-image-test" ]]; then run_easel_image_checks; exit; fi
+run_easel_export_checks() {
+    cp scripts/Fixtures/Easel16Bit.png "$MANUAL/Easel16Bit.png"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselExportCoreChecks.swift -o "$MANUAL/easel-export-core-checks"
+    "$MANUAL/easel-export-core-checks"
+    for fixture in EaselExportRenderChecks EaselExportWebsiteChecks; do
+        xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" "scripts/$fixture.swift" -o "$MANUAL/$fixture"
+        "$MANUAL/$fixture"
+    done
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/EaselExportStoreChecks.swift -o "$MANUAL/easel-export-store-checks"
+    "$MANUAL/easel-export-store-checks"
+}
+if [[ "${1:-}" == "easel-export-test" ]]; then run_easel_export_checks; exit; fi
 run_metadata_cached_retry_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/MetadataCachedRetryChecks.swift -o "$MANUAL/metadata-cached-retry-checks"
     "$MANUAL/metadata-cached-retry-checks"
@@ -511,6 +539,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_easel_draft_checks
     run_easel_canvas_checks
     run_easel_image_checks
+    run_easel_export_checks
     run_easel_route_checks
     run_easel_core_checks
     run_bookmark_export_core_checks
