@@ -687,6 +687,12 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
     }
     func view(for id: UUID, configuration: WKWebViewConfiguration? = nil,
               restoringInteractionState interactionState: Any? = nil, retaining sourceID: UUID? = nil) -> WKWebView {
+        if EaselRoute.isNative(tab(id)?.url ?? "") {
+            let isolated = WKWebViewConfiguration()
+            isolated.websiteDataStore = .nonPersistent()
+            isolated.preferences.javaScriptCanOpenWindowsAutomatically = false
+            return WKWebView(frame: .zero, configuration: isolated)
+        }
         if let existing = views[id] { return existing }
         let config = configuration ?? WKWebViewConfiguration()
         guard let profile = profileID(for: id) else {
@@ -709,6 +715,7 @@ final class BrowserStore: NSObject, ObservableObject, WKNavigationDelegate, WKUI
         return web
     }
     func registerView(_ web: WKWebView, for id: UUID, profile: UUID) {
+        guard !EaselRoute.isNative(tab(id)?.url ?? "") else { return }
         if let previous = views[id], previous !== web { discardView(id) }
         accessOrder.removeAll { $0 == id }; accessOrder.append(id)
         web.allowsBackForwardNavigationGestures = true

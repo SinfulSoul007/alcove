@@ -25,6 +25,11 @@ run_easel_core_checks() {
     "$MANUAL/easel-asset-checks"
 }
 if [[ "${ALCOVE_EASEL_CORE_ONLY:-0}" == 1 ]]; then run_easel_core_checks; exit; fi
+run_easel_route_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselRouteChecks.swift -o "$MANUAL/easel-route-checks"
+    "$MANUAL/easel-route-checks"
+}
+if [[ "${ALCOVE_EASEL_ROUTES_ONLY:-0}" == 1 ]]; then run_easel_route_checks; exit; fi
 run_window_model_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/BrowserWindowWorkspaceChecks.swift -o "$MANUAL/window-workspace-checks"
     "$MANUAL/window-workspace-checks"
@@ -37,6 +42,11 @@ run_bookmark_export_core_checks() {
 if [[ "${1:-}" == "bookmark-export-core-test" ]]; then run_bookmark_export_core_checks; exit; fi
 STORE_SOURCES=()
 for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
+run_easel_tab_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/EaselTabChecks.swift -o "$MANUAL/easel-tab-checks"
+    "$MANUAL/easel-tab-checks"
+}
+if [[ "${1:-}" == "easel-tab-test" ]]; then run_easel_route_checks; run_easel_tab_checks; exit; fi
 run_bookmark_export_store_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/PageOutputFixtures.swift scripts/BookmarkExportStoreChecks.swift -o "$MANUAL/bookmark-export-store-checks"
     "$MANUAL/bookmark-export-store-checks"
@@ -464,6 +474,8 @@ if [[ "${1:-}" == "profile-store-test" ]]; then
     exit
 fi
 if [[ "${1:-}" == "test" ]]; then
+    run_easel_tab_checks
+    run_easel_route_checks
     run_easel_core_checks
     run_bookmark_export_core_checks
     run_bookmark_export_store_checks

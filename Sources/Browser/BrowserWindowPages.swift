@@ -1,5 +1,6 @@
 import Foundation
 import WebKit
+import BrowserCore
 
 enum BrowserTabPresentation: Equatable {
     case owned
@@ -19,7 +20,7 @@ extension BrowserStore {
     var pageStores: [BrowserStore] { windowGroup?.stores ?? [self] }
 
     func primaryPageView(for id: UUID) -> WKWebView? {
-        guard !isShuttingDown else { return nil }
+        guard !isShuttingDown, !EaselRoute.isNative(tab(id)?.url ?? "") else { return nil }
         if let windowGroup, windowGroup.presentation(tabID: id, in: self) != .owned { return nil }
         return view(for: id)
     }
