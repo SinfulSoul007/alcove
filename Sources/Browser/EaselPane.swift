@@ -31,7 +31,7 @@ struct EaselPane: View {
                                 Image(systemName: "square.stack.3d.up").font(.system(size: 34, weight: .light)).opacity(0.5)
                                 Text("A place to think.").font(.system(size: 26, weight: .medium, design: .rounded))
                                 Text("Collect notes, links and ideas on your canvas.").font(.callout).opacity(0.6)
-                                Button("Add your first note") { canvas.addNote() }.buttonStyle(.borderedProminent)
+                                Button("Add your first note") { canvas.addNote() }.buttonStyle(.borderedProminent).tint(store.activeTheme.accent)
                             }.padding(24).disabled(!store.canModifyLocalMetadata)
                         }
                     }

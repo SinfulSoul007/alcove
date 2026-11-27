@@ -580,6 +580,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(file, "Close Tab", #selector(closeTab), "w"); add(file, "Reopen Closed Tab", #selector(reopen), "t", [.command, .shift])
         let edit = submenu("Edit")
         for (title, action, key) in [("Undo", "undo:", "z"), ("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] { edit.addItem(NSMenuItem(title: title, action: Selector(action), keyEquivalent: key)) }
+        let redo = NSMenuItem(title: "Redo", action: #selector(EaselCanvasDocumentView.redo(_:)), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.insertItem(redo, at: 1); edit.insertItem(.separator(), at: 2)
         add(edit, "Find in Page…", #selector(find), "f")
         let view = submenu("View")
         add(view, "Reload", #selector(reload), "r"); add(view, "Toggle Sidebar", #selector(sidebar), "s")
@@ -661,7 +664,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case #selector(welcome): return !store.isPrivate && store.savingEnabled
         case #selector(back): return activeWebView?.canGoBack == true && available
         case #selector(forward): return activeWebView?.canGoForward == true && available
-        case #selector(reload), #selector(find), #selector(zoomIn), #selector(zoomOut), #selector(resetZoom): return activeWebView != nil && available
+        case #selector(reload), #selector(find): return activeWebView != nil && available
+        case #selector(zoomIn), #selector(zoomOut), #selector(resetZoom): return available && (activeWebView != nil || easelCanvas(in: activeBrowserWindow) != nil)
         default: return true
         }
     }
@@ -791,10 +795,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let source = activeWebView, let reader = activeStore?.readerSession(for: source) { reader.requestFind(); return }
         if let quick = activeQuick { quick.state.showFind() } else { activeStore?.findVisible = true }
     }
-    func zoom(_ amount: Double) { if let source = activeWebView { let web = activeStore?.readerSession(for: source)?.reader ?? source; web.pageZoom = min(3, max(0.5, web.pageZoom + amount)) } }
+    func easelCanvas(in window: NSWindow?) -> EaselCanvasView? {
+        guard let window, window.attachedSheet == nil, fullscreenTarget(in: window) == nil,
+              let store = windows[window], store.primaryPeekView == nil, store.currentView == nil,
+              let tabID = store.focusedID, store.easelContext(for: tabID) != nil,
+              let content = window.contentView else { return nil }
+        func find(_ view: NSView) -> EaselCanvasView? {
+            if let canvas = view as? EaselCanvasView, canvas.store === store, canvas.tabID == tabID,
+               canvas.window === window, !canvas.isHiddenOrHasHiddenAncestor, canvas.isCurrentPresentation { return canvas }
+            for child in view.subviews { if let result = find(child) { return result } }
+            return nil
+        }
+        return find(content)
+    }
+    @discardableResult func zoomEasel(_ amount: Double, in window: NSWindow?, reset: Bool = false) -> Bool {
+        guard let canvas = easelCanvas(in: window) else { return false }
+        canvas.setZoom(reset ? 1 : canvas.magnification + amount)
+        return true
+    }
+    func zoom(_ amount: Double) {
+        if zoomEasel(amount, in: activeBrowserWindow) { return }
+        if let source = activeWebView { let web = activeStore?.readerSession(for: source)?.reader ?? source; web.pageZoom = min(3, max(0.5, web.pageZoom + amount)) }
+    }
     @objc func zoomIn() { zoom(0.1) }
     @objc func zoomOut() { zoom(-0.1) }
-    @objc func resetZoom() { if let source = activeWebView { (activeStore?.readerSession(for: source)?.reader ?? source).pageZoom = 1 } }
+    @objc func resetZoom() {
+        if zoomEasel(0, in: activeBrowserWindow, reset: true) { return }
+        if let source = activeWebView { (activeStore?.readerSession(for: source)?.reader ?? source).pageZoom = 1 }
+    }
     func primaryForActive() -> BrowserStore {
         let owner = activeQuick?.windowOwner ?? activeBrowserWindow.flatMap { primaryOwners[$0] } ?? ensureNormalOwner()
         openPrimary(owner)

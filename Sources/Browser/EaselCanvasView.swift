@@ -25,6 +25,15 @@ import Combine
     private var renderedProfileID: UUID?
     private var renderedEaselID: UUID?
     var context: EaselTabContext? { store?.easelContext(for: tabID) }
+    var isCurrentPresentation: Bool {
+        guard let context else { return false }
+        return renderedProfileID == context.profileID && renderedEaselID == context.easel.id
+    }
+    @discardableResult func activate() -> Bool {
+        guard isCurrentPresentation, let store else { return false }
+        if window != nil { store.focusPane(tabID) }
+        return true
+    }
     init(store: BrowserStore, tabID: UUID) {
         self.store = store; self.tabID = tabID
         super.init(frame: .zero)
@@ -85,7 +94,7 @@ import Combine
         for (id, card) in cards { card.isSelected = next.contains(id) }
     }
     func setZoom(_ value: CGFloat) {
-        guard value.isFinite else { return }
+        guard value.isFinite, activate() else { return }
         let bounded = min(2, max(0.25, value))
         setMagnification(bounded, centeredAt: NSPoint(x: documentVisibleRect.midX, y: documentVisibleRect.midY))
         zoom = magnification
@@ -99,7 +108,7 @@ import Combine
         contentView.scroll(to: NSPoint(x: max(0, union.minX), y: max(0, union.minY))); reflectScrolledClipView(contentView)
     }
     @discardableResult func beginGesture(itemID: UUID, resizing: Bool) -> Bool {
-        guard let store, store.flushEaselDrafts(tabID: tabID), let context, let item = context.easel.items.first(where: { $0.id == itemID }) else { return false }
+        guard activate(), let store, store.flushEaselDrafts(tabID: tabID), let context, let item = context.easel.items.first(where: { $0.id == itemID }) else { return false }
         select(itemID); window?.makeFirstResponder(canvas)
         gesture = Gesture(context: context, item: item, resizing: resizing, frame: item.frame)
         return true
@@ -128,7 +137,7 @@ import Combine
         } catch { store?.message = error.localizedDescription; reconcile(); return false }
     }
     @discardableResult func commit(_ edits: [EaselEdit], expected: UUID, name: String) throws -> Bool {
-        guard let store, let current = context, current.easel.revision == expected else { throw EaselError.staleRevision }
+        guard isCurrentPresentation, let store, let current = context, current.easel.revision == expected else { throw EaselError.staleRevision }
         let before = current.easel
         let after = try store.editEasel(in: tabID, expectedRevision: expected, edits: edits)
         if before != after { registerUndo(before, profileID: current.profileID, expected: after.revision, name: name) }
@@ -137,7 +146,11 @@ import Combine
     private func registerUndo(_ snapshot: Easel, profileID: UUID, expected: UUID, name: String) {
         let grouped = !history.isUndoing && !history.isRedoing
         if grouped { history.beginUndoGrouping() }
-        history.registerUndo(withTarget: historyTarget) { target in target.owner?.restore(snapshot, profileID: profileID, expected: expected, name: name) }
+        history.registerUndo(withTarget: historyTarget) { target in
+            // This view owns the manager on the main actor. Keep AppKit's
+            // synchronous undo/redo grouping across older SDK annotations.
+            MainActor.assumeIsolated { target.owner?.restore(snapshot, profileID: profileID, expected: expected, name: name) }
+        }
         history.setActionName(name)
         if grouped { history.endUndoGrouping() }
     }
@@ -154,7 +167,7 @@ import Combine
     @discardableResult func addLink(title: String, url: String) -> UUID? { add(.link(title: title, url: url), width: 300, height: 150, name: "Add Link") }
     private func add(_ content: EaselItemContent, width: Double, height: Double, name: String) -> UUID? {
         do {
-            guard let store, store.flushEaselDrafts(tabID: tabID), let board = context?.easel else { throw EaselActionError.missing }
+            guard activate(), let store, store.flushEaselDrafts(tabID: tabID), let board = context?.easel else { throw EaselActionError.missing }
             let visible = documentVisibleRect
             let offset = Double(board.items.count % 8) * 20
             let item = try EaselItem(frame: EaselFrame(x: min(EaselFrame.canvasSize - width, max(0, visible.minX + 64 + offset)), y: min(EaselFrame.canvasSize - height, max(0, visible.minY + 64 + offset)), width: width, height: height), content: content)
@@ -179,21 +192,37 @@ import Combine
     }
     private func performSelectionEdit(name: String, edits: (Easel) throws -> [EaselEdit]) -> Bool {
         do {
-            guard !selection.isEmpty, let store, store.flushEaselDrafts(tabID: tabID), let board = context?.easel else { return false }
-            return try commit(edits(board), expected: board.revision, name: name)
+            guard !selection.isEmpty, activate(), let store, store.flushEaselDrafts(tabID: tabID), let board = context?.easel else { return false }
+            let committed = try commit(edits(board), expected: board.revision, name: name)
+            if committed { window?.makeFirstResponder(canvas) }
+            return committed
         } catch { store?.message = error.localizedDescription; reconcile(); return false }
     }
 }
 
 extension EaselFrame { var rect: NSRect { NSRect(x: x, y: y, width: width, height: height) } }
 
-@MainActor final class EaselCanvasDocumentView: NSView {
+@MainActor final class EaselCanvasDocumentView: NSView, NSUserInterfaceValidations {
     weak var owner: EaselCanvasView?
     var background: NSColor = .windowBackgroundColor
     var accent: NSColor = .controlAccentColor
     override var isFlipped: Bool { true }
-    override var acceptsFirstResponder: Bool { true }
+    override var acceptsFirstResponder: Bool { owner?.isCurrentPresentation == true }
     override var undoManager: UndoManager? { owner?.undoManager }
+    @objc func undo(_ sender: Any?) {
+        guard owner?.isCurrentPresentation == true, let undoManager, undoManager.canUndo else { return }
+        undoManager.undo()
+    }
+    @objc func redo(_ sender: Any?) {
+        guard owner?.isCurrentPresentation == true, let undoManager, undoManager.canRedo else { return }
+        undoManager.redo()
+    }
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        guard owner?.isCurrentPresentation == true else { return false }
+        if item.action == #selector(undo(_:)) { return undoManager?.canUndo == true }
+        if item.action == #selector(redo(_:)) { return undoManager?.canRedo == true }
+        return true
+    }
     override init(frame: NSRect) { super.init(frame: frame); setAccessibilityRole(.group); setAccessibilityLabel("Easel canvas") }
     required init?(coder: NSCoder) { nil }
     override func draw(_ dirtyRect: NSRect) {
@@ -205,7 +234,12 @@ extension EaselFrame { var rect: NSRect { NSRect(x: x, y: y, width: width, heigh
             for y in stride(from: floor(visible.minY / 24) * 24, through: visible.maxY, by: 24) { NSBezierPath(ovalIn: NSRect(x: x, y: y, width: 1.5, height: 1.5)).fill() }
         }
     }
-    override func mouseDown(with event: NSEvent) { owner?.select(nil); window?.makeFirstResponder(self) }
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { owner?.activate() }
+        return accepted
+    }
+    override func mouseDown(with event: NSEvent) { owner?.activate(); owner?.select(nil); window?.makeFirstResponder(self) }
     override func keyDown(with event: NSEvent) {
         guard window?.firstResponder === self, let owner else { return }
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { super.keyDown(with: event); return }

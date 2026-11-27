@@ -67,10 +67,12 @@ import CryptoKit
         check(canvas.endGesture(), "Completing a geometry gesture commits its final frame")
         let dragged = store.easelContext(for: tab)!.easel
         check(dragged.items[0].frame.x == 0 && dragged.items[0].frame.y == 16164, "Dragging clamps the complete card inside the canvas")
-        canvas.undoManager?.undo()
-        check(store.easelContext(for: tab)!.easel.items[0].frame == beforeDrag.items[0].frame, "Canvas undo restores the successful geometry edit")
-        canvas.undoManager?.redo()
-        check(store.easelContext(for: tab)!.easel.items[0].frame == dragged.items[0].frame, "Canvas redo restores the completed geometry gesture")
+        let nativeUndo = canvas.canvas.tryToPerform(NSSelectorFromString("undo:"), with: nil)
+        check(nativeUndo && store.easelContext(for: tab)!.easel.items[0].frame == beforeDrag.items[0].frame, "Native canvas Undo action restores the successful geometry edit")
+        if store.easelContext(for: tab)!.easel.items[0].frame != beforeDrag.items[0].frame { canvas.undoManager?.undo() }
+        let nativeRedo = canvas.canvas.tryToPerform(NSSelectorFromString("redo:"), with: nil)
+        check(nativeRedo && store.easelContext(for: tab)!.easel.items[0].frame == dragged.items[0].frame, "Native canvas Redo action restores the completed geometry gesture")
+        if store.easelContext(for: tab)!.easel.items[0].frame != dragged.items[0].frame { canvas.undoManager?.redo() }
         _ = canvas.beginGesture(itemID: note.id, resizing: true)
         canvas.previewGesture(dx: -1000, dy: -1000)
         _ = canvas.endGesture()
@@ -80,7 +82,8 @@ import CryptoKit
         let newer = store.easelContext(for: tab)!.easel
         _ = try store.editEasel(in: tab, expectedRevision: newer.revision, edits: [.rename("Other editor")])
         check(!canvas.endGesture() && store.easelContext(for: tab)!.easel.items[0].frame.x == 0, "A stale gesture cannot overwrite another editor's revision")
-        canvas.select(note.id); _ = canvas.bringSelectedToFront()
+        canvas.select(note.id); window.makeFirstResponder(text); _ = canvas.bringSelectedToFront()
+        check(window.firstResponder === canvas.canvas, "A toolbar geometry action returns keyboard Undo to the canvas")
         check(store.easelContext(for: tab)!.easel.items.last?.id == note.id, "Bring to Front updates actual persisted layer ordering")
         canvas.setZoom(99); check(canvas.magnification == 2, "Zoom clamps to the maximum readable magnification")
         canvas.setZoom(0); check(canvas.magnification == 0.25, "Zoom clamps to the minimum magnification")

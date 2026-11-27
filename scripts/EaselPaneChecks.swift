@@ -55,9 +55,38 @@ import CryptoKit
         let splitMounted = await until { Set(canvases(host).map(\.tabID)) == Set([tab, secondTab]) }
         check(split && splitMounted && store.views[tab] == nil && store.views[secondTab] == nil, "Two Easels render as distinct native split panes without WebKit registration")
         check(canvases(host).allSatisfy { $0.bounds.width > 50 && $0.bounds.width <= host.bounds.width && $0.bounds.height <= host.bounds.height }, "Narrow split panes preserve usable bounded native viewports")
+        if let right = canvases(host).first(where: { $0.tabID == secondTab }) {
+            store.focusPane(tab)
+            let click = NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+            right.canvas.mouseDown(with: click)
+            check(store.focusedID == secondTab, "Clicking a native split canvas focuses its own tab for browser commands")
+            let added = right.addNote()
+            store.focusPane(tab)
+            if let added, let editor = right.cards[added]?.noteView {
+                if let left = canvases(host).first(where: { $0.tabID == tab }) { window.makeFirstResponder(left.canvas) }
+                window.makeFirstResponder(editor)
+                check(store.focusedID == secondTab, "Focusing a native split note routes subsequent browser commands to that pane")
+                store.focusPane(tab)
+                let point = editor.convert(NSPoint(x: editor.visibleRect.minX + 4, y: editor.visibleRect.minY + 4), to: nil)
+                let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 1)!
+                let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0)!
+                NSApplication.shared.postEvent(up, atStart: true)
+                editor.mouseDown(with: down)
+                check(store.focusedID == secondTab, "Clicking an already focused note refreshes native pane command routing")
+            } else { check(false, "Focusing a native split note routes subsequent browser commands to that pane") }
+        } else { check(false, "Native split interaction fixture has its right pane") }
         store.separateSplit(); store.select(tab)
         let returned = await until { canvases(host).count == 1 && canvases(host).first?.tabID == tab }
         check(returned && store.easelContext(for: tab)?.easel.items.first?.content == .note(text: "Pane note across redraw"), "Leaving Split View restores the complete saved canvas")
+        let delegate = AppDelegate(); delegate.windows[window] = store
+        defer { delegate.windows.removeAll() }
+        if let current = canvases(host).first {
+            check(delegate.easelCanvas(in: window) === current, "Browser canvas commands resolve the exact owned window and focused native pane")
+            current.setZoom(1)
+            check(delegate.zoomEasel(0.1, in: window) && current.magnification > 1, "Browser Zoom In changes the focused native canvas")
+            current.setZoom(1.4)
+            check(delegate.zoomEasel(0, in: window, reset: true) && current.magnification == 1, "Browser Actual Size resets native canvas magnification")
+        } else { check(false, "Native canvas zoom fixture has its presented viewport") }
         store.setTheme(.ocean)
         let themed = await until { canvases(host).first?.appearance?.name == .darkAqua }
         check(themed && canvases(host).first?.cards[note.id]?.noteView?.string == "Pane note across redraw", "The actual canvas follows a dark Space theme without losing its note")

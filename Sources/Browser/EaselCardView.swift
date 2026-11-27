@@ -3,7 +3,14 @@ import BrowserCore
 
 @MainActor final class EaselNoteTextView: NSTextView {
     private let textUndo = UndoManager()
+    var didFocus: (() -> Void)?
     override var undoManager: UndoManager? { textUndo }
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { didFocus?() }
+        return accepted
+    }
+    override func mouseDown(with event: NSEvent) { didFocus?(); super.mouseDown(with: event) }
     private func accepts(_ input: Any, replacing range: NSRange) -> Bool {
         let replacement = (input as? NSAttributedString)?.string ?? (input as? String) ?? ""
         let target = range.location == NSNotFound ? (hasMarkedText() ? markedRange() : selectedRange()) : range
@@ -51,13 +58,17 @@ import BrowserCore
             text.isVerticallyResizable = true; text.isHorizontallyResizable = false
             text.autoresizingMask = [.width]; text.textContainer?.widthTracksTextView = true
             text.textContainerInset = NSSize(width: 2, height: 5); text.delegate = self
+            text.didFocus = { [weak self] in
+                guard let self, self.isCurrentScope else { return }
+                self.owner?.activate(); self.owner?.select(self.itemID)
+            }
             text.setAccessibilityLabel("Canvas note")
             textScroll.documentView = text; textScroll.drawsBackground = false
             textScroll.hasVerticalScroller = true; textScroll.autohidesScrollers = true; textScroll.borderType = .noBorder
             noteView = text; addSubview(textScroll)
         case .link:
             let button = NSButton(title: "", target: self, action: #selector(openLink))
-            button.bezelStyle = .inline; button.alignment = .left; button.lineBreakMode = .byTruncatingTail
+            button.bezelStyle = .inline; button.isBordered = false; button.alignment = .left; button.lineBreakMode = .byTruncatingTail
             button.font = .systemFont(ofSize: 15, weight: .medium); linkButton = button; addSubview(button)
         case .image:
             let label = NSTextField(labelWithString: "Image"); label.alignment = .center; label.frame = bounds.insetBy(dx: 12, dy: 30); label.autoresizingMask = [.width, .height]; addSubview(label)
@@ -115,7 +126,7 @@ import BrowserCore
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.5, dy: 1.5), xRadius: 12, yRadius: 12); shape.fill()
         (isSelected ? accent : NSColor.separatorColor).setStroke(); shape.lineWidth = isSelected ? 2 : 1; shape.stroke()
     }
-    override func mouseDown(with event: NSEvent) { owner?.select(itemID, extending: event.modifierFlags.contains(.shift)); window?.makeFirstResponder(owner?.canvas) }
+    override func mouseDown(with event: NSEvent) { owner?.activate(); owner?.select(itemID, extending: event.modifierFlags.contains(.shift)); window?.makeFirstResponder(owner?.canvas) }
     func textDidBeginEditing(_ notification: Notification) { if isCurrent { owner?.select(itemID) } }
     func textDidChange(_ notification: Notification) {
         guard isCurrentScope, let owner, let store = owner.store, let noteView else { return }
@@ -133,7 +144,7 @@ import BrowserCore
         return textView.string.replacingCharacters(in: range, with: replacementString).utf8.count <= 16384
     }
     func finishEaselDraftEditing() { noteView?.unmarkText() }
-    @objc private func openLink() { if isCurrent, let linkURL, let url = URL(string: linkURL) { _ = owner?.store?.newTab(url: url) } }
+    @objc private func openLink() { if isCurrent, owner?.activate() == true, let linkURL, let url = URL(string: linkURL) { _ = owner?.store?.newTab(url: url) } }
     func beginDrag(resizing: Bool) -> Bool { isCurrent && (owner?.beginGesture(itemID: itemID, resizing: resizing) ?? false) }
     func previewDrag(dx: Double, dy: Double) { owner?.previewGesture(dx: dx, dy: dy) }
     func endDrag() { _ = owner?.endGesture() }
@@ -150,9 +161,16 @@ import BrowserCore
     required init?(coder: NSCoder) { nil }
     override var isFlipped: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
-        let text = resizing ? "◢" : "⠿"
-        (text as NSString).draw(at: NSPoint(x: resizing ? 6 : 2, y: resizing ? 4 : 5), withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])
+        if resizing {
+            NSColor.tertiaryLabelColor.setStroke()
+            let grip = NSBezierPath(); grip.lineWidth = 1
+            grip.move(to: NSPoint(x: 7, y: 16)); grip.line(to: NSPoint(x: 16, y: 7))
+            grip.move(to: NSPoint(x: 11, y: 16)); grip.line(to: NSPoint(x: 16, y: 11)); grip.stroke()
+        } else {
+            ("⠿" as NSString).draw(at: NSPoint(x: 2, y: 5), withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])
+        }
     }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: resizing ? .crosshair : .openHand) }
     override func mouseDown(with event: NSEvent) {
         if card?.beginDrag(resizing: resizing) == true { start = card?.superview?.convert(event.locationInWindow, from: nil) }
     }

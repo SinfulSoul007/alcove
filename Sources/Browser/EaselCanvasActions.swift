@@ -3,7 +3,7 @@ import BrowserCore
 
 extension EaselCanvasView {
     func requestRename() {
-        guard let context, let store, store.canModifyLocalMetadata else { return }
+        guard activate(), let context, let store, store.canModifyLocalMetadata else { return }
         let alert = NSAlert(); alert.messageText = "Rename Easel"
         let name = NSTextField(string: context.easel.title); name.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
         name.setAccessibilityLabel("Easel title"); alert.accessoryView = name
@@ -16,7 +16,7 @@ extension EaselCanvasView {
         } catch { store.message = error.localizedDescription }
     }
     func requestLink() {
-        guard let context, store?.canModifyLocalMetadata == true else { return }
+        guard activate(), let context, store?.canModifyLocalMetadata == true else { return }
         let alert = NSAlert(); alert.messageText = "Add a link"
         let title = NSTextField(string: ""), address = NSTextField(string: "")
         title.placeholderString = "Title"; title.setAccessibilityLabel("Link title")
