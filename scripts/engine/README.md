@@ -128,3 +128,47 @@ A legitimate development identity is a possible local-test route, not evidence
 that this engine runs, and not a replacement for public distribution
 qualification. Developer ID/notarization and public shipping have separate
 [Apple requirements](https://developer.apple.com/developer-id/).
+
+## Corresponding source and notice preparation
+
+Use a separate owned bare Git cache containing the complete pinned upstream
+revision. These commands read source objects and prepare distribution material;
+they do not extract or execute upstream source, build an engine or sign an app.
+Git must support `--attr-source` so producer diff attributes can be reproduced.
+
+```sh
+git init --bare /owned/upstream-webkit.git
+git -C /owned/upstream-webkit.git fetch --depth=1 https://github.com/WebKit/WebKit.git 26695efdefc6076049ec50713a2c4e54b90b4d47
+
+python3 -B scripts/engine/source_archive.py \
+  --source-git /owned/upstream-webkit.git \
+  --destination /owned/WebKit-source.tar.gz
+
+python3 -B scripts/engine/source_notices.py \
+  --archive /owned/WebKit-source.tar.gz \
+  --source-git /owned/upstream-webkit.git \
+  --contract-checkout /verified/pinned-wrapper \
+  --runtime /verified/original/runtime \
+  --destination /owned/new-engine-source-package
+```
+
+The archive writer streams raw Git blobs. Normal `git archive` can omit files,
+substitute text or convert line endings according to attributes; it therefore
+cannot be assumed to preserve the complete original Git tree. The independent
+verifier authenticates every file, executable bit and symlink target against
+the pinned tree, without extracting or following archive links. Bad or missing
+members, duplicates, changed bytes/modes and unsupported member types fail
+before publication.
+
+The package includes the complete upstream archive, intact notice candidates,
+all 18 unchanged patches, their producer order, the exact combined source diff,
+the original build manifest and the pinned workflow/build instructions. The
+combined diff is reconstructed in a temporary index using the pinned source's
+attributes; neither the upstream ref nor its worktree is changed. Its digest
+must match the actual engine producer's recorded `appliedSourceSHA256`.
+
+The filename-based notice index can include tests and tools. All source-level
+notices, including comments, remain in the full archive. This preparation does
+not determine applicable license obligations or establish compliance, successful
+rebuilding, native loading, signing or ordinary-app support. The final candidate
+must integrate the applicable notices and corresponding source availability.

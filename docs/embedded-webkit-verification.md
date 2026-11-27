@@ -87,6 +87,34 @@ The current source engine also requires arm64 and macOS 26.5 according to every 
 
 ## Remaining gates
 
-Complete the recorded member layout and relative dependency closure, preserve WebKit service identities/resources/sandbox profiles, derive and verify allowed metadata changes, include applicable source/notices, sign with a suitable matching identity, then run the frozen full-uBlock witness in the genuinely sandboxed self-contained app. Next verify the ordinary optimized entry point and its real manager/install/permission/dashboard/filtering/disable/relaunch/removal behavior after relocation and installation. Keep test-app, ordinary-app, downloadable-package and public-update results separate.
+Integrate the prepared source material and applicable notices into the final candidate, derive the public per-role signing policy, sign with a suitable matching identity, then run the frozen full-uBlock witness in the genuinely sandboxed self-contained app. The complete layout, relative dependency closure and metadata derivation have passed static checks; service execution and effective sandbox permissions remain unproved. Next verify the ordinary optimized entry point and its real manager/install/permission/dashboard/filtering/disable/relaunch/removal behavior after relocation and installation. Keep test-app, ordinary-app, downloadable-package and public-update results separate.
 
 No engine-capability/private-support/public-release claim is widened by this work. Reader, Arc feature parity, live visuals/accessibility, media/fullscreen/PiP, broader extensions/sites and hardware/performance/security checks remain part of the active browser goal. The implementation plan is `docs/superpowers/plans/2026-11-24-embedded-webkit.md`.
+
+## Authenticated source material
+
+The component suite passes90 tests with genuine frozen uBlock archives and no
+skips. New source cases cover byte/mode/link changes, missing/duplicate/escaping
+members, hardlinks, preserved destinations, export/EOL attributes, ordered
+patch application and source reconstruction from a bare Git cache.
+
+The actual source package authenticates all455,345 files/links at WebKit revision
+`26695efdefc6076049ec50713a2c4e54b90b4d47`:4,896,167,859 uncompressed regular-file
+bytes and a1,905,087,245-byte archive with SHA-256
+`14557f9636c3b68978da69d82716cbae34d3b0aad7e5a119ac8f8b7bf0b15ea6`.
+The complete original tree, including source comments, is retained. A separate
+index preserves281 filename-selected notice candidates unchanged; it can include
+test/tool notices and does not classify what is linked or legally applicable.
+
+All18 exact patches, their order, the pinned build workflow and original engine
+manifest are supplied. Applying them in an isolated index reproduces the exact
+recorded producer diff SHA-256
+`206841ff15632f71f2972f8f530500b00de48b1b4adc71c35a6c5a8d799d6be8`.
+The original engine and wrapper worktrees remain unchanged.
+
+Two preparation assumptions were corrected without weakening verification:
+`git archive` exports can change modes/EOLs or omit source, so the source writer
+now streams raw Git blobs; bare Git diff needs explicit pinned attributes to
+reproduce the producer's Objective-C hunk headers. Both have regression cases.
+This source material is not yet integrated into a signed candidate and makes
+no license-compliance, rebuilding, native, sandbox or ordinary-app claim.
