@@ -119,7 +119,7 @@ def main():
         command([*native, '-typecheck'])
         return
     executable = OUT / 'website-fullscreen-checks'
-    command([*native, '-L', str(OUT), '-lBrowserCore', '-Xlinker', '-rpath', '-Xlinker', '@executable_path', '-o', str(executable)])
+    command([*native, '-L', str(OUT), '-lBrowserCore', '-Xlinker', '-rpath', '-Xlinker', '@executable_path', '-o', str(executable)], timeout=1200)
     for folder in ['ReaderAssets', 'WebsiteProtection']:
         source = ROOT / ('Sources/Browser' if folder == 'ReaderAssets' else 'Resources') / folder
         shutil.copytree(source, OUT / folder, dirs_exist_ok=True)
