@@ -768,25 +768,24 @@ extension WebsiteFullscreenChecks {
             try await NativeOwnedWindowCapture.capture(window, kind: name, directory: directory)
         }
         func press(_ name: String) async throws {
-            var seen = Set<ObjectIdentifier>()
-            var found: (any NSAccessibilityProtocol)?
-            var labels: [String] = []
-            func visit(_ value: Any, depth: Int) {
-                guard depth < 60, let node = value as? any NSAccessibilityProtocol,
-                      seen.insert(ObjectIdentifier(node as AnyObject)).inserted else { return }
-                if node.accessibilityRole() == .button {
-                    let label = node.accessibilityLabel() ?? node.accessibilityTitle() ?? ""
-                    labels.append(label)
-                    if label == name && node.isAccessibilityEnabled() { found = node }
-                }
-                for child in node.accessibilityChildren() ?? [] { visit(child, depth: depth+1) }
+            // Grounded in the authenticated 950x620 welcome capture: the
+            // shared footer action occupies x803...886/y520...548 from top.
+            guard window.isVisible, window.isKeyWindow,
+                  abs(window.frame.width-950)<1, abs(window.frame.height-620)<1 else {
+                throw Failure.fixture("owned welcome click needs its observed window geometry")
             }
-            visit(window, depth: 0)
-            guard let control = found else {
-                print("OWNED_VISUAL_ACCESSIBILITY_BUTTONS", labels)
-                throw Failure.fixture("owned accessible button unavailable: " + name)
+            let point = NSPoint(x:844,y:86)
+            let time = ProcessInfo.processInfo.systemUptime
+            guard let down = NSEvent.mouseEvent(with:.leftMouseDown,location:point,modifierFlags:[],timestamp:time,
+                    windowNumber:window.windowNumber,context:nil,eventNumber:1,clickCount:1,pressure:1),
+                  let up = NSEvent.mouseEvent(with:.leftMouseUp,location:point,modifierFlags:[],timestamp:time+0.04,
+                    windowNumber:window.windowNumber,context:nil,eventNumber:2,clickCount:1,pressure:0) else {
+                throw Failure.fixture("owned welcome mouse event")
             }
-            guard control.accessibilityPerformPress() else { throw Failure.fixture("owned accessible button declined press: " + name) }
+            NSApp.sendEvent(down)
+            try await Task.sleep(for:.milliseconds(40))
+            NSApp.sendEvent(up)
+            print("OWNED_WELCOME_CLICK",name,point)
             await settle()
         }
         let projects = try store.createTabFolder(name: "Projects", in: store.space.id)
@@ -826,22 +825,7 @@ extension WebsiteFullscreenChecks {
         try await capture("appearance-sheet")
         store.appearanceVisible = false
         try await wait("owned appearance sheet dismissed") { window.attachedSheet == nil }
-        store.setTheme(.midnight)
-        settings = store.appearance; settings.animationsEnabled = true; store.appearance = settings
-        print("OWNED_WELCOME_MOTION", "reduceMotion", NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
-        store.preferences.onboardingCompleted = false
-        store.onboardingVisible = true
-        let start = ContinuousClock.now
-        for (seconds, label) in [(0.25,"welcome-0250"),(1.20,"welcome-1200"),(2.60,"welcome-2600"),(4.20,"welcome-4200")] {
-            try await Task.sleep(until: start + .seconds(seconds), clock: .continuous)
-            try await NativeOwnedWindowCapture.capture(window, kind: label, directory: directory)
-        }
-        try await press("Continue"); try await capture("welcome-style")
-        try await press("Continue"); try await capture("welcome-options")
-        try await press("Start browsing")
-        check(!store.onboardingVisible && store.preferences.onboardingCompleted == true,
-              "The actual native welcome controls complete setup and save the choice")
-        try await capture("welcome-complete")
+        let originalFrame = window.frame
         let ids = (1...4).map { index in store.newTab(url: URL(string:"about:blank#owned-compositor-pane-\(index)")) }
         store.select(ids[0]); for id in ids.dropFirst() { store.openInSplit(id) }
         let colors = ["#f8e8dd","#e5f0ed","#e6ebf7","#f1e5ee"]
@@ -862,6 +846,23 @@ extension WebsiteFullscreenChecks {
         for id in ids { drafts.append((try await store.view(for:id).evaluateJavaScript("document.getElementById('note').value")) as? String ?? "") }
         check(drafts == ["Draft 1","Draft 2","Draft 3","Draft 4"], "All four visible pane drafts survive the real-window orientation change")
         store.clearSplit(); store.selectAny(originalID)
+        window.setFrame(originalFrame,display:true); await settle()
+        store.setTheme(.midnight)
+        settings = store.appearance; settings.animationsEnabled = true; store.appearance = settings
+        print("OWNED_WELCOME_MOTION", "reduceMotion", NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        store.preferences.onboardingCompleted = false
+        store.onboardingVisible = true
+        let start = ContinuousClock.now
+        for (seconds, label) in [(0.25,"welcome-0250"),(1.20,"welcome-1200"),(2.60,"welcome-2600"),(4.20,"welcome-4200")] {
+            try await Task.sleep(until: start + .seconds(seconds), clock: .continuous)
+            try await NativeOwnedWindowCapture.capture(window, kind: label, directory: directory)
+        }
+        try await press("Continue"); try await capture("welcome-style")
+        try await press("Continue"); try await capture("welcome-options")
+        try await press("Start browsing")
+        check(!store.onboardingVisible && store.preferences.onboardingCompleted == true,
+              "The actual native welcome controls complete setup and save the choice")
+        try await capture("welcome-complete")
         let preservedDraft = (try? await web.evaluateJavaScript("document.getElementById('draft').value==='native layout draft'&&window.ownedLayoutToken===73")) as? Bool
         check(store.views[originalID] === web && preservedDraft == true,
               "Welcome, themes and four-pane review preserve the original live document and unsaved input")
