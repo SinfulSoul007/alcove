@@ -41,13 +41,21 @@ def main():
     ]
     for folder, parent in [('ReaderAssets', root / 'Sources/Browser'), ('WebsiteProtection', root / 'Resources')]:
         shutil.copytree(parent / folder, out / folder, dirs_exist_ok=True)
+    failures = []
     for label, files in groups:
         executable = out / ('drawing-' + label + '-checks')
         command(['xcrun', 'swiftc', *flags, '-parse-as-library', '-I', out, '-L', out, '-lBrowserCore',
                  '-Xlinker', '-rpath', '-Xlinker', '@executable_path', *files, '-o', executable], 1200)
         if not args.compile_only:
-            command([executable], 120)
-            print('DRAWING_GROUP_PASSED', label, flush=True)
+            try:
+                command([executable], 120)
+                print('DRAWING_GROUP_PASSED', label, flush=True)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                failures.append(label)
+                print('DRAWING_GROUP_FAILED', label, str(error), flush=True)
+    print('DRAWING_GROUP_FAILURES', failures, flush=True)
+    if failures:
+        raise SystemExit(1)
     print('DRAWING_QUALIFICATION_FINISHED', 'compile-only' if args.compile_only else 'owned-native', flush=True)
 
 

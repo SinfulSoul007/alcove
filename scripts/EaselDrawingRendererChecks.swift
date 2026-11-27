@@ -22,6 +22,12 @@ import BrowserCore
         let rect = CGRect(x: 10, y: 10, width: 200, height: 80), context = bitmap()
         EaselDrawingRenderer.draw(line, in: rect, context: context)
         let ink = pixel(context, 110, 50)
+        let stock = bitmap()
+        stock.setStrokeColor(CGColor(red: 1, green: 0, blue: 0, alpha: 0.5)); stock.setLineWidth(4); stock.setLineCap(.round)
+        stock.move(to: CGPoint(x: 30, y: 50)); stock.addLine(to: CGPoint(x: 190, y: 50)); stock.strokePath()
+        print("OBSERVED_INK_PIXEL", ink, "STOCK", pixel(stock, 110, 50), "BITMAP", context.bitmapInfo.rawValue, "ROWS", context.bytesPerRow, "CTM", context.ctm)
+        print("OBSERVED_INK_ROWS", (0..<100).filter { pixel(context, 110, $0)[3] > 0 })
+        print("OBSERVED_STOCK_ROWS", (0..<100).filter { pixel(stock, 110, $0)[3] > 0 })
         check((126...129).contains(ink[0]) && ink[1] == 0 && ink[2] == 0 && (126...129).contains(ink[3]),
               "Native line rendering paints the actual premultiplied ink color and opacity")
         check(pixel(context, 110, 20) == [0, 0, 0, 0] && pixel(context, 15, 15) == [0, 0, 0, 0],
@@ -31,6 +37,7 @@ import BrowserCore
         check(EaselDrawingRenderer.contains(line, point: CGPoint(x: 110, y: 55), in: rect, tolerance: 4), "Selection tolerance makes thin marks usable without filling their entire bounds")
         let compressed = bitmap(), compressedRect = CGRect(x: 10, y: 10, width: 200, height: 40)
         EaselDrawingRenderer.draw(line, in: compressedRect, context: compressed)
+        print("OBSERVED_COMPRESSED_PIXEL", pixel(compressed, 110, 30), "ROWS", (0..<100).filter { pixel(compressed, 110, $0)[3] > 0 })
         check(pixel(compressed, 110, 30)[3] >= 126 && pixel(compressed, 110, 33)[3] == 0,
               "Resizing scales line thickness along with the logical drawing")
         let dot = try EaselDrawing(kind: .pen, viewBoxWidth: 100, viewBoxHeight: 100,
