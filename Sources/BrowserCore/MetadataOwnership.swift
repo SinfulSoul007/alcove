@@ -65,10 +65,16 @@ public enum MetadataOwnership {
               currentFile.st_nlink == 1, heldFile.st_nlink == 1,
               currentFile.st_dev == heldFile.st_dev, currentFile.st_ino == heldFile.st_ino else { throw MetadataOwnershipError.unsafeFile }
     }
-    fileprivate static func validate(_ lease:MetadataOwnershipLease) throws {
+    fileprivate static func validate(_ lease:MetadataOwnershipLease,directoryDescriptor:Int32? = nil) throws {
         mutex.lock(); defer { mutex.unlock() }
         guard !lease.released, entries[lease.path] === lease.entry else { throw MetadataOwnershipError.unsafeFile }
         try validate(lease.entry,path:lease.path)
+        if let descriptor = directoryDescriptor {
+            var held = stat(), requested = stat()
+            guard fstat(lease.entry.directoryDescriptor,&held) == 0, fstat(descriptor,&requested) == 0,
+                  requested.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR), requested.st_uid == geteuid(),
+                  held.st_dev == requested.st_dev, held.st_ino == requested.st_ino else { throw MetadataOwnershipError.unsafeFile }
+        }
     }
     fileprivate static func release(_ lease: MetadataOwnershipLease) {
         mutex.lock(); defer { mutex.unlock() }
@@ -89,5 +95,7 @@ public final class MetadataOwnershipLease: @unchecked Sendable {
     fileprivate init(path:String,entry:OwnershipEntry) { self.path = path; self.entry = entry }
     public func release() { MetadataOwnership.release(self) }
     public func validate() throws { try MetadataOwnership.validate(self) }
+    /// Bind a dependent store to the exact directory protected by this lease.
+    public func validate(directoryDescriptor:Int32) throws { try MetadataOwnership.validate(self,directoryDescriptor:directoryDescriptor) }
     deinit { release() }
 }

@@ -85,11 +85,18 @@ import BrowserCore
         check(merged.count == 2 && merged.first == before && merged[1].id != before.id && merged[1].items == after.items, "Merge deduplicates equal boards and preserves a conflicting board under a fresh identity")
         let mergedAgain = Easel.merged(merged, [after])
         check(mergedAgain.count == 2, "Repeated recovery of the same conflicting draft does not create endless copies")
+        let durableMerge = try decoder.decode([Easel].self, from: encoder.encode(merged))
+        check(Easel.merged(durableMerge, [after]).count == 2, "Recovered draft lineage survives relaunch without creating another copy")
         var repeatedLibrary = BrowserLibrary(); repeatedLibrary.easels = [before, after]
         var repeatedDocument = BrowserDocument(library: repeatedLibrary)
         try repeatedDocument.repairProfiles()
         let normalized = repeatedDocument.library(for: BrowserProfile.defaultID).easels ?? []
         check(normalized.count == 2 && Set(normalized.map(\.id)).count == 2, "A single malformed library also repairs colliding board identities without losing either draft")
+        let separatelySaved = try Easel(title: before.title, createdAt: before.createdAt, modifiedAt: before.modifiedAt, revision: before.revision, items: before.items)
+        var independentLibrary = BrowserLibrary(); independentLibrary.easels = [before, separatelySaved]
+        var independentDocument = BrowserDocument(library: independentLibrary)
+        try independentDocument.repairProfiles()
+        check(independentDocument.library.easels?.map(\.id) == [before.id, separatelySaved.id], "Separately addressable boards retain both identities even when every other field matches")
         let old = try decoder.decode(BrowserDocument.self, from: encoder.encode(initial))
         check(old.library.easels == nil && old.library.bookmarks.isEmpty, "A library without Easels retains its existing data")
         check(duplicated.library(for: UUID()).easels == nil, "A different profile does not inherit another profile's canvases")

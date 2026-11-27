@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 import Darwin
-import BrowserCore
+@testable import BrowserCore
 
 @main struct EaselAssetChecks {
     static var failures = 0, checks = 0
@@ -115,6 +115,33 @@ import BrowserCore
         rejects("An existing symlink cannot become the Easels directory") { _ = try EaselAssetStore(root: linkParent, profileID: owner, key: key) }
         let leaseRoot = try directory("leased")
         let lease = try MetadataOwnership.acquire(for: leaseRoot.appendingPathComponent("metadata.sealed"))
+        let wrongRoot = try directory("wrong-lease-root")
+        let wrongLease = try MetadataOwnership.acquire(for: wrongRoot.appendingPathComponent("metadata.sealed"))
+        wrongLease.release()
+        rejects("A live lease for another root cannot authorize a capture store") { _ = try EaselAssetStore(root: wrongRoot, profileID: owner, key: key, ownership: lease) }
+        check(!fm.fileExists(atPath: wrongRoot.appendingPathComponent("Easels").path), "Rejecting an unrelated lease creates no asset directories")
+        let entryRoot = try directory("entry-identity")
+        let parentFD = open(entryRoot.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard parentFD >= 0 else { throw POSIXError(.EIO) }
+        defer { close(parentFD) }
+        let entryPath = entryRoot.appendingPathComponent("owned.sealed")
+        let entryFD = open(entryPath.path, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard entryFD >= 0 else { throw POSIXError(.EIO) }
+        defer { close(entryFD) }
+        let entry = EaselAssetEntry(descriptor: entryFD, directoryDescriptor: parentFD, name: "owned.sealed")
+        _ = try entry.validate()
+        let retiredPath = entryRoot.appendingPathComponent("renamed-owned.sealed")
+        try fm.moveItem(at: entryPath, to: retiredPath)
+        try bytes.write(to: entryPath)
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: entryPath.path)
+        rejects("A renamed descriptor cannot validate an unrelated replacement entry") { _ = try entry.validate() }
+        rejects("Cleanup cannot unlink a different file installed under the checked name") { _ = try entry.removeIfOwned() }
+        check((try? Data(contentsOf: entryPath)) == bytes && fm.fileExists(atPath: retiredPath.path), "Rejected cleanup preserves both the replacement and the original file")
+        if fm.fileExists(atPath: entryPath.path) { try fm.removeItem(at: entryPath) }
+        try fm.moveItem(at: retiredPath, to: entryPath)
+        check(try entry.removeIfOwned(), "Cleanup removes the verified owned entry")
+        check(try !entry.removeIfOwned(), "Cleanup of an already absent owned entry is harmless")
+        rejects("A failed directory durability barrier is surfaced to the publisher") { try EaselAssetEntry.synchronizeDirectory(-1) }
         let leased = try EaselAssetStore(root: leaseRoot, profileID: owner, key: key, ownership: lease)
         let leasedID = try leased.put(bytes)
         lease.release()

@@ -86,6 +86,8 @@ public struct Easel: Codable, Equatable, Identifiable, Sendable {
     public private(set) var createdAt: Date
     public private(set) var modifiedAt: Date
     public private(set) var revision: UUID
+    /// Only collision recovery sets this. Separate saved board identities are never content-deduplicated.
+    public private(set) var recoveredFromID: UUID?
     /// Array order is back to front. Item identities are scoped to this board.
     public private(set) var items: [EaselItem]
 
@@ -100,6 +102,7 @@ public struct Easel: Codable, Equatable, Identifiable, Sendable {
         try self.init(id: c.decode(UUID.self, forKey: .id), title: c.decode(String.self, forKey: .title),
                       createdAt: c.decode(Date.self, forKey: .createdAt), modifiedAt: c.decode(Date.self, forKey: .modifiedAt),
                       revision: c.decode(UUID.self, forKey: .revision), items: c.decode([EaselItem].self, forKey: .items))
+        recoveredFromID = try c.decodeIfPresent(UUID.self, forKey: .recoveredFromID)
     }
     private static func cleanTitle(_ title: String) throws -> String {
         let value = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -143,11 +146,16 @@ public struct Easel: Codable, Equatable, Identifiable, Sendable {
     public static func merged(_ current: [Easel], _ incoming: [Easel]) -> [Easel] {
         var result: [Easel] = []
         for original in current + incoming {
-            if result.contains(where: { board in
-                var compared = original; compared.id = board.id
-                return compared == board
-            }) { continue }
+            if result.contains(original) { continue }
             var board = original
+            if result.contains(where: { $0.id == original.id }) {
+                if result.contains(where: { recovered in
+                    guard recovered.recoveredFromID == original.id else { return false }
+                    var compared = original; compared.id = recovered.id; compared.recoveredFromID = recovered.recoveredFromID
+                    return compared == recovered
+                }) { continue }
+                board.recoveredFromID = original.id
+            }
             while result.contains(where: { $0.id == board.id }) { board.id = UUID() }
             result.append(board)
         }

@@ -46,6 +46,37 @@ public final class EaselAssetStore {
     }
 }
 
+/// Borrowed descriptors: verifies that a name still refers to the opened file
+/// before publication, reading, or cleanup. The caller owns descriptor lifetime.
+struct EaselAssetEntry {
+    let descriptor: Int32, directoryDescriptor: Int32
+    let name: String
+    func validate() throws -> stat {
+        guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\u{0}") else { throw EaselAssetError.unsafeEntry }
+        var held = stat(), named = stat()
+        guard fstat(descriptor, &held) == 0, fstatat(directoryDescriptor, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
+              held.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), named.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+              held.st_uid == geteuid(), named.st_uid == geteuid(), held.st_nlink == 1, named.st_nlink == 1,
+              held.st_mode & 0o777 == 0o600, named.st_mode & 0o777 == 0o600,
+              held.st_dev == named.st_dev, held.st_ino == named.st_ino else { throw EaselAssetError.unsafeEntry }
+        return held
+    }
+    @discardableResult func removeIfOwned() throws -> Bool {
+        var named = stat()
+        if fstatat(directoryDescriptor, name, &named, AT_SYMLINK_NOFOLLOW) != 0 {
+            if errno == ENOENT { return false }
+            throw EaselAssetError.system(errno)
+        }
+        _ = try validate()
+        guard unlinkat(directoryDescriptor, name, 0) == 0 else { throw EaselAssetError.system(errno) }
+        try Self.synchronizeDirectory(directoryDescriptor)
+        return true
+    }
+    static func synchronizeDirectory(_ descriptor: Int32) throws {
+        guard fsync(descriptor) == 0 else { throw EaselAssetError.system(errno) }
+    }
+}
+
 /// Every operation stays relative to held directory descriptors. No asset path
 /// component comes from a document string, URL or image filename.
 private final class EaselAssetDirectory {
@@ -61,6 +92,7 @@ private final class EaselAssetDirectory {
         guard rootFD >= 0 else { throw EaselAssetError.system(errno) }
         var retainedRoot = false
         defer { if !retainedRoot { Darwin.close(rootFD) } }
+        try ownership?.validate(directoryDescriptor: rootFD)
         try Self.protectDirectory(rootFD)
         let easelsFD = try Self.openDirectory("Easels", in: rootFD)
         var retainedEasels = false
@@ -85,7 +117,7 @@ private final class EaselAssetDirectory {
         guard mkdirat(parent, name, 0o700) == 0 || errno == EEXIST else { throw EaselAssetError.system(errno) }
         let fd = openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard fd >= 0 else { throw EaselAssetError.system(errno) }
-        do { try protectDirectory(fd); return fd }
+        do { try protectDirectory(fd); try EaselAssetEntry.synchronizeDirectory(parent); return fd }
         catch { Darwin.close(fd); throw error }
     }
     private static func sameDirectory(_ held: stat, _ current: stat) -> Bool {
@@ -100,7 +132,7 @@ private final class EaselAssetDirectory {
     }
     private static func validateChain(root: URL, profileID: UUID, ownership: MetadataOwnershipLease?,
                                       rootFD: Int32, easelsFD: Int32, profileFD: Int32) throws {
-        try ownership?.validate()
+        try ownership?.validate(directoryDescriptor: rootFD)
         var heldRoot = stat(), namedRoot = stat(), heldEasels = stat(), namedEasels = stat(), heldProfile = stat(), namedProfile = stat()
         guard fstat(rootFD, &heldRoot) == 0, lstat(root.path, &namedRoot) == 0,
               fstat(easelsFD, &heldEasels) == 0, fstatat(rootFD, "Easels", &namedEasels, AT_SYMLINK_NOFOLLOW) == 0,
@@ -111,12 +143,7 @@ private final class EaselAssetDirectory {
     private func authenticatedData(_ id: UUID) -> Data {
         Data("Alcove.EaselAsset.v1\u{0}\(profileID.uuidString)\u{0}\(id.uuidString)".utf8)
     }
-    private func checkedFile(_ fd: Int32) throws -> stat {
-        var info = stat()
-        guard fstat(fd, &info) == 0, info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
-              info.st_uid == geteuid(), info.st_nlink == 1, info.st_mode & 0o777 == 0o600 else { throw EaselAssetError.unsafeEntry }
-        return info
-    }
+    private func entry(_ fd: Int32, _ id: UUID) -> EaselAssetEntry { EaselAssetEntry(descriptor: fd, directoryDescriptor: profileFD, name: name(id)) }
     private func openAsset(_ id: UUID) throws -> Int32? {
         // NONBLOCK lets us reject FIFOs after fstat, without waiting for a writer.
         let fd = openat(profileFD, name(id), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
@@ -124,7 +151,7 @@ private final class EaselAssetDirectory {
             if errno == ENOENT { return nil }
             throw EaselAssetError.system(errno)
         }
-        do { _ = try checkedFile(fd); return fd }
+        do { _ = try entry(fd, id).validate(); return fd }
         catch { Darwin.close(fd); throw error }
     }
 
@@ -133,15 +160,18 @@ private final class EaselAssetDirectory {
         let id = UUID()
         guard let bytes = try AES.GCM.seal(data, using: key, authenticating: authenticatedData(id)).combined else { throw EaselAssetError.invalidCiphertext }
         try validate()
-        let fd = openat(profileFD, name(id), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        let stagingName = ".pending-" + UUID().uuidString
+        let fd = openat(profileFD, stagingName, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard fd >= 0 else { throw EaselAssetError.system(errno) }
+        let staging = EaselAssetEntry(descriptor: fd, directoryDescriptor: profileFD, name: stagingName)
+        let final = entry(fd, id)
         var published = false
         defer {
+            if !published { _ = try? staging.removeIfOwned(); _ = try? final.removeIfOwned() }
             Darwin.close(fd)
-            if !published { _ = unlinkat(profileFD, name(id), 0) }
         }
         guard fchmod(fd, 0o600) == 0 else { throw EaselAssetError.system(errno) }
-        _ = try checkedFile(fd)
+        _ = try staging.validate()
         try bytes.withUnsafeBytes { buffer in
             var offset = 0
             while offset < buffer.count {
@@ -152,7 +182,12 @@ private final class EaselAssetDirectory {
             }
         }
         guard fsync(fd) == 0 else { throw EaselAssetError.system(errno) }
-        _ = try checkedFile(fd)
+        _ = try staging.validate()
+        try validate()
+        guard renameatx_np(profileFD, stagingName, profileFD, name(id), UInt32(RENAME_EXCL)) == 0 else { throw EaselAssetError.system(errno) }
+        _ = try final.validate()
+        try EaselAssetEntry.synchronizeDirectory(profileFD)
+        _ = try final.validate()
         try validate()
         published = true
         return id
@@ -162,7 +197,7 @@ private final class EaselAssetDirectory {
         try validate()
         guard let fd = try openAsset(id) else { return nil }
         defer { Darwin.close(fd) }
-        let initial = try checkedFile(fd)
+        let initial = try entry(fd, id).validate()
         guard initial.st_size >= 29 else { throw EaselAssetError.invalidCiphertext }
         guard initial.st_size <= EaselAssetStore.maximumBytes + 28 else { throw EaselAssetError.invalidSize }
         var bytes = Data(count: Int(initial.st_size))
@@ -175,9 +210,10 @@ private final class EaselAssetDirectory {
                 offset += count
             }
         }
-        let final = try checkedFile(fd)
+        let final = try entry(fd, id).validate()
         guard final.st_size == initial.st_size else { throw EaselAssetError.invalidCiphertext }
         let plaintext = try AES.GCM.open(AES.GCM.SealedBox(combined: bytes), using: key, authenticating: authenticatedData(id))
+        _ = try entry(fd, id).validate()
         try validate()
         return plaintext
     }
@@ -186,8 +222,7 @@ private final class EaselAssetDirectory {
         try validate()
         guard let fd = try openAsset(id) else { return }
         defer { Darwin.close(fd) }
-        _ = try checkedFile(fd)
         try validate()
-        guard unlinkat(profileFD, name(id), 0) == 0 || errno == ENOENT else { throw EaselAssetError.system(errno) }
+        try entry(fd, id).removeIfOwned()
     }
 }

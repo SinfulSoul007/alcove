@@ -206,7 +206,7 @@ import CryptoKit
         try storage.save(versionSeven)
         var latest = try storage.load(BrowserDocument.self)!
         try latest.repairProfiles()
-        check(latest.formatVersion == 8 && latest.windowRestore == windows,
+        check(latest.formatVersion == BrowserDocument.currentFormatVersion && latest.windowRestore == windows,
               "Format-7 migration keeps window state and defaults to no saved split groups")
         let saved = BrowserSplitLayout(spaceID: personal, axis: .rows,
                                        tabIDs: [second.id, first, first, work.tabs[0].id], focusedTabID: second.id)
