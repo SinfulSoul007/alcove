@@ -11,6 +11,7 @@ import subprocess
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--compile-only', action='store_true')
+    parser.add_argument('--regressions', action='store_true')
     args = parser.parse_args()
     if not args.compile_only and os.environ.get('GITHUB_ACTIONS') != 'true':
         model = subprocess.check_output(['sysctl', '-n', 'hw.model'], text=True).strip()
@@ -38,7 +39,21 @@ def main():
         ('documents', [root / 'scripts/EaselDrawingDocumentChecks.swift']),
         ('renderer', [root / 'Sources/Browser/EaselDrawingRenderer.swift', root / 'scripts/EaselDrawingRendererChecks.swift']),
         ('native', [*browser, root / 'scripts/EaselDrawingNativeChecks.swift']),
+        ('stores', [*browser, root / 'scripts/EaselDrawingStoreChecks.swift']),
     ]
+    if args.regressions:
+        for label, fixture, helpers in [
+            ('old-canvas', 'EaselCanvasChecks', []),
+            ('old-tabs', 'EaselTabChecks', []),
+            ('old-export-core', 'EaselExportCoreChecks', None),
+            ('old-export-png', 'EaselExportRenderChecks', []),
+            ('old-export-web', 'EaselExportWebsiteChecks', []),
+            ('old-export-store', 'EaselExportStoreChecks', ['PageOutputFixtures']),
+            ('old-ownership', 'WriterOwnershipChecks', []),
+        ]:
+            files = [] if helpers is None else [*browser, *[root / ('scripts/' + helper + '.swift') for helper in helpers]]
+            groups.append((label, [*files, root / ('scripts/' + fixture + '.swift')]))
+        shutil.copyfile(root / 'scripts/Fixtures/Easel16Bit.png', out / 'Easel16Bit.png')
     for folder, parent in [('ReaderAssets', root / 'Sources/Browser'), ('WebsiteProtection', root / 'Resources')]:
         shutil.copytree(parent / folder, out / folder, dirs_exist_ok=True)
     for label, files in groups:
