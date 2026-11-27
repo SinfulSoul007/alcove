@@ -57,9 +57,9 @@
 
 **Interfaces:** `EaselPane(store: BrowserStore, tabID: UUID)` consumes Task 1 context and Task 2 drafts. Stable `NSScrollView`/document view reconciles cards by item UUID; gesture previews commit one edit batch at completion. Draft coordinator owns text. Library resolves current-profile catalog only.
 
-- [ ] Write real view tests for stable node/text focus, drag/resize clamp and single commit, safe key routing, layering, stale gestures, undo/redo, magnification limits and reduced motion. Expected: missing view/behavior failures.
-- [ ] Implement themed canvas, notes and links with labeled accessible controls, keyboard movement/delete, layer actions, native undo, zoom/reset/fit. Add New Easel and Library collection entry points once rendering works. Expected: create/open/edit/close/reopen usable in normal/private windows; pins/folders and split presentation remain correct.
-- [ ] Run tests and live VM input/resize/appearance acceptance, with no extra QA windows left open. Expected: same text and canvas survive redraws and relaunch; no layout cycles or focus theft. Commit and task-done.
+- [x] Write real view tests for stable node/text focus, drag/resize clamp and single commit, safe key routing, layering, stale gestures, undo/redo, magnification limits and reduced motion. Expected: missing view/behavior failures.
+- [x] Implement themed canvas, notes and links with labeled accessible controls, keyboard movement/delete, layer actions, native undo, zoom/reset/fit. Add New Easel and Library collection entry points once rendering works. Expected: create/open/edit/close/reopen usable in normal/private windows; pins/folders and split presentation remain correct.
+- [x] Run tests and live VM input/resize/appearance acceptance, with no extra QA windows left open. Expected: same text and canvas survive redraws and relaunch; no layout cycles or focus theft. Commit and task-done.
 
 ### Task 4: Images, page capture and profile erasure
 
