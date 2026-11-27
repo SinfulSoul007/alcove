@@ -62,14 +62,15 @@ enum EaselDraftError: LocalizedError {
         guard records[state.key]?.state.revision == state.revision else { throw EaselDraftError.conflict }
         return try saveAsNewNote(state.key)
     }
-    func update(_ text: String, tabID: UUID, itemID: UUID, from source: BrowserStore) throws {
+    func update(_ text: String, tabID: UUID, itemID: UUID, from source: BrowserStore, original: EaselItem? = nil) throws {
         guard !invalidated, let owner, !owner.isShuttingDown,
               (source.isPrivate ? source : source.metadataWriter) === owner,
-              let context = source.easelContext(for: tabID),
-              let item = context.easel.items.first(where: { $0.id == itemID }), case .note = item.content else { throw EaselDraftError.unavailable }
+              let context = source.easelContext(for: tabID) else { throw EaselDraftError.unavailable }
+        let current = context.easel.items.first(where: { $0.id == itemID })
+        guard let item = original ?? current, item.id == itemID, case .note = item.content else { throw EaselDraftError.unavailable }
         _ = try EaselItem(id: item.id, frame: item.frame, content: .note(text: text))
         let key = EaselDraftKey(profileID: context.profileID, easelID: context.easel.id, tabID: tabID, itemID: itemID)
-        if item.content == .note(text: text) { discard(key); return }
+        if current?.content == .note(text: text) { discard(key); return }
         let record = records[key] ?? Record(state: EaselDraftState(key: key, text: text), original: item, source: source)
         record.timer?.cancel(); record.source = source
         record.state.text = text; record.state.failure = nil; record.state.revision = UUID()
@@ -88,6 +89,7 @@ enum EaselDraftError: LocalizedError {
     func flush(tabID: UUID) throws { try flushMatching { $0.state.key.tabID == tabID } }
     func flush(tabIDs: Set<UUID>) throws { try flushMatching { tabIDs.contains($0.state.key.tabID) } }
     func flush(profileID: UUID) throws { try flushMatching { $0.state.key.profileID == profileID } }
+    func flush(easelID: UUID, profileID: UUID) throws { try flushMatching { $0.state.key.profileID == profileID && $0.state.key.easelID == easelID } }
     func flushAll() throws { try flushMatching { _ in true } }
     func flush(from source: BrowserStore) throws { try flushMatching { (presenter(for: $0) ?? $0.source) === source } }
     private func presenter(for record: Record) -> BrowserStore? {
@@ -142,6 +144,9 @@ enum EaselDraftError: LocalizedError {
     }
     func invalidate(profileID: UUID) {
         for key in records.keys.filter({ $0.profileID == profileID }) { discard(key) }
+    }
+    func invalidate(easelID: UUID, profileID: UUID) {
+        for key in records.keys.filter({ $0.profileID == profileID && $0.easelID == easelID }) { discard(key) }
     }
     func invalidate() {
         invalidated = true

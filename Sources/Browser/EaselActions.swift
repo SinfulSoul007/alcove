@@ -93,7 +93,7 @@ extension BrowserStore {
         return edited
     }
 
-    private func refreshEaselTitles(_ board: Easel, profile: UUID, in document: inout BrowserDocument, library: inout BrowserLibrary) {
+    func refreshEaselTitles(_ board: Easel, profile: UUID, in document: inout BrowserDocument, library: inout BrowserLibrary) {
         func updated(_ tabs: [BrowserCore.Tab]) -> [BrowserCore.Tab] {
             tabs.map { original in
                 guard EaselRoute.parse(original.url)?.id == board.id else { return original }

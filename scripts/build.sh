@@ -54,6 +54,13 @@ run_easel_draft_checks() {
     done
 }
 if [[ "${1:-}" == "easel-draft-test" ]]; then run_easel_draft_checks; exit; fi
+run_easel_canvas_checks() {
+    for fixture in EaselCanvasChecks EaselLibraryChecks EaselPaneChecks; do
+        xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" "scripts/$fixture.swift" -o "$MANUAL/$fixture"
+        "$MANUAL/$fixture"
+    done
+}
+if [[ "${1:-}" == "easel-canvas-test" ]]; then run_easel_canvas_checks; exit; fi
 run_metadata_cached_retry_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/MetadataCachedRetryChecks.swift -o "$MANUAL/metadata-cached-retry-checks"
     "$MANUAL/metadata-cached-retry-checks"
@@ -489,6 +496,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_metadata_cached_retry_checks
     run_easel_tab_checks
     run_easel_draft_checks
+    run_easel_canvas_checks
     run_easel_route_checks
     run_easel_core_checks
     run_bookmark_export_core_checks

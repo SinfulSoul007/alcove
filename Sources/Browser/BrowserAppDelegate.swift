@@ -567,6 +567,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         add(file, "New Tab", #selector(newTab), "t"); add(file, "New Private Window", #selector(privateWindow), "n", [.command, .shift])
         add(file, "Duplicate Tab", #selector(duplicateTab), "")
         add(file, "New Space…", #selector(newSpace), "n", [.command, .control]); add(file, "Open Location…", #selector(location), "l")
+        add(file, "New Easel", #selector(newEasel), "")
         add(file, "New Folder…", #selector(newFolder), "")
         add(file, "Import Bookmarks HTML…", #selector(importBookmarks), "")
         add(file, "Export Bookmarks HTML…", #selector(exportBookmarks), "")
@@ -645,12 +646,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let available = !store.profileUnavailable(profile)
         if quick != nil {
             switch menuItem.action {
-            case #selector(sidebar), #selector(split), #selector(pin), #selector(reopen), #selector(nextTab), #selector(previousTab), #selector(nextSpace), #selector(previousSpace), #selector(newSpace), #selector(newFolder), #selector(importSession), #selector(importBookmarks), #selector(exportBookmarks): return false
+            case #selector(sidebar), #selector(split), #selector(pin), #selector(reopen), #selector(nextTab), #selector(previousTab), #selector(nextSpace), #selector(previousSpace), #selector(newSpace), #selector(newFolder), #selector(newEasel), #selector(importSession), #selector(importBookmarks), #selector(exportBookmarks): return false
             default: break
             }
         }
         switch menuItem.action {
-        case #selector(newQuick), #selector(newSpace), #selector(newFolder): return store.canModifyLocalMetadata && !store.profileDataOperationInProgress && available
+        case #selector(newQuick), #selector(newSpace), #selector(newFolder), #selector(newEasel): return store.canModifyLocalMetadata && !store.profileDataOperationInProgress && available
         case #selector(pin), #selector(reopen): return store.canModifyLocalMetadata && available
         case #selector(duplicateTab): return quick == nil && (store.focusedID.map(store.canDuplicateSidebarTab) ?? false)
         case #selector(bookmark): return !store.isPrivate && store.savingEnabled && available && activeWebView?.url != nil
@@ -729,6 +730,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func previousSpace() { stepSpace(-1) }
     @objc func importSession() { guard activeQuick == nil, let store = activeStore, !store.isPrivate, store.savingEnabled, !store.profileUnavailable(store.activeProfileID) else { return }; store.importLegacySession() }
     @objc func newSpace() { if activeQuick == nil { activeStore?.requestNewSpace() } }
+    @objc func newEasel() { if activeQuick == nil { activeStore?.requestNewEasel() } }
     @objc func newFolder() {if activeQuick == nil {activeStore?.requestNewTabFolder()}}
     @objc func duplicateTab() {
         guard activeQuick == nil, let store = activeStore, let id = store.focusedID else { return }

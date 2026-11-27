@@ -17,6 +17,7 @@ struct FindBar: View {
 }
 
 enum LibrarySection: String, CaseIterable {
+    case easels = "Easels"
     case bookmarks = "Bookmarks"
     case history = "History"
     case archive = "Archive"
@@ -45,7 +46,9 @@ struct LibraryPanel: View {
             Picker("Collection", selection: $store.librarySection) {
                 ForEach(LibrarySection.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented)
-            if section == .bookmarks || section == .history {
+            if section == .easels {
+                EaselLibraryView(store: store)
+            } else if section == .bookmarks || section == .history {
                 TextField("Search \(section.rawValue.lowercased())", text: $search).textFieldStyle(.roundedBorder)
                 if records.isEmpty { empty("No \(section.rawValue.lowercased()) yet.") }
                 else {

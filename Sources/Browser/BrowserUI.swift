@@ -395,6 +395,9 @@ struct BrowserUI: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        else if let id, let tab = store.tab(id), EaselRoute.isNative(tab.url) {
+            EaselPane(store: store, tabID: id).id(EaselPaneIdentity(tabID: id, profileID: store.profileID(for: id), easelID: EaselRoute.parse(tab.url)?.id))
+        }
         else if let id, let tab = store.tab(id), !tab.url.isEmpty,
                 let webView = store.primaryPageView(for: id) {
             WebPane(webView: webView, store: store, splitDestination: store.splitDropTarget(id),
@@ -420,7 +423,8 @@ struct SiteBadge: View {
         let letter = host.isEmpty ? "✦" : String(host.prefix(1)).uppercased()
         let hue = Double(host.utf8.reduce(0) { ($0 + Int($1)) % 360 }) / 360
         Group {
-            if let image { Image(nsImage: image).resizable().scaledToFit() }
+            if EaselRoute.parse(url) != nil { Image(systemName: "square.stack.3d.up").font(.system(size: large ? 18 : 13, weight: .medium)) }
+            else if let image { Image(nsImage: image).resizable().scaledToFit() }
             else { Text(letter).font(.system(size: large ? 15 : 10, weight: .bold, design: .rounded)).foregroundStyle(.primary).background(Color(hue: hue, saturation: 0.5, brightness: 0.8).opacity(0.16), in: RoundedRectangle(cornerRadius: large ? 7 : 5)) }
         }.frame(width: large ? 25 : 18, height: large ? 25 : 18)
     }

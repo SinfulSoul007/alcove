@@ -17,7 +17,7 @@ extension BrowserStore {
             case .copyURL: return currentView?.url != nil
             case .profiles: return !isPrivate
             case .spaces,.deletedSpaces: return !isShuttingDown && !awaitingInitialMetadata
-            case .newSpace,.renameSpace,.deleteSpace,.newFolder: return canManageSpace(space.id)
+            case .newSpace,.renameSpace,.deleteSpace,.newFolder,.newEasel: return canManageSpace(space.id)
             case .collapsePinned: return space.pinnedShelfCollapsed != true && canManageSpace(space.id)
             case .expandPinned: return space.pinnedShelfCollapsed == true && canManageSpace(space.id)
             case .renameTab: return focusedID.map { (try? beginSidebarRename($0)) != nil } ?? false
@@ -39,6 +39,7 @@ extension BrowserStore {
         guard availableCommands.contains(command) else { return }
         commandVisible = false; commandOpensNewTab = false
         switch command {
+        case .newEasel: requestNewEasel()
         case .reader: if let web = primaryPeekView ?? currentView { toggleReader(web) }
         case .pin: if let tab = selectedTab, !tab.pinned { togglePin(tab.id) }
         case .unpin: if let tab = selectedTab, tab.pinned { togglePin(tab.id) }
