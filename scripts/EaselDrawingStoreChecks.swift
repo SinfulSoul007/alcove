@@ -44,6 +44,9 @@ import CryptoKit
         let afterFailureBytes = try Data(contentsOf: restored.sessionURL)
         check(restored.easelContext(for: tab)?.easel == prior && afterFailureBytes == beforeFailure, "A failed save preserves the model, revision and encrypted bytes")
         restored.vault = vault
+        check(restored.unlockLocalData(), "Drawing recovery retries through the existing authorized metadata key")
+        try await ready(restored)
+        check(restored.savingEnabled, "Drawing recovery restores writes before retrying the retained mark")
         let afterRetry = try restored.editEasel(in: tab, expectedRevision: prior.revision, edits: [.insert(extra)])
         check(afterRetry.items == [item, extra], "Retrying after a drawing save failure preserves both marks")
         let beforeBatch = try Data(contentsOf: restored.sessionURL)
