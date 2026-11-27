@@ -10,11 +10,11 @@ import WebKit
         func check(_ value: Bool, _ name: String) { checked += 1; if !value { failed += 1 }; print("\(value ? "PASS" : "FAIL"): \(name)") }
         func bitmap(_ width: Int, _ height: Int) -> CGContext {
             let c = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                              space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
             c.clear(CGRect(x: 0, y: 0, width: width, height: height)); return c
         }
         func pixel(_ c: CGContext, _ x: Int, _ y: Int) -> [UInt8] {
-            let p = c.data!.assumingMemoryBound(to: UInt8.self).advanced(by: c.bytesPerRow * y + x * 4)
+            let p = c.data!.assumingMemoryBound(to: UInt8.self).advanced(by: c.bytesPerRow * (c.height - 1 - y) + x * 4)
             return Array(UnsafeBufferPointer(start: p, count: 4))
         }
         let store = BrowserStore(isPrivate: true); defer { store.shutdown() }

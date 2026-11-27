@@ -21,7 +21,7 @@ enum EaselDrawingRenderer {
         guard rect.width.isFinite, rect.height.isFinite, rect.width > 0, rect.height > 0 else { return }
         // Color is immutable and has already passed the exact ASCII RGB validator.
         let rgb = UInt32(drawing.style.color.dropFirst(), radix: 16)!
-        let color = CGColor(red: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255,
+        let color = CGColor(srgbRed: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255,
                             blue: Double(rgb & 255) / 255, alpha: drawing.style.opacity)
         context.saveGState(); defer { context.restoreGState() }
         context.translateBy(x: rect.minX, y: rect.minY)

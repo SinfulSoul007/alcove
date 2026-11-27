@@ -33,10 +33,11 @@ struct EaselCanvasExport: Sendable {
     }
     func png() throws -> Data {
         let layout = EaselExportLayout(easel: easel)
-        guard let context = CGContext(data: nil, width: layout.pixelWidth, height: layout.pixelHeight, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw EaselExportError.tooLarge }
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: layout.pixelWidth, height: layout.pixelHeight, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw EaselExportError.tooLarge }
         let paper = background ?? ThemeColor(0.973, 0.977, 0.985)
-        context.setFillColor(CGColor(red: paper.red, green: paper.green, blue: paper.blue, alpha: 1))
+        context.setFillColor(CGColor(srgbRed: paper.red, green: paper.green, blue: paper.blue, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: layout.pixelWidth, height: layout.pixelHeight))
         context.translateBy(x: 0, y: CGFloat(layout.pixelHeight)); context.scaleBy(x: layout.scale, y: -layout.scale)
         context.translateBy(x: -layout.originX, y: -layout.originY)
@@ -79,7 +80,7 @@ struct EaselCanvasExport: Sendable {
     }
     private static func draw(_ text: String, in rect: CGRect, size: CGFloat, context: CGContext, link: Bool = false) {
         let font = CTFontCreateUIFontForLanguage(.system, size, nil) ?? CTFontCreateWithName("Helvetica" as CFString, size, nil)
-        let color = link ? CGColor(red: 0.14, green: 0.36, blue: 0.53, alpha: 1) : CGColor(red: 0.094, green: 0.13, blue: 0.17, alpha: 1)
+        let color = link ? CGColor(srgbRed: 0.14, green: 0.36, blue: 0.53, alpha: 1) : CGColor(srgbRed: 0.094, green: 0.13, blue: 0.17, alpha: 1)
         let string = NSAttributedString(string: text, attributes: [NSAttributedString.Key(kCTFontAttributeName as String): font,
                                                                     NSAttributedString.Key(kCTForegroundColorAttributeName as String): color])
         let framesetter = CTFramesetterCreateWithAttributedString(string)

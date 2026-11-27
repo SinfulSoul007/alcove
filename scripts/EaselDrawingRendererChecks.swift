@@ -9,11 +9,12 @@ import BrowserCore
         func check(_ value: Bool, _ name: String) { checked += 1; if !value { failed += 1 }; print("\(value ? "PASS" : "FAIL"): \(name)") }
         func bitmap() -> CGContext {
             let c = CGContext(data: nil, width: 240, height: 100, bitsPerComponent: 8, bytesPerRow: 960,
-                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                              space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
             c.clear(CGRect(x: 0, y: 0, width: 240, height: 100)); return c
         }
         func pixel(_ context: CGContext, _ x: Int, _ y: Int) -> [UInt8] {
-            let p = context.data!.assumingMemoryBound(to: UInt8.self).advanced(by: context.bytesPerRow * y + x * 4)
+            // Probe in drawing coordinates; bitmap storage starts at its top row.
+            let p = context.data!.assumingMemoryBound(to: UInt8.self).advanced(by: context.bytesPerRow * (context.height - 1 - y) + x * 4)
             return Array(UnsafeBufferPointer(start: p, count: 4))
         }
         let red = try EaselDrawingStyle(color: "#FF0000", lineWidth: 4, opacity: 0.5)
