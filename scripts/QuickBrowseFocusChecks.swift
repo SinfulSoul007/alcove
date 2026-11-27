@@ -169,12 +169,11 @@ extension QuickFocusRunner {
         let delegate = AppDelegate()
         let store = BrowserStore(isPrivate: true)
         var appearance = store.appearance; appearance.animationsEnabled = false; appearance.showFavicons = false; store.appearance = appearance
-        let owner = delegate.makeOwner(store)
-        let id = try store.openQuickPage(url: URL(string: "about:blank")!)
-        delegate.syncQuickWindows(owner)
-        guard let controller = delegate.quickWindows[QuickWindowKey(ownerID: owner.id, pageID: id)],
-              let window = controller.window else { throw SetupFailure.notReady }
-        let web = store.view(for: id)
+        let id = try store.openQuickPage(url: URL(string: "https://owned-quick-keyboard.example.invalid/")!)
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = store.websiteDataStore(forProfile: BrowserProfile.defaultID)
+        let web = WKWebView(frame: .zero, configuration: configuration)
+        store.registerView(web, for: id, profile: BrowserProfile.defaultID)
         web.loadHTMLString("<html><meta name='color-scheme' content='light dark'><style>body{font:18px system-ui;padding:24px;background:#e7eff5;color:#142638}input{font:16px system-ui}</style><h1>Owned Quick Browse page</h1><input id='draft' value='unsaved Quick Browse draft'><p>needle belongs to this page.</p></html>", baseURL: nil)
         for _ in 0..<200 {
             if (try? await web.evaluateJavaScript("document.getElementById('draft')?.value") as? String) == "unsaved Quick Browse draft" { break }
@@ -182,6 +181,10 @@ extension QuickFocusRunner {
         }
         guard (try? await web.evaluateJavaScript("document.getElementById('draft')?.value") as? String) == "unsaved Quick Browse draft" else { throw SetupFailure.notReady }
         _ = try await web.evaluateJavaScript("window.quickKeyboardToken=9472")
+        let owner = delegate.makeOwner(store)
+        delegate.syncQuickWindows(owner)
+        guard let controller = delegate.quickWindows[QuickWindowKey(ownerID: owner.id, pageID: id)],
+              let window = controller.window else { throw SetupFailure.notReady }
         delegate.buildMenu(); controller.surface(); await settle()
         _ = window.makeFirstResponder(web); await settle()
         for attempt in 1...3 {
