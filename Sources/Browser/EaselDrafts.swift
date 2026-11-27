@@ -20,7 +20,15 @@ enum EaselDraftError: LocalizedError {
         }
     }
 }
-@MainActor protocol EaselDraftEditing: AnyObject { func finishEaselDraftEditing() }
+@MainActor protocol EaselDraftEditing: AnyObject {
+    func finishEaselDraftEditing()
+    func discardEaselDraft(restoring item: EaselItem?)
+    var hasMarkedEaselText: Bool { get }
+}
+extension EaselDraftEditing {
+    func discardEaselDraft(restoring item: EaselItem?) {}
+    var hasMarkedEaselText: Bool { false }
+}
 
 /// Dirty strings outlive their NSViews. Only a successful transaction or an
 /// explicit discard removes one; normal tab/window/quit paths flush first.
@@ -45,22 +53,38 @@ enum EaselDraftError: LocalizedError {
 
     var dirtyTabIDs: Set<UUID> { Set(records.keys.map(\.tabID)) }
     func state(for key: EaselDraftKey) -> EaselDraftState? { records[key]?.state }
+    func hasDrafts(easelID: UUID, profileID: UUID) -> Bool {
+        records.keys.contains { $0.easelID == easelID && $0.profileID == profileID }
+    }
+    func recoveryState(_ state: EaselDraftState, from source: BrowserStore? = nil) -> EaselDraftState? {
+        guard let record = records[state.key], record.state.revision == state.revision,
+              let source = source ?? presenter(for: record) ?? record.source,
+              !source.isShuttingDown, source.activeProfileID == state.key.profileID,
+              !source.profileUnavailable(state.key.profileID),
+              (source.isPrivate ? source : source.metadataWriter) === owner,
+              (presenter(for: record) ?? record.source) === source else { return nil }
+        return record.state
+    }
     func failures(in source: BrowserStore) -> [EaselDraftState] {
-        records.values.filter { $0.state.failure != nil && (presenter(for: $0) ?? $0.source) === source }
+        records.values.filter { $0.state.failure != nil && recoveryState($0.state, from: source) != nil }
             .map(\.state).sorted { $0.key.itemID.uuidString < $1.key.itemID.uuidString }
     }
-    @discardableResult func retry(_ state: EaselDraftState) -> Bool {
-        guard records[state.key]?.state.revision == state.revision else { return false }
+    @discardableResult func retry(_ state: EaselDraftState, from source: BrowserStore? = nil) -> Bool {
+        guard recoveryState(state, from: source) != nil else { return false }
         do { try flush(state.key); return records[state.key] == nil }
         catch { report(error, for: state.key); return false }
     }
-    @discardableResult func discard(_ state: EaselDraftState) -> Bool {
-        guard records[state.key]?.state.revision == state.revision else { return false }
-        discard(state.key); return true
+    @discardableResult func discard(_ state: EaselDraftState, from source: BrowserStore? = nil) -> Bool {
+        guard recoveryState(state, from: source) != nil else { return false }
+        let record = records[state.key]
+        let item = record.flatMap { presenter(for: $0)?.easelContext(for: state.key.tabID)?.easel.items.first { $0.id == state.key.itemID } }
+        discard(state.key)
+        record?.editor?.discardEaselDraft(restoring: item)
+        return true
     }
-    @discardableResult func saveAsNewNote(_ state: EaselDraftState) throws -> UUID {
-        guard records[state.key]?.state.revision == state.revision else { throw EaselDraftError.conflict }
-        return try saveAsNewNote(state.key)
+    @discardableResult func saveAsNewNote(_ state: EaselDraftState, from source: BrowserStore? = nil, recoveredTitle: String = "Recovered Easel") throws -> UUID {
+        guard recoveryState(state, from: source) != nil else { throw EaselDraftError.conflict }
+        return try saveAsNewNote(state.key, recoveredTitle: recoveredTitle)
     }
     func update(_ text: String, tabID: UUID, itemID: UUID, from source: BrowserStore, original: EaselItem? = nil) throws {
         guard !invalidated, let owner, !owner.isShuttingDown,
@@ -75,11 +99,17 @@ enum EaselDraftError: LocalizedError {
         record.timer?.cancel(); record.source = source
         record.state.text = text; record.state.failure = nil; record.state.revision = UUID()
         records[key] = record; revision += 1
-        let expected = record.state.revision
+        scheduleAutosave(key, expected: record.state.revision)
+    }
+    private func scheduleAutosave(_ key: EaselDraftKey, expected: UUID) {
+        guard let record = records[key] else { return }
         record.timer = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
             guard !Task.isCancelled, let self, self.records[key]?.state.revision == expected else { return }
-            do { try self.flush(key) } catch { self.report(error, for: key) }
+            if self.records[key]?.editor?.hasMarkedEaselText == true {
+                self.scheduleAutosave(key, expected: expected); return
+            }
+            do { try self.flush(key, finishEditing: false) } catch { self.report(error, for: key) }
         }
     }
     func attach(_ editor: any EaselDraftEditing, for key: EaselDraftKey) { records[key]?.editor = editor }
@@ -105,12 +135,12 @@ enum EaselDraftError: LocalizedError {
             do { try flush(key) } catch { report(error, for: key); throw error }
         }
     }
-    private func flush(_ key: EaselDraftKey) throws {
+    private func flush(_ key: EaselDraftKey, finishEditing: Bool = true) throws {
         guard !flushing.contains(key), let initial = records[key] else { return }
         guard !invalidated, let owner, !owner.isShuttingDown else { throw EaselDraftError.unavailable }
         flushing.insert(key); defer { flushing.remove(key) }
         initial.timer?.cancel(); initial.timer = nil
-        initial.editor?.finishEaselDraftEditing()
+        if finishEditing { initial.editor?.finishEaselDraftEditing() }
         guard let record = records[key] else { return }
         record.timer?.cancel(); record.timer = nil
         guard let source = presenter(for: record), let context = source.easelContext(for: key.tabID),
@@ -131,15 +161,28 @@ enum EaselDraftError: LocalizedError {
     func discard(_ key: EaselDraftKey) {
         records.removeValue(forKey: key)?.timer?.cancel(); revision += 1
     }
-    @discardableResult func saveAsNewNote(_ key: EaselDraftKey) throws -> UUID {
-        guard !invalidated, let record = records[key], let source = presenter(for: record),
-              let context = source.easelContext(for: key.tabID), context.profileID == key.profileID,
-              context.easel.id == key.easelID else { throw EaselDraftError.unavailable }
-        let old = context.easel.items.first(where: { $0.id == key.itemID })?.frame ?? record.original.frame
+    @discardableResult func saveAsNewNote(_ key: EaselDraftKey, recoveredTitle: String = "Recovered Easel") throws -> UUID {
+        guard !invalidated, let record = records[key], let source = presenter(for: record) ?? record.source,
+              recoveryState(record.state, from: source) != nil else { throw EaselDraftError.unavailable }
+        try source.requireSpaceProfile(key.profileID)
+        let context = source.easelContext(for: key.tabID)
+        let old = context?.easel.items.first(where: { $0.id == key.itemID })?.frame ?? record.original.frame
         let frame = try EaselFrame(x: min(old.x + 24, EaselFrame.canvasSize - old.width), y: min(old.y + 24, EaselFrame.canvasSize - old.height), width: old.width, height: old.height)
         let note = try EaselItem(frame: frame, content: .note(text: record.state.text))
-        _ = try source.commitEaselEdits(in: key.tabID, expectedRevision: context.easel.revision, edits: [.insert(note)])
-        discard(key)
+        if let context, context.profileID == key.profileID, context.easel.id == key.easelID {
+            _ = try source.commitEaselEdits(in: key.tabID, expectedRevision: context.easel.revision, edits: [.insert(note)])
+        } else {
+            var candidate = source.makeDocument(), library = candidate.library(for: key.profileID)
+            var board = try Easel(title: recoveredTitle)
+            try board.apply(.insert(note), expectedRevision: board.revision)
+            library.easels = [board] + (library.easels ?? []); candidate.setLibrary(library, for: key.profileID)
+            let target = source.space.id
+            guard source.isPrivate || source.space.effectiveProfileID == key.profileID else { throw EaselDraftError.unavailable }
+            let tab = try source.insertEaselTab(board, in: target, document: &candidate)
+            try source.commitQuickDocument(candidate, beforePublish: { source.closePrimaryPeek(); source.dismissCommand() })
+            source.select(tab)
+        }
+        _ = discard(record.state, from: source)
         return note.id
     }
     func invalidate(profileID: UUID) {
@@ -156,6 +199,14 @@ enum EaselDraftError: LocalizedError {
 }
 
 extension BrowserStore {
+    func flushEaselBoardDrafts(in tabID: UUID) throws {
+        guard let context = easelContext(for: tabID) else { throw EaselActionError.missing }
+        try existingEaselDrafts?.flush(easelID: context.easel.id, profileID: context.profileID)
+    }
+    @discardableResult func flushEaselBoardDraftsIfPossible(in tabID: UUID) -> Bool {
+        do { try flushEaselBoardDrafts(in: tabID); return true }
+        catch { message = "A canvas note has unsaved changes. " + error.localizedDescription; return false }
+    }
     var existingEaselDrafts: EaselDraftCoordinator? { (isPrivate ? self : metadataWriter).retainedEaselDrafts }
     var easelDrafts: EaselDraftCoordinator {
         let writer = isPrivate ? self : metadataWriter

@@ -41,6 +41,8 @@ import BrowserCore
     private var linkURL: String?
     private var savedItem: EaselItem
     private var lastSubmittedText: String?
+    private var resettingDraft = false
+    private var retiredEditor = false
     var accent: NSColor = .controlAccentColor { didSet { needsDisplay = true } }
     var isSelected = false { didSet { needsDisplay = true } }
     private var draftKey: EaselDraftKey?
@@ -89,7 +91,7 @@ import BrowserCore
         }
     }
     private var isCurrentScope: Bool {
-        guard let draftKey, let context = owner?.context,
+        guard !retiredEditor, let draftKey, let context = owner?.context,
               context.profileID == draftKey.profileID, context.easel.id == draftKey.easelID else { return false }
         return true
     }
@@ -110,7 +112,7 @@ import BrowserCore
                 let start = min(range.location, (text as NSString).length)
                 noteView.setSelectedRange(NSRange(location: start, length: min(range.length, (text as NSString).length - start)))
             }
-            if noteView?.string == text { savedItem = item }
+            if noteView?.string == saved { savedItem = item }
             if let draftKey { store.easelDrafts.attach(self, for: draftKey) }
             setAccessibilityLabel("Note card")
         case .link(let title, let url): linkButton?.title = "↗  " + title; linkURL = url; linkButton?.toolTip = url; setAccessibilityLabel(title)
@@ -146,7 +148,7 @@ import BrowserCore
     override func mouseDown(with event: NSEvent) { owner?.activate(); owner?.select(itemID, extending: event.modifierFlags.contains(.shift)); window?.makeFirstResponder(owner?.canvas) }
     func textDidBeginEditing(_ notification: Notification) { if isCurrent { owner?.select(itemID) } }
     func textDidChange(_ notification: Notification) {
-        guard isCurrentScope, let owner, let store = owner.store, let noteView else { return }
+        guard !resettingDraft, isCurrentScope, let owner, let store = owner.store, let noteView else { return }
         do {
             var original = savedItem
             if let current = owner.context?.easel.items.first(where: { $0.id == itemID }),
@@ -161,6 +163,22 @@ import BrowserCore
         return textView.string.replacingCharacters(in: range, with: replacementString).utf8.count <= 16384
     }
     func finishEaselDraftEditing() { noteView?.unmarkText() }
+    var hasMarkedEaselText: Bool { noteView?.hasMarkedText() == true }
+    func discardEaselDraft(restoring item: EaselItem?) {
+        guard let noteView else { return }
+        resettingDraft = true
+        defer { resettingDraft = false }
+        noteView.unmarkText()
+        noteView.undoManager?.removeAllActions()
+        guard let item, case .note(let saved) = item.content else {
+            retiredEditor = true; noteView.isEditable = false
+            window?.makeFirstResponder(owner?.canvas)
+            return
+        }
+        savedItem = item; lastSubmittedText = saved
+        noteView.string = saved
+        noteView.setSelectedRange(NSRange(location: (saved as NSString).length, length: 0))
+    }
     @objc private func openLink() { if isCurrent, owner?.activate() == true, let linkURL, let url = URL(string: linkURL) { _ = owner?.store?.newTab(url: url) } }
     @objc private func openImageSource() {
         guard isCurrent, owner?.activate() == true, case .image(_, _, _, let source, _) = savedItem.content,

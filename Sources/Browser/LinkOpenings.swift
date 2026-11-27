@@ -57,7 +57,22 @@ extension BrowserStore {
         let owner = isPrivate ? BrowserProfile.defaultID : profileID; try requireQuickProfile(owner)
         var candidate = makeDocument(), records = candidate.library(for:owner)
         guard let position = records.archive.firstIndex(where:{$0.id == id}), case var tab = records.archive[position],
-              let url = URL(string:tab.url), QuickBrowseRouting.host(for:url) != nil else { throw QuickBrowseError.missing }
+              let url = URL(string:tab.url) else { throw QuickBrowseError.missing }
+        if EaselRoute.isNative(tab.url) {
+            try requireSpaceProfile(owner)
+            guard let route = EaselRoute.parse(tab.url), records.easels?.contains(where: { $0.id == route.id }) == true else { throw QuickBrowseError.missing }
+            let target = candidate.session.spaces.first(where: { $0.id == tab.archivedSpaceID && (isPrivate || $0.effectiveProfileID == owner) })
+                ?? candidate.session.spaces.first(where: { $0.id == space.id && (isPrivate || $0.effectiveProfileID == owner) })
+                ?? candidate.session.spaces.first(where: { isPrivate || $0.effectiveProfileID == owner })
+            let index = try linkSpaceIndex(target.map { .space(spaceID: $0.id, profileID: owner) } ?? .newSpace(profileID: owner), in: &candidate)
+            records.archive.remove(at: position); candidate.setLibrary(records, for: owner)
+            tab.id = UUID(); tab.lastAccessed = Date(); tab.pinned = false; tab.favorite = nil; tab.folder = nil
+            tab.homeURL = nil; tab.pinnedTitle = nil; tab.archiveSource = nil; tab.archivedSpaceID = nil
+            let preserved = try preservePrimaryPeek(in: &candidate), discard = insertLinkTab(tab, at: index, in: &candidate)
+            try commitQuickDocument(candidate, discarding: discard, beforePublish: { self.publishPreservedPeek(preserved) })
+            return tab.id
+        }
+        guard QuickBrowseRouting.host(for: url) != nil else { throw QuickBrowseError.missing }
         let decision = try linkDecision(for:url,ownerProfileID:owner,preferredSpaceID:tab.archivedSpaceID,useExternalDefault:false)
         records.archive.remove(at:position); candidate.setLibrary(records,for:owner)
         tab.id = UUID(); tab.lastAccessed = Date(); tab.pinned = false; tab.favorite = nil; tab.folder = nil; tab.homeURL = nil; tab.pinnedTitle = nil; tab.archiveSource = nil; tab.archivedSpaceID = nil

@@ -33,7 +33,7 @@ extension BrowserStore {
         return assets
     }
     func easelImageDestination(for tab: UUID) throws -> EaselImageDestination {
-        try existingEaselDrafts?.flush(tabID: tab)
+        try flushEaselBoardDrafts(in: tab)
         guard let context = easelContext(for: tab), canModifyLocalMetadata else { throw EaselActionError.missing }
         return EaselImageDestination(store: self, tabID: tab, profileID: context.profileID, easelID: context.easel.id,
                                      revision: context.easel.revision, generation: easelImageGeneration(for: context.profileID),
@@ -44,6 +44,7 @@ extension BrowserStore {
               let context = easelContext(for: destination.tabID), context.profileID == destination.profileID,
               context.easel.id == destination.easelID, context.easel.revision == destination.revision,
               easelImageGeneration(for: destination.profileID) == destination.generation else { return false }
+        guard existingEaselDrafts?.hasDrafts(easelID: destination.easelID, profileID: destination.profileID) != true else { return false }
         return windowGroup?.extensionPresentationIdentity(for: destination.tabID) === destination.presentation
     }
     @discardableResult func addEaselImage(_ raster: EaselRaster, to destination: EaselImageDestination,

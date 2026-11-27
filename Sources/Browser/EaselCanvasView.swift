@@ -15,6 +15,7 @@ import Combine
     @Published private(set) var selection: Set<UUID> = []
     @Published private(set) var zoom: CGFloat = 1
     private let history = UndoManager()
+    private var historyRevision: UUID?
     private var historyImageIDs: Set<UUID> = []
     func retainedImageIDs(profile: UUID) -> Set<UUID> {
         guard let context, context.profileID == profile, isCurrentPresentation else { return [] }
@@ -66,16 +67,18 @@ import Combine
     func reconcile() {
         guard let context else {
             for card in cards.values { card.removeFromSuperview() }
-            cards.removeAll(); renderedProfileID = nil; renderedEaselID = nil
+            cards.removeAll(); selection.removeAll(); renderedProfileID = nil; renderedEaselID = nil; historyRevision = nil
             if !history.isUndoing && !history.isRedoing { history.removeAllActions() }; historyImageIDs.removeAll(); return
         }
         let board = context.easel
         if renderedProfileID != context.profileID || renderedEaselID != board.id {
+            selection.removeAll(); historyRevision = nil
             if !history.isUndoing && !history.isRedoing { history.removeAllActions() }; historyImageIDs.removeAll()
             for card in cards.values { card.removeFromSuperview() }
             cards.removeAll(); renderedProfileID = context.profileID; renderedEaselID = board.id
         }
         let ids = Set(board.items.map(\.id))
+        selection.formIntersection(ids)
         for id in Set(cards.keys).subtracting(ids) {
             cards.removeValue(forKey: id)?.removeFromSuperview()
         }
@@ -116,7 +119,7 @@ import Combine
         contentView.scroll(to: NSPoint(x: max(0, union.minX), y: max(0, union.minY))); reflectScrolledClipView(contentView)
     }
     @discardableResult func beginGesture(itemID: UUID, resizing: Bool) -> Bool {
-        guard activate(), let store, store.flushEaselDrafts(tabID: tabID), let context, let item = context.easel.items.first(where: { $0.id == itemID }) else { return false }
+        guard activate(), let store, store.flushEaselBoardDraftsIfPossible(in: tabID), let context, let item = context.easel.items.first(where: { $0.id == itemID }) else { return false }
         select(itemID); window?.makeFirstResponder(canvas)
         gesture = Gesture(context: context, item: item, resizing: resizing, frame: item.frame)
         return true
@@ -152,6 +155,10 @@ import Combine
         reconcile(); return true
     }
     private func registerUndo(_ snapshot: Easel, profileID: UUID, expected: UUID, name: String) {
+        if !history.isUndoing && !history.isRedoing, let historyRevision, historyRevision != snapshot.revision {
+            history.removeAllActions(); historyImageIDs.removeAll()
+        }
+        historyRevision = expected
         historyImageIDs.formUnion(snapshot.items.compactMap { item -> UUID? in
             if case .image(let id, _, _, _, _) = item.content { return id }; return nil
         })
@@ -160,18 +167,18 @@ import Combine
         history.registerUndo(withTarget: historyTarget) { target in
             // This view owns the manager on the main actor. Keep AppKit's
             // synchronous undo/redo grouping across older SDK annotations.
-            MainActor.assumeIsolated { target.owner?.restore(snapshot, profileID: profileID, expected: expected, name: name) }
+            MainActor.assumeIsolated { target.owner?.restore(snapshot, profileID: profileID, name: name) }
         }
         history.setActionName(name)
         if grouped { history.endUndoGrouping() }
     }
-    private func restore(_ snapshot: Easel, profileID: UUID, expected: UUID, name: String) {
+    private func restore(_ snapshot: Easel, profileID: UUID, name: String) {
         do {
             guard let bound = context, bound.profileID == profileID else { throw SearchInputError.contextChanged }
             let current = bound.easel
-            guard current.id == snapshot.id, current.revision == expected else { throw EaselError.staleRevision }
+            guard current.id == snapshot.id, current.revision == historyRevision else { throw EaselError.staleRevision }
             let changes: [EaselEdit] = [.remove(Set(current.items.map(\.id)))] + snapshot.items.map(EaselEdit.insert) + [.rename(snapshot.title)]
-            _ = try commit(changes, expected: expected, name: name)
+            _ = try commit(changes, expected: current.revision, name: name)
         } catch { store?.message = "Couldn’t undo this canvas edit. " + error.localizedDescription; reconcile() }
     }
     @discardableResult func addImage(_ raster: EaselRaster, to destination: EaselImageDestination) throws -> EaselItem {
@@ -186,7 +193,7 @@ import Combine
     @discardableResult func addLink(title: String, url: String) -> UUID? { add(.link(title: title, url: url), width: 300, height: 150, name: "Add Link") }
     private func add(_ content: EaselItemContent, width: Double, height: Double, name: String) -> UUID? {
         do {
-            guard activate(), let store, store.flushEaselDrafts(tabID: tabID), let board = context?.easel else { throw EaselActionError.missing }
+            guard activate(), let store, store.flushEaselBoardDraftsIfPossible(in: tabID), let board = context?.easel else { throw EaselActionError.missing }
             let visible = documentVisibleRect
             let offset = Double(board.items.count % 8) * 20
             let item = try EaselItem(frame: EaselFrame(x: min(EaselFrame.canvasSize - width, max(0, visible.minX + 64 + offset)), y: min(EaselFrame.canvasSize - height, max(0, visible.minY + 64 + offset)), width: width, height: height), content: content)
@@ -211,7 +218,7 @@ import Combine
     }
     private func performSelectionEdit(name: String, edits: (Easel) throws -> [EaselEdit]) -> Bool {
         do {
-            guard !selection.isEmpty, activate(), let store, store.flushEaselDrafts(tabID: tabID), let board = context?.easel else { return false }
+            guard !selection.isEmpty, activate(), let store, store.flushEaselBoardDraftsIfPossible(in: tabID), let board = context?.easel else { return false }
             let committed = try commit(edits(board), expected: board.revision, name: name)
             if committed { window?.makeFirstResponder(canvas) }
             return committed

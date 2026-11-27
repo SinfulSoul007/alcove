@@ -157,6 +157,7 @@ extension BrowserStore {
     }
 
     private func pinnedAddress(for tab: BrowserCore.Tab, profile: UUID) -> PinnedAddress? {
+        guard !EaselRoute.isNative(tab.url), tab.homeURL.map(EaselRoute.isNative) != true else { return nil }
         let id = tab.id
         let home = tab.homeURL.flatMap { URL(string: $0) }.flatMap { QuickBrowseRouting.host(for: $0) == nil ? nil : $0 }
 

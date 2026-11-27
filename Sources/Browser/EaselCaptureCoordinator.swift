@@ -12,6 +12,8 @@ struct EaselCaptureChoice { let raster: EaselRaster; let destination: EaselCaptu
     private final class Job {
         let source: EaselCaptureSource
         var previewing = false
+        var snapshotReceived = false
+        var readiness: EaselSheetReadiness?
         var cancelPresentation: (() -> Void)?
         var monitor: Task<Void, Never>?
         init(source: EaselCaptureSource) { self.source = source }
@@ -35,35 +37,48 @@ struct EaselCaptureChoice { let raster: EaselRaster; let destination: EaselCaptu
                 try? await Task.sleep(for: .milliseconds(200))
                 guard !Task.isCancelled, let self, let job, self.jobs[key] === job else { return }
                 if !job.source.isCurrent { self.finish(key, job: job); return }
-                if !job.previewing, ContinuousClock.now >= deadline {
+                if !job.snapshotReceived, ContinuousClock.now >= deadline {
                     job.source.store?.message = "This page took too long to capture. Try again."
                     self.finish(key, job: job); return
                 }
             }
         }
         environment.snapshot(rendered) { [weak self, weak job] result in
-            guard let self, let job, self.jobs[key] === job, !job.previewing else { return }
+            guard let self, let job, self.jobs[key] === job, !job.snapshotReceived else { return }
             guard job.source.isCurrent, let window = job.source.window else { self.finish(key, job: job); return }
             switch result {
             case .failure(let error):
                 job.source.store?.message = "Couldn’t capture this page. " + error.localizedDescription
                 self.finish(key, job: job)
             case .success(let raster):
-                job.previewing = true
-                let cancel = self.environment.preview(job.source, raster, window) { [weak self, weak job] choice in
-                    guard let self, let job, self.jobs[key] === job, job.previewing else { return }
-                    guard let choice else { self.finish(key, job: job); return }
-                    guard job.source.isCurrent, let store = job.source.store else { throw SearchInputError.contextChanged }
-                    _ = try store.publishEaselCapture(choice.raster, from: job.source, destination: choice.destination)
+                job.snapshotReceived = true
+                job.readiness = EaselSheetReadiness(window: window, isCurrent: { [weak self, weak job] in
+                    guard let self, let job, self.jobs[key] === job else { return false }
+                    return job.source.isCurrent
+                }, ready: { [weak self, weak job] in
+                    guard let self, let job, self.jobs[key] === job, let window = job.source.window else { return }
+                    job.previewing = true
+                    let cancel = self.environment.preview(job.source, raster, window) { [weak self, weak job] choice in
+                        guard let self, let job, self.jobs[key] === job, job.previewing else { return }
+                        guard let choice else { self.finish(key, job: job); return }
+                        guard job.source.isCurrent, let store = job.source.store else { throw SearchInputError.contextChanged }
+                        _ = try store.publishEaselCapture(choice.raster, from: job.source, destination: choice.destination)
+                        self.finish(key, job: job)
+                    }
+                    if self.jobs[key] === job { job.cancelPresentation = cancel } else { cancel() }
+                }, canceled: { [weak self, weak job] in
+                    guard let self, let job, self.jobs[key] === job else { return }
+                    job.source.store?.message = "Page capture was canceled because its window changed or it waited too long. Try again."
                     self.finish(key, job: job)
-                }
-                if self.jobs[key] === job { job.cancelPresentation = cancel } else { cancel() }
+                })
+                job.readiness?.start()
             }
         }
     }
     private func finish(_ key: ObjectIdentifier, job: Job) {
         guard jobs[key] === job else { return }
         jobs.removeValue(forKey: key); job.monitor?.cancel(); job.monitor = nil
+        job.readiness?.cancel(); job.readiness = nil
         let cancel = job.cancelPresentation; job.cancelPresentation = nil; cancel?()
     }
     func cancel(in window: NSWindow) {

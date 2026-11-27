@@ -18,6 +18,7 @@ typealias EaselExportChooser = (NSWindow, EaselExportFormat, String, EaselExport
         let worker: Task<Data, Error>
         var close: NSObjectProtocol?
         var dismiss: (() -> Void)?
+        var readiness: EaselSheetReadiness?
         init(canvas: EaselCanvasView, window: NSWindow, destination: EaselImageDestination, worker: Task<Data, Error>) {
             key = ObjectIdentifier(window); self.canvas = canvas; self.window = window; self.destination = destination; self.worker = worker
         }
@@ -52,14 +53,28 @@ typealias EaselExportChooser = (NSWindow, EaselExportFormat, String, EaselExport
                 let bytes = try await worker.value
                 guard let self, let job, self.jobs[job.key] === job else { return }
                 guard self.valid(job), !bytes.isEmpty, let window = job.window else { self.finish(job, cancel: true); return }
-                let dismiss = self.choose(window, format, format.suggestedName(renderer.easel.title), EaselExportLayout(easel: renderer.easel)) { [weak self, weak job] url in
+                job.readiness = EaselSheetReadiness(window: window, isCurrent: { [weak self, weak job] in
+                    guard let self, let job, self.jobs[job.key] === job else { return false }
+                    return self.valid(job)
+                }, ready: { [weak self, weak job] in
+                    guard let self, let job, self.jobs[job.key] === job, let window = job.window else { return }
+                    let dismiss = self.choose(window, format, format.suggestedName(renderer.easel.title), EaselExportLayout(easel: renderer.easel)) { [weak self, weak job] url in
+                        guard let self, let job, self.jobs[job.key] === job else { return }
+                        guard let url else { self.finish(job, cancel: false); return }
+                        guard self.valid(job), url.isFileURL else {
+                            job.destination.store?.message = "Saving was canceled because this canvas or its window changed. Export the current canvas again."
+                            self.finish(job, cancel: false); return
+                        }
+                        _ = self.output.writeAcceptedFile(bytes, to: url, failureMessage: "The requested canvas could not finish saving. Check the destination and try again.")
+                        self.finish(job, cancel: false)
+                    }
+                    if self.jobs[job.key] === job { job.dismiss = dismiss } else { dismiss() }
+                }, canceled: { [weak self, weak job] in
                     guard let self, let job, self.jobs[job.key] === job else { return }
-                    guard let url else { self.finish(job, cancel: false); return }
-                    guard self.valid(job), url.isFileURL else { self.finish(job, cancel: false); return }
-                    _ = self.output.writeAcceptedFile(bytes, to: url, failureMessage: "The requested canvas could not finish saving. Check the destination and try again.")
-                    self.finish(job, cancel: false)
-                }
-                if self.jobs[job.key] === job { job.dismiss = dismiss } else { dismiss() }
+                    job.destination.store?.message = "Canvas export was canceled because its window or content changed, or it waited too long. Try again."
+                    self.finish(job, cancel: true)
+                })
+                job.readiness?.start()
             } catch {
                 guard let self, let job, self.jobs[job.key] === job else { return }
                 if self.valid(job), !(error is CancellationError) { job.destination.store?.message = "Couldn’t export this canvas. " + error.localizedDescription }
@@ -70,13 +85,13 @@ typealias EaselExportChooser = (NSWindow, EaselExportFormat, String, EaselExport
     }
     private func valid(_ job: Job) -> Bool {
         guard let canvas = job.canvas, let window = job.window, canvas.window === window, canvas.isCurrentPresentation,
-              let store = job.destination.store, canvas.store === store, store.focusedID == canvas.tabID,
-              store.existingEaselDrafts?.dirtyTabIDs.contains(canvas.tabID) != true else { return false }
+              let store = job.destination.store, canvas.store === store, store.focusedID == canvas.tabID else { return false }
         return store.isCurrentEaselImageDestination(job.destination)
     }
     private func finish(_ job: Job, cancel: Bool) {
         guard jobs[job.key] === job else { return }
         jobs.removeValue(forKey: job.key); job.worker.cancel()
+        job.readiness?.cancel(); job.readiness = nil
         if let close = job.close { NotificationCenter.default.removeObserver(close); job.close = nil }
         let dismiss = job.dismiss; job.dismiss = nil
         if cancel { dismiss?() }

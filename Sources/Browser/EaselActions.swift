@@ -70,7 +70,7 @@ extension BrowserStore {
     }
 
     @discardableResult func editEasel(in tabID: UUID, expectedRevision: UUID, edits: [EaselEdit], at date: Date = Date()) throws -> Easel {
-        try existingEaselDrafts?.flush(tabID: tabID)
+        try flushEaselBoardDrafts(in: tabID)
         return try commitEaselEdits(in: tabID, expectedRevision: expectedRevision, edits: edits, at: date)
     }
     /// The draft coordinator uses this transaction primitive to avoid recursive flushing.

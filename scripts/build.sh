@@ -102,6 +102,20 @@ run_easel_export_checks() {
     "$MANUAL/easel-export-store-checks"
 }
 if [[ "${1:-}" == "easel-export-test" ]]; then run_easel_export_checks; exit; fi
+run_easel_review_checks() {
+    local review_module="$MANUAL/easel-review" fixture review_status=0
+    mkdir -p "$review_module"
+    # The review cases share the actual application module; compile it once.
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -enable-testing -module-name AlcoveReviewFixtures -emit-module -emit-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" -emit-module-path "$review_module/AlcoveReviewFixtures.swiftmodule" -o "$review_module/libAlcoveReviewFixtures.dylib"
+    { printf '@testable import AlcoveReviewFixtures\n'; cat scripts/PageOutputFixtures.swift; } > "$review_module/PageOutputFixtures.swift"
+    for fixture in EaselReviewDraftChecks EaselReviewHistoryChecks EaselReviewRouteChecks EaselReviewMissingRecoveryChecks EaselReviewExtensionChecks EaselReviewPresentationChecks EaselReviewCaptureRefreshChecks; do
+        { printf '@testable import AlcoveReviewFixtures\n'; cat "scripts/$fixture.swift"; } > "$review_module/$fixture.swift"
+        xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -I "$review_module" -L "$review_module" -lAlcoveReviewFixtures -Xlinker -rpath -Xlinker "$review_module" -Xlinker -rpath -Xlinker "$MANUAL" "$review_module/$fixture.swift" "$review_module/PageOutputFixtures.swift" scripts/OwnedWebsiteStores.swift scripts/OwnedExtensionControllers.swift -o "$review_module/$fixture"
+        "$review_module/$fixture" || review_status=1
+    done
+    return "$review_status"
+}
+if [[ "${1:-}" == "easel-review-test" ]]; then run_easel_review_checks; exit; fi
 run_metadata_cached_retry_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/MetadataCachedRetryChecks.swift -o "$MANUAL/metadata-cached-retry-checks"
     "$MANUAL/metadata-cached-retry-checks"
@@ -540,6 +554,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_easel_canvas_checks
     run_easel_image_checks
     run_easel_export_checks
+    run_easel_review_checks
     run_easel_route_checks
     run_easel_core_checks
     run_bookmark_export_core_checks

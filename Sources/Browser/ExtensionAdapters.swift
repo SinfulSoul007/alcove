@@ -74,6 +74,7 @@ import BrowserCore
                     window.tabKeys = []
                     var pages:[(UUID,Bool,WKWebView?,NativeExtensionTabState)] = []
                     func append(_ id:UUID,_ isPeek:Bool,_ web:WKWebView?,_ title:String,_ url:String,_ pinned:Bool) {
+                        guard !EaselRoute.isNative(url), web?.url.map({ EaselRoute.isNative($0.absoluteString) }) != true else { return }
                         pages.append((id,isPeek,web,NativeExtensionTabState(title:web?.title ?? title,url:web?.url ?? URL(string:url),pinned:pinned,loading:web?.isLoading ?? false,zoom:Double(web?.pageZoom ?? 1),size:web?.bounds.size ?? .zero)))
                     }
                     switch reference.kind {

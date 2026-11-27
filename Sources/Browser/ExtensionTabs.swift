@@ -179,6 +179,7 @@ struct NativeExtensionTabState:Equatable {
         guard let store,host?.authorized(context,profileID:key.profileID,client:store) == true else {return nil}
         if key.isPeek {guard store.peekPages.values.contains(where:{$0.id == key.id && $0.web === web}) else {return nil}}
         else {
+            guard let address = store.tab(key.id)?.url, !EaselRoute.isNative(address) else { return nil }
             guard store.profileID(for:key.id) == (store.isPrivate ? BrowserProfile.defaultID : key.profileID) else {return nil}
             if let group = store.windowGroup, store.quickPage(key.id) == nil, group.extensionPresenter(for: key.id) !== store { return nil }
         }

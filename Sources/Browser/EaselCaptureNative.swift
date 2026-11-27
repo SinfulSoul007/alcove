@@ -47,21 +47,48 @@ extension EaselRaster {
     }
 }
 
-private struct EaselCaptureBoard: Identifiable { let id: UUID, title: String, revision: UUID }
+struct EaselCaptureBoard: Identifiable { let id: UUID, title: String, revision: UUID }
+
+@MainActor final class EaselCapturePreviewState: ObservableObject {
+    private let source: EaselCaptureSource, raster: EaselRaster
+    @Published private(set) var boards: [EaselCaptureBoard]
+    @Published var destination: UUID?
+    @Published var name = "Page capture"
+    @Published var crop = CGRect(x: 0, y: 0, width: 1, height: 1)
+    init(source: EaselCaptureSource, raster: EaselRaster) {
+        self.source = source; self.raster = raster
+        boards = Self.boards(from: source)
+    }
+    private static func boards(from source: EaselCaptureSource) -> [EaselCaptureBoard] {
+        (source.store?.library(for: source.profileID).easels ?? []).map { EaselCaptureBoard(id: $0.id, title: $0.title, revision: $0.revision) }
+    }
+    func refreshDestinations() throws {
+        guard source.isCurrent, let store = source.store else { throw SearchInputError.contextChanged }
+        if let destination { try store.existingEaselDrafts?.flush(easelID: destination, profileID: source.profileID) }
+        guard source.isCurrent else { throw SearchInputError.contextChanged }
+        boards = Self.boards(from: source)
+    }
+    func choice() throws -> EaselCaptureChoice {
+        guard source.isCurrent else { throw SearchInputError.contextChanged }
+        let target: EaselCaptureDestination
+        if let destination {
+            guard let board = boards.first(where: { $0.id == destination }) else { throw EaselError.staleRevision }
+            target = .existing(id: board.id, revision: board.revision)
+        } else { target = .new(title: name) }
+        return EaselCaptureChoice(raster: try raster.cropped(to: crop), destination: target)
+    }
+}
 private struct EaselCapturePreview: View {
     let source: EaselCaptureSource, raster: EaselRaster
     let accept: (EaselCaptureChoice?) throws -> Void
-    private let boards: [EaselCaptureBoard]
+    @StateObject private var draft: EaselCapturePreviewState
     private let preview: NSImage?
     private let previewSize: CGSize
-    @State private var destination: UUID?
-    @State private var name = "Page capture"
-    @State private var crop = CGRect(x: 0, y: 0, width: 1, height: 1)
     @State private var error: String?
     @State private var saving = false
     init(source: EaselCaptureSource, raster: EaselRaster, accept: @escaping (EaselCaptureChoice?) throws -> Void) {
         self.source = source; self.raster = raster; self.accept = accept
-        boards = (source.store?.library(for: source.profileID).easels ?? []).map { EaselCaptureBoard(id: $0.id, title: $0.title, revision: $0.revision) }
+        _draft = StateObject(wrappedValue: EaselCapturePreviewState(source: source, raster: raster))
         if let image = try? raster.thumbnail(maxPixelSize: 1024) { preview = NSImage(cgImage: image, size: NSSize(width: raster.pixelWidth, height: raster.pixelHeight)) } else { preview = nil }
         let scale = min(660 / CGFloat(raster.pixelWidth), 300 / CGFloat(raster.pixelHeight))
         previewSize = CGSize(width: CGFloat(raster.pixelWidth) * scale, height: CGFloat(raster.pixelHeight) * scale)
@@ -77,14 +104,18 @@ private struct EaselCapturePreview: View {
             HStack {
                 Text("Drag over the preview to crop.").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Text("\(max(1, Int(CGFloat(raster.pixelWidth) * crop.width))) × \(max(1, Int(CGFloat(raster.pixelHeight) * crop.height))) px").font(.caption).monospacedDigit()
-                Button("Reset Crop") { crop = CGRect(x: 0, y: 0, width: 1, height: 1) }
+                Text("\(max(1, Int(CGFloat(raster.pixelWidth) * draft.crop.width))) × \(max(1, Int(CGFloat(raster.pixelHeight) * draft.crop.height))) px").font(.caption).monospacedDigit()
+                Button("Reset Crop") { draft.crop = CGRect(x: 0, y: 0, width: 1, height: 1) }
             }
-            Picker("Save to", selection: $destination) {
+            Picker("Save to", selection: $draft.destination) {
                 Text("New Easel").tag(UUID?.none)
-                ForEach(boards) { Text($0.title).tag(Optional($0.id)) }
+                ForEach(draft.boards) { Text($0.title).tag(Optional($0.id)) }
             }
-            if destination == nil { TextField("Easel name", text: $name).textFieldStyle(.roundedBorder) }
+            if draft.destination == nil { TextField("Easel name", text: $draft.name).textFieldStyle(.roundedBorder) }
+            Button("Refresh Destinations") {
+                do { try draft.refreshDestinations(); error = nil }
+                catch { self.error = error.localizedDescription }
+            }.controlSize(.small).disabled(saving)
             if let error { Text(error).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
             Spacer(minLength: 0)
             HStack {
@@ -99,22 +130,19 @@ private struct EaselCapturePreview: View {
             if let preview { Image(nsImage: preview).resizable().frame(width: previewSize.width, height: previewSize.height) }
             Rectangle().fill(.black.opacity(0.2))
             Rectangle().stroke(.white, lineWidth: 2)
-                .frame(width: previewSize.width * crop.width, height: previewSize.height * crop.height)
-                .offset(x: previewSize.width * crop.minX, y: previewSize.height * crop.minY)
+                .frame(width: previewSize.width * draft.crop.width, height: previewSize.height * draft.crop.height)
+                .offset(x: previewSize.width * draft.crop.minX, y: previewSize.height * draft.crop.minY)
         }.frame(width: previewSize.width, height: previewSize.height).clipped().contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 3).onChanged { value in
                 func point(_ p: CGPoint) -> CGPoint { CGPoint(x: min(1, max(0, p.x / previewSize.width)), y: min(1, max(0, p.y / previewSize.height))) }
                 let a = point(value.startLocation), b = point(value.location)
                 let rect = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
-                if rect.width * CGFloat(raster.pixelWidth) >= 1, rect.height * CGFloat(raster.pixelHeight) >= 1 { crop = rect }
+                if rect.width * CGFloat(raster.pixelWidth) >= 1, rect.height * CGFloat(raster.pixelHeight) >= 1 { draft.crop = rect }
             }).accessibilityLabel("Page capture preview. Use Reset Crop to keep the whole page.")
     }
     private func save() {
         saving = true; error = nil
-        let destination: EaselCaptureDestination
-        if let id = self.destination, let board = boards.first(where: { $0.id == id }) { destination = .existing(id: board.id, revision: board.revision) }
-        else { destination = .new(title: name) }
-        do { try accept(EaselCaptureChoice(raster: raster.cropped(to: crop), destination: destination)) }
+        do { try accept(try draft.choice()) }
         catch { self.error = error.localizedDescription; saving = false }
     }
 }

@@ -6,6 +6,8 @@ struct EaselDraftRecovery: View {
     @ObservedObject var store: BrowserStore
     @ObservedObject private var drafts: EaselDraftCoordinator
     @State private var pendingDiscard: EaselDraftState?
+    @State private var pendingRecovery: EaselDraftState?
+    @State private var recoveryTitle = "Recovered Easel"
     init(store: BrowserStore) {
         self.store = store; self.drafts = store.easelDrafts
     }
@@ -24,14 +26,15 @@ struct EaselDraftRecovery: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 HStack {
                                     Button("Copy Draft") {
-                                        guard let current = drafts.state(for: draft.key) else { return }
+                                        guard let current = drafts.recoveryState(draft, from: store) else { return }
                                         NSPasteboard.general.clearContents()
                                         NSPasteboard.general.setString(current.text, forType: .string)
                                     }
-                                    Button("Save as New Note") {
-                                        do { _ = try drafts.saveAsNewNote(draft) } catch { store.message = error.localizedDescription }
+                                    Button(store.easelContext(for: draft.key.tabID) == nil ? "Save in New Easel" : "Save as New Note") {
+                                        if store.easelContext(for: draft.key.tabID) == nil { recoveryTitle = "Recovered Easel"; pendingRecovery = draft }
+                                        else { do { _ = try drafts.saveAsNewNote(draft, from: store) } catch { store.message = error.localizedDescription } }
                                     }.disabled(!store.canModifyLocalMetadata)
-                                    Button("Retry") { drafts.retry(draft) }.disabled(!store.canModifyLocalMetadata)
+                                    Button("Retry") { drafts.retry(draft, from: store) }.disabled(!store.canModifyLocalMetadata)
                                     Button("Discard Draft", role: .destructive) { pendingDiscard = draft }
                                 }.controlSize(.small)
                             }
@@ -44,7 +47,7 @@ struct EaselDraftRecovery: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14)).shadow(radius: 10).padding(24)
                     .confirmationDialog("Discard this unsaved note draft?", isPresented: Binding(get: { pendingDiscard != nil }, set: { if !$0 { pendingDiscard = nil } })) {
                         Button("Discard Draft", role: .destructive) {
-                            if let pendingDiscard { drafts.discard(pendingDiscard) }
+                            if let pendingDiscard { drafts.discard(pendingDiscard, from: store) }
                             pendingDiscard = nil
                         }
                         Button("Keep Draft", role: .cancel) { pendingDiscard = nil }
@@ -53,5 +56,16 @@ struct EaselDraftRecovery: View {
                 BrowserStatusBanner(store: store, message: message).shadow(radius: 10).padding(24)
             }
         }.frame(maxWidth: .infinity)
+            .alert("Recover your note in a new Easel", isPresented: Binding(get: { pendingRecovery != nil }, set: { if !$0 { pendingRecovery = nil } })) {
+                TextField("Easel name", text: $recoveryTitle)
+                Button("Save Note") {
+                    if let pendingRecovery {
+                        do { _ = try drafts.saveAsNewNote(pendingRecovery, from: store, recoveredTitle: recoveryTitle) }
+                        catch { store.message = error.localizedDescription }
+                    }
+                    pendingRecovery = nil
+                }
+                Button("Cancel", role: .cancel) { pendingRecovery = nil }
+            } message: { Text("Your original canvas is unavailable. This creates a new canvas in the same profile and keeps the complete note.") }
     }
 }
