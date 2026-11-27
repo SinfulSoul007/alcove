@@ -8,8 +8,20 @@ fi
 ARCH="${BROWSER_ARCH:-$(uname -m)}"
 OUT="${BROWSER_OUTPUT:-build/Alcove.app}"
 MANUAL="$PWD/.build/manual/$ARCH"
-FLAGS=(-sdk "$SDK" -module-cache-path "$PWD/.build/cache" -target "$ARCH-apple-macosx14.0")
+BASE_FLAGS=(-sdk "$SDK" -module-cache-path "$PWD/.build/cache" -target "$ARCH-apple-macosx14.0")
+FLAGS=("${BASE_FLAGS[@]}")
 mkdir -p "$MANUAL" "$OUT/Contents/MacOS"
+# Match the SDK's actual Foundation callback types rather than its version name.
+AUTH_PROBE=("${FLAGS[@]}" -warnings-as-errors -typecheck Sources/Browser/ExtensionAuthenticationCallback.swift scripts/ExtensionAuthenticationCallbackProbe.swift)
+if xcrun swiftc "${AUTH_PROBE[@]}" > "$MANUAL/auth-callback-modern.log" 2>&1; then
+    printf 'Foundation authentication callbacks: Sendable\n'
+elif xcrun swiftc "${AUTH_PROBE[@]}" -D ALCOVE_AUTH_CALLBACK_MAIN_ACTOR > "$MANUAL/auth-callback-main-actor.log" 2>&1; then
+    FLAGS+=(-D ALCOVE_AUTH_CALLBACK_MAIN_ACTOR)
+    printf 'Foundation authentication callbacks: MainActor Sendable\n'
+else
+    cat "$MANUAL/auth-callback-modern.log" "$MANUAL/auth-callback-main-actor.log"
+    exit 1
+fi
 python3 scripts/refresh-website-protection.py --verify Resources/WebsiteProtection
 mkdir -p "$MANUAL/ReaderAssets"
 cp Sources/Browser/ReaderAssets/* "$MANUAL/ReaderAssets/"
@@ -282,7 +294,13 @@ run_website_protection_surface_checks() {
 }
 if [[ "${1:-}" == "website-protection-surface-test" ]]; then run_website_protection_surface_checks; exit; fi
 run_extension_download_checks() {
-    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/ExtensionStoreDownload.swift scripts/ExtensionDownloadChecks.swift scripts/ExtensionZIPChecks.swift scripts/ExtensionCRXChecks.swift -o "$MANUAL/extension-download-checks"
+    for mode in modern main-actor; do
+        local callback_flags=("${BASE_FLAGS[@]}")
+        [[ "$mode" != main-actor ]] || callback_flags+=(-D ALCOVE_AUTH_CALLBACK_MAIN_ACTOR)
+        xcrun swiftc "${callback_flags[@]}" -parse-as-library -warnings-as-errors Sources/Browser/ExtensionAuthenticationCallback.swift scripts/ExtensionAuthenticationCallbackChecks.swift -o "$MANUAL/auth-callback-$mode-checks"
+        "$MANUAL/auth-callback-$mode-checks"
+    done
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/ExtensionAuthenticationCallback.swift Sources/Browser/ExtensionStoreDownload.swift scripts/ExtensionDownloadChecks.swift scripts/ExtensionZIPChecks.swift scripts/ExtensionCRXChecks.swift -o "$MANUAL/extension-download-checks"
     "$MANUAL/extension-download-checks"
 }
 if [[ "${1:-}" == "extension-download-test" ]]; then run_extension_download_checks; exit; fi
