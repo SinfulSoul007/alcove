@@ -89,11 +89,147 @@ import BrowserCore
               "All focus changes preserve unsaved input and the exact loaded document")
         window.close(); await settle()
         check(owner.isClosed && store.isShuttingDown, "Owned focus fixtures release their private browser owner")
+        try await actualMenuKeyboardChecks()
     }
 }
 @main struct QuickBrowseFocusChecks {
     @MainActor static func main() {
         let app = NSApplication.shared; app.setActivationPolicy(.regular)
         let runner = QuickFocusRunner(); app.delegate = runner; app.run()
+    }
+}
+
+import AppKit
+import ScreenCaptureKit
+import CryptoKit
+
+private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
+    let description: String
+}
+
+@MainActor private enum NativeOwnedWindowCapture {
+    static func capture(_ window: NSWindow, kind: String, directory: String) async throws {
+        guard CGPreflightScreenCaptureAccess() else {
+            print("OWNED_WINDOW_CAPTURE_ENVIRONMENT_UNAVAILABLE screenRecordingNotAlreadyGranted")
+            throw OwnedWindowCaptureError(description: "Owned-window capture needs an existing Screen Recording grant; no permission was requested or changed")
+        }
+        guard window.isVisible, window.windowNumber > 0 else {
+            throw OwnedWindowCaptureError(description: "The owned native window is not visible")
+        }
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        let pid = ProcessInfo.processInfo.processIdentifier
+        guard let owned = content.windows.first(where: {
+            $0.windowID == CGWindowID(window.windowNumber) && $0.owningApplication?.processID == pid
+        }) else {
+            throw OwnedWindowCaptureError(description: "The exact owned window is unavailable to the OS compositor")
+        }
+        let configuration = SCStreamConfiguration()
+        configuration.width = Int(owned.frame.width.rounded(.up))
+        configuration.height = Int(owned.frame.height.rounded(.up))
+        configuration.showsCursor = false
+        let image = try await SCScreenshotManager.captureImage(
+            contentFilter: SCContentFilter(desktopIndependentWindow: owned), configuration: configuration)
+        guard image.width >= 400, image.height >= 300,
+              let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+            throw OwnedWindowCaptureError(description: "The OS compositor did not return a usable owned-window image")
+        }
+        let root = URL(fileURLWithPath: directory, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let name = kind + "-window.png"
+        try png.write(to: root.appendingPathComponent(name), options: .atomic)
+        let record: [String: Any] = ["method": "SCScreenshotManager.desktopIndependentWindow",
+            "case": kind, "ownedProcessID": pid, "ownedWindowID": owned.windowID,
+            "width": image.width, "height": image.height,
+            "sha256": SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined(),
+            "screenRecordingAlreadyGranted": true]
+        try JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted, .sortedKeys])
+            .write(to: root.appendingPathComponent(kind + "-window.json"), options: .atomic)
+        print("OWNED_WINDOW_CAPTURE_COMPLETE", kind, image.width, image.height)
+    }
+}
+
+extension QuickFocusRunner {
+    func postKey(_ window: NSWindow, _ key: String, code: UInt16, flags: NSEvent.ModifierFlags = []) throws {
+        guard window.isKeyWindow, window.isVisible else { throw SetupFailure.notReady }
+        for type in [NSEvent.EventType.keyDown, .keyUp] {
+            guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags,
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, characters: key, charactersIgnoringModifiers: key,
+                isARepeat: false, keyCode: code) else { throw SetupFailure.notReady }
+            NSApp.postEvent(event, atStart: false)
+        }
+    }
+    func captureQuick(_ window: NSWindow, _ name: String) async throws {
+        guard let directory = ProcessInfo.processInfo.environment["ALCOVE_OWNED_WINDOW_CAPTURE_DIR"] else {
+            throw SetupFailure.notReady
+        }
+        try await NativeOwnedWindowCapture.capture(window, kind: name, directory: directory)
+    }
+    func actualMenuKeyboardChecks() async throws {
+        let delegate = AppDelegate()
+        let store = BrowserStore(isPrivate: true)
+        var appearance = store.appearance; appearance.animationsEnabled = false; appearance.showFavicons = false; store.appearance = appearance
+        let owner = delegate.makeOwner(store)
+        let id = try store.openQuickPage(url: URL(string: "about:blank")!)
+        delegate.syncQuickWindows(owner)
+        guard let controller = delegate.quickWindows[QuickWindowKey(ownerID: owner.id, pageID: id)],
+              let window = controller.window else { throw SetupFailure.notReady }
+        let web = store.view(for: id)
+        web.loadHTMLString("<html><meta name='color-scheme' content='light dark'><style>body{font:18px system-ui;padding:24px;background:#e7eff5;color:#142638}input{font:16px system-ui}</style><h1>Owned Quick Browse page</h1><input id='draft' value='unsaved Quick Browse draft'><p>needle belongs to this page.</p></html>", baseURL: nil)
+        for _ in 0..<200 {
+            if (try? await web.evaluateJavaScript("document.getElementById('draft')?.value") as? String) == "unsaved Quick Browse draft" { break }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        guard (try? await web.evaluateJavaScript("document.getElementById('draft')?.value") as? String) == "unsaved Quick Browse draft" else { throw SetupFailure.notReady }
+        _ = try await web.evaluateJavaScript("window.quickKeyboardToken=9472")
+        delegate.buildMenu(); controller.surface(); await settle()
+        _ = window.makeFirstResponder(web); await settle()
+        for attempt in 1...3 {
+            try postKey(window, "l", code: 37, flags: .command); await settle()
+            check(controller.state.isEditingAddress && focused(window, field(window, "Search or enter a URL"), selected: "about:blank"),
+                  "Actual menu Cmd-L request \(attempt) selects the visible Quick Browse location")
+        }
+        try await captureQuick(window, "quick-location-selected")
+        try postKey(window, "x", code: 7); await settle()
+        check(controller.state.addressText == "x" && field(window, "Search or enter a URL")?.currentEditor()?.string == "x",
+              "Typing after actual Cmd-L replaces the selected URL in the retained editor")
+        try postKey(window, "\u{1b}", code: 53); await settle()
+        check(!controller.state.isEditingAddress && controller.activeWebView === web,
+              "Actual Escape cancels the typed location without replacing the live page")
+        try await captureQuick(window, "quick-location-cancelled")
+
+        try postKey(window, "f", code: 3, flags: .command); await settle()
+        check(controller.state.findVisible && focused(window, field(window, "Find in page")),
+              "Actual menu Cmd-F focuses Quick Browse Find")
+        for (key, code) in [("n", UInt16(45)), ("e", 14), ("e", 14), ("d", 2), ("l", 37), ("e", 14)] {
+            try postKey(window, key, code: code)
+        }
+        await settle()
+        check(controller.state.findText == "needle", "Actual Find typing reaches the native query editor")
+        try await captureQuick(window, "quick-find-query")
+        try postKey(window, "l", code: 37, flags: .command); await settle()
+        check(!controller.state.findVisible && controller.state.isEditingAddress && focused(window, field(window, "Search or enter a URL"), selected: "about:blank"),
+              "Actual Cmd-L moves from Find to the selected location")
+        let draft = try await web.evaluateJavaScript("document.getElementById('draft').value") as? String
+        let token = try await web.evaluateJavaScript("window.quickKeyboardToken") as? Int
+        check(draft == "unsaved Quick Browse draft" && token == 9472 && controller.activeWebView === web,
+              "Real menu shortcuts and typing preserve the exact website and unsaved form")
+
+        let otherID = try store.openQuickPage()
+        delegate.syncQuickWindows(owner)
+        guard let other = delegate.quickWindows[QuickWindowKey(ownerID: owner.id, pageID: otherID)],
+              let otherWindow = other.window else { throw SetupFailure.notReady }
+        other.surface(); await settle()
+        check(other.state.isEditingAddress && focused(otherWindow, field(otherWindow, "Search or enter a URL")),
+              "A real second blank Quick Browse window begins with a focused location")
+        try await captureQuick(otherWindow, "quick-blank-location")
+        try postKey(otherWindow, "w", code: 13, flags: .command); await settle()
+        check(store.quickPage(otherID) == nil && !otherWindow.isVisible && window.isVisible && !owner.isClosed,
+              "Actual Cmd-W closes only its Quick Browse window and preserves the other window")
+        controller.surface(); await settle()
+        try postKey(window, "w", code: 13, flags: .command); await settle()
+        check(!window.isVisible && owner.isClosed && store.isShuttingDown && NSApp.isRunning,
+              "Actual Cmd-W on the final compact window closes its owner while the application keeps running")
+        NSApp.mainMenu = nil; NSApp.windowsMenu = nil
     }
 }

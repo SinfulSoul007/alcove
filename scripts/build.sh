@@ -493,7 +493,7 @@ fi
 # Explicit GUI mode; never enter native windows during the default CI suite.
 if [[ "${1:-}" == "quick-focus-test" ]]; then
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/QuickBrowseFocusChecks.swift -o "$MANUAL/quick-focus-checks"
-    "$MANUAL/quick-focus-checks"
+    if [[ "${ALCOVE_QUICK_FOCUS_COMPILE_ONLY:-0}" != 1 ]]; then "$MANUAL/quick-focus-checks"; fi
     exit
 fi
 if [[ "${1:-}" == "quick-native-test" ]]; then
