@@ -87,7 +87,13 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p .build/fullscreen
-          caffeinate -is python3 scripts/fullscreen/run-native.py 2>&1 | tee .build/fullscreen/native.log
+          caffeinate -is python3 - <<'PYTHON' 2>&1 | tee .build/fullscreen/native.log
+          import os,subprocess
+          environment = dict(os.environ)
+          environment.pop('ALCOVE_OWNED_WINDOW_CAPTURE_DIR', None)
+          print('QUICK_CAPTURE_ENVIRONMENT_ABSENT', 'ALCOVE_OWNED_WINDOW_CAPTURE_DIR' not in environment, flush=True)
+          subprocess.run(['bash','scripts/build.sh','quick-focus-test'], env=environment, check=True, timeout=1200)
+          PYTHON
       - name: Preserve the native command result before regression groups
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
