@@ -10,8 +10,13 @@ import BrowserCore
 struct EaselCanvasExport: Sendable {
     let easel: Easel
     let assets: EaselAssetStore
+    let background: ThemeColor?
+    init(easel: Easel, assets: EaselAssetStore, background: ThemeColor? = nil) {
+        self.easel = easel; self.assets = assets
+        self.background = background.map { ThemeColor($0.red, $0.green, $0.blue) }
+    }
     func html() throws -> Data {
-        try EaselHTMLExport(easel: easel, pngForAsset: { id in
+        try EaselHTMLExport(easel: easel, background: background, pngForAsset: { id in
             try autoreleasepool {
                 guard let bytes = try assets.read(id) else { throw EaselExportError.invalidImage }
                 let raster = try EaselRaster(data: bytes), image = try raster.exportThumbnail(maxPixelSize: 4096)
@@ -30,7 +35,8 @@ struct EaselCanvasExport: Sendable {
         let layout = EaselExportLayout(easel: easel)
         guard let context = CGContext(data: nil, width: layout.pixelWidth, height: layout.pixelHeight, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw EaselExportError.tooLarge }
-        context.setFillColor(CGColor(red: 0.973, green: 0.977, blue: 0.985, alpha: 1))
+        let paper = background ?? ThemeColor(0.973, 0.977, 0.985)
+        context.setFillColor(CGColor(red: paper.red, green: paper.green, blue: paper.blue, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: layout.pixelWidth, height: layout.pixelHeight))
         context.translateBy(x: 0, y: CGFloat(layout.pixelHeight)); context.scaleBy(x: layout.scale, y: -layout.scale)
         context.translateBy(x: -layout.originX, y: -layout.originY)
@@ -38,6 +44,10 @@ struct EaselCanvasExport: Sendable {
             try Task.checkCancellation()
             try autoreleasepool {
                 let f = item.frame, rect = CGRect(x: f.x, y: f.y, width: f.width, height: f.height)
+                if case .drawing(let drawing) = item.content {
+                    EaselDrawingRenderer.draw(drawing, in: rect, context: context)
+                    return
+                }
                 let path = CGPath(roundedRect: rect.insetBy(dx: 1.5, dy: 1.5), cornerWidth: 12, cornerHeight: 12, transform: nil)
                 context.addPath(path); context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fillPath()
                 context.addPath(path); context.setStrokeColor(CGColor(gray: 0.82, alpha: 1)); context.setLineWidth(1); context.strokePath()
@@ -47,6 +57,7 @@ struct EaselCanvasExport: Sendable {
                 switch item.content {
                 case .note(let text): Self.draw(text, in: textRect, size: 14, context: context)
                 case .link(let title, let url): Self.draw("↗ " + title + "\n" + url, in: textRect, size: 14, context: context, link: true)
+                case .drawing: break // Drawing layers are handled before any card fill or clipping.
                 case .image(let id, _, _, let source, let title):
                     guard let bytes = try assets.read(id) else { throw EaselExportError.invalidImage }
                     let raster = try EaselRaster(data: bytes)

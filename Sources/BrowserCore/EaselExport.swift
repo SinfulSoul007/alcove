@@ -32,7 +32,7 @@ public enum EaselExportError: LocalizedError {
 /// formatter embeds only data URLs and escaped text; no page code is exported.
 public struct EaselHTMLExport: Sendable {
     public let data: Data
-    public init(easel: Easel, pngForAsset: (UUID) throws -> Data) throws {
+    public init(easel: Easel, background: ThemeColor? = nil, pngForAsset: (UUID) throws -> Data) throws {
         let maximum = 128 * 1024 * 1024
         var output = Data(), images: [UUID: String] = [:]
         func escaped(_ text: String) -> String {
@@ -48,17 +48,24 @@ public struct EaselHTMLExport: Sendable {
             "<a href=\"" + escaped(url) + "\" target=\"_blank\" rel=\"noopener noreferrer\">" + escaped(title) + "</a>"
         }
         let layout = EaselExportLayout(easel: easel)
+        let backgroundRule = background.map { value -> String in
+            let color = ThemeColor(value.red, value.green, value.blue)
+            return "body,main{background:rgb(\(Int((color.red * 255).rounded())),\(Int((color.green * 255).rounded())),\(Int((color.blue * 255).rounded())))}"
+        } ?? ""
         try append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
         try append("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; object-src 'none'\">")
-        try append("<title>" + escaped(easel.title) + "</title><style>body{margin:0;background:#eceef2;color:#18212b;font:14px -apple-system,BlinkMacSystemFont,sans-serif;color-scheme:light}header{padding:24px;font-size:22px;font-weight:600}main{position:relative;background:#f8f9fb;margin:0 24px 24px;border-radius:16px}.card{position:absolute;box-sizing:border-box;border:1px solid #d5dae0;border-radius:12px;background:white;padding:14px;overflow:auto;white-space:pre-wrap;unicode-bidi:plaintext;line-height:1.4}.image{display:block;width:100%;height:calc(100% - 24px);object-fit:contain}.source{font-size:11px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}a{color:#245c88}</style></head><body>")
+        try append("<title>" + escaped(easel.title) + "</title><style>body{margin:0;background:#eceef2;color:#18212b;font:14px -apple-system,BlinkMacSystemFont,sans-serif;color-scheme:light}header{padding:24px;font-size:22px;font-weight:600}main{position:relative;background:#f8f9fb;margin:0 24px 24px;border-radius:16px}.card{position:absolute;box-sizing:border-box;border:1px solid #d5dae0;border-radius:12px;background:white;padding:14px;overflow:auto;white-space:pre-wrap;unicode-bidi:plaintext;line-height:1.4}.drawing{border:0;background:none;padding:0;overflow:hidden}.drawing>svg{display:block;width:100%;height:100%}.image{display:block;width:100%;height:calc(100% - 24px);object-fit:contain}.source{font-size:11px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}a{color:#245c88}\(backgroundRule)</style></head><body>")
         try append("<header>" + escaped(easel.title) + "</header><main aria-label=\"Canvas\" style=\"width:\(layout.width)px;height:\(layout.height)px\">")
         for item in easel.items {
             try Task.checkCancellation()
             let f = item.frame
-            try append("<section class=\"card\" dir=\"auto\" style=\"left:\(f.x - layout.originX)px;top:\(f.y - layout.originY)px;width:\(f.width)px;height:\(f.height)px\">")
+            let cardClass: String
+            if case .drawing = item.content { cardClass = "card drawing" } else { cardClass = "card" }
+            try append("<section class=\"\(cardClass)\" dir=\"auto\" style=\"left:\(f.x - layout.originX)px;top:\(f.y - layout.originY)px;width:\(f.width)px;height:\(f.height)px\">")
             switch item.content {
             case .note(let text): try append(escaped(text))
             case .link(let title, let url): try append(link(title, url))
+            case .drawing(let drawing): try append(EaselDrawingSVG.markup(for: drawing))
             case .image(let id, _, _, let url, let title):
                 let encoded: String
                 if let existing = images[id] { encoded = existing }

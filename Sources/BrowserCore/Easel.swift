@@ -38,6 +38,7 @@ public enum EaselItemContent: Codable, Equatable, Sendable {
     case note(text: String)
     case link(title: String, url: String)
     case image(assetID: UUID, pixelWidth: Int, pixelHeight: Int, sourceURL: String?, sourceTitle: String?)
+    case drawing(EaselDrawing)
 
     private static func validTitle(_ title: String) -> Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && title.utf8.count <= 256
@@ -57,6 +58,7 @@ public enum EaselItemContent: Codable, Equatable, Sendable {
         case .image(_, let width, let height, let url, let title):
             guard (1...16384).contains(width), (1...16384).contains(height), width * height <= 40_000_000,
                   url.map(Self.validURL) ?? true, title.map(Self.validTitle) ?? true else { throw EaselError.invalidContent }
+        case .drawing: break // Immutable drawing values validate at construction and decode.
         }
     }
 }
@@ -99,9 +101,20 @@ public struct Easel: Codable, Equatable, Identifiable, Sendable {
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        var input = try c.nestedUnkeyedContainer(forKey: .items)
+        var items: [EaselItem] = [], drawingPoints = 0
+        while !input.isAtEnd {
+            guard items.count < 500 else { throw EaselError.tooManyItems }
+            let item = try input.decode(EaselItem.self)
+            if case .drawing(let drawing) = item.content {
+                guard drawing.points.count <= 65536 - drawingPoints else { throw EaselError.invalidContent }
+                drawingPoints += drawing.points.count
+            }
+            items.append(item)
+        }
         try self.init(id: c.decode(UUID.self, forKey: .id), title: c.decode(String.self, forKey: .title),
                       createdAt: c.decode(Date.self, forKey: .createdAt), modifiedAt: c.decode(Date.self, forKey: .modifiedAt),
-                      revision: c.decode(UUID.self, forKey: .revision), items: c.decode([EaselItem].self, forKey: .items))
+                      revision: c.decode(UUID.self, forKey: .revision), items: items)
         recoveredFromID = try c.decodeIfPresent(UUID.self, forKey: .recoveredFromID)
     }
     private static func cleanTitle(_ title: String) throws -> String {
@@ -114,6 +127,10 @@ public struct Easel: Codable, Equatable, Identifiable, Sendable {
               modifiedAt >= createdAt else { throw EaselError.invalidDate }
         guard items.count <= 500 else { throw EaselError.tooManyItems }
         guard Set(items.map(\.id)).count == items.count else { throw EaselError.duplicateItem }
+        let drawingPoints = items.reduce(0) { count, item in
+            if case .drawing(let drawing) = item.content { return count + drawing.points.count }; return count
+        }
+        guard drawingPoints <= 65536 else { throw EaselError.invalidContent }
     }
 
     public mutating func apply(_ edit: EaselEdit, expectedRevision: UUID, at date: Date = Date()) throws {

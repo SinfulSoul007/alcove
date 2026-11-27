@@ -27,6 +27,8 @@ run_easel_core_checks() {
 run_easel_drawing_core_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselDrawingCoreChecks.swift -o "$MANUAL/easel-drawing-core-checks"
     "$MANUAL/easel-drawing-core-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselDrawingDocumentChecks.swift -o "$MANUAL/easel-drawing-document-checks"
+    "$MANUAL/easel-drawing-document-checks"
 }
 if [[ "${ALCOVE_EASEL_DRAWING_CORE_ONLY:-0}" == 1 ]]; then run_easel_core_checks; run_easel_drawing_core_checks; exit; fi
 if [[ "${ALCOVE_EASEL_CORE_ONLY:-0}" == 1 ]]; then run_easel_core_checks; exit; fi
@@ -47,6 +49,13 @@ run_bookmark_export_core_checks() {
 if [[ "${1:-}" == "bookmark-export-core-test" ]]; then run_bookmark_export_core_checks; exit; fi
 STORE_SOURCES=()
 for source in Sources/Browser/*.swift; do [[ "$source" == "Sources/Browser/main.swift" ]] || STORE_SOURCES+=("$source"); done
+run_easel_drawing_native_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" Sources/Browser/EaselDrawingRenderer.swift scripts/EaselDrawingRendererChecks.swift -o "$MANUAL/easel-drawing-renderer-checks"
+    "$MANUAL/easel-drawing-renderer-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/EaselDrawingNativeChecks.swift -o "$MANUAL/easel-drawing-native-checks"
+    "$MANUAL/easel-drawing-native-checks"
+}
+if [[ "${1:-}" == "easel-drawing-test" ]]; then run_easel_core_checks; run_easel_drawing_core_checks; run_easel_drawing_native_checks; exit; fi
 run_easel_tab_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/EaselTabChecks.swift -o "$MANUAL/easel-tab-checks"
     "$MANUAL/easel-tab-checks"
@@ -558,6 +567,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_easel_route_checks
     run_easel_core_checks
     run_easel_drawing_core_checks
+    run_easel_drawing_native_checks
     run_bookmark_export_core_checks
     run_bookmark_export_store_checks
     run_reader_load_checks

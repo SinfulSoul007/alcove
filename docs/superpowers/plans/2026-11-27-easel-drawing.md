@@ -44,6 +44,8 @@
 
 **Interfaces:** Add `EaselItemContent.drawing(EaselDrawing)`, enforce aggregate point budget atomically, metadata format10. Native renderer consumes Task1 path commands and logical-to-item transform. Drawing card is transparent, supports existing selection/resize/layer/history and path hit testing. HTML emits generated SVG from the same path commands.
 
+Export background uses the existing Sendable `ThemeColor`: `EaselCanvasExport(easel:assets:background:)` and `EaselHTMLExport(easel:background:pngForAsset:)` accept an optional value defaulting to existing paper. The export controller snapshots the visible canvas color before its worker starts. White-ink/dark-paper PNG pixels and actual WebKit background are required cases.
+
 - [ ] Write RED checks for drawing document roundtrip/encrypted and private persistence, point-budget rollback, format9 migration/newer-reader refusal, transparent real rendered pixels, thin/dot/reversed/resized paths, stacked hit testing and inert offline HTML/PNG including opacity/layer order.
 - [ ] Implement integration and renderer/export without exposing tools yet. Compile every exhaustive content switch. Run new checks and existing model/assets/editor/export/ownership regressions on current sources; native work only VM/CI. Commit and task-done.
 

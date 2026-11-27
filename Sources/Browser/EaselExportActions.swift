@@ -40,7 +40,9 @@ typealias EaselExportChooser = (NSWindow, EaselExportFormat, String, EaselExport
         do {
             destination = try store.easelImageDestination(for: canvas.tabID)
             guard let board = store.easelContext(for: canvas.tabID)?.easel else { throw EaselActionError.missing }
-            renderer = EaselCanvasExport(easel: board, assets: try store.easelAssets(for: destination.profileID))
+            guard let paper = canvas.canvas.background.usingColorSpace(.sRGB) else { throw EaselExportError.invalidImage }
+            renderer = EaselCanvasExport(easel: board, assets: try store.easelAssets(for: destination.profileID),
+                                         background: ThemeColor(paper.redComponent, paper.greenComponent, paper.blueComponent))
         } catch { store.message = "Couldn’t prepare this canvas. " + error.localizedDescription; return false }
         let worker = Task.detached(priority: .userInitiated) { try format == .png ? renderer.png() : renderer.html() }
         let job = Job(canvas: canvas, window: window, destination: destination, worker: worker)

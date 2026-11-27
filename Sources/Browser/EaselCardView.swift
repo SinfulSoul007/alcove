@@ -39,12 +39,13 @@ import BrowserCore
     private let resizeHandle = EaselGestureHandle(resizing: true)
     private var linkButton: NSButton?
     private var linkURL: String?
+    private var drawing: EaselDrawing?
     private var savedItem: EaselItem
     private var lastSubmittedText: String?
     private var resettingDraft = false
     private var retiredEditor = false
     var accent: NSColor = .controlAccentColor { didSet { needsDisplay = true } }
-    var isSelected = false { didSet { needsDisplay = true } }
+    var isSelected = false { didSet { updateDrawingHandles(); needsDisplay = true } }
     private var draftKey: EaselDraftKey?
     override var isFlipped: Bool { true }
     init(item: EaselItem, owner: EaselCanvasView) {
@@ -79,6 +80,7 @@ import BrowserCore
             let source = NSButton(title: "", target: self, action: #selector(openImageSource))
             source.isBordered = false; source.alignment = .left; source.lineBreakMode = .byTruncatingTail
             source.font = .systemFont(ofSize: 11); imageSource = source; addSubview(source)
+        case .drawing(let value): drawing = value; updateDrawingHandles()
         }
         update(item, updateFrame: true)
     }
@@ -88,6 +90,7 @@ import BrowserCore
         case .note: return noteView != nil
         case .link: return linkButton != nil
         case .image: return imageContent != nil
+        case .drawing: return drawing != nil
         }
     }
     private var isCurrentScope: Bool {
@@ -127,6 +130,9 @@ import BrowserCore
             imageSource?.toolTip = url; imageSource?.isHidden = url == nil
             imageSource?.setAccessibilityLabel(title ?? "Open image source")
             setAccessibilityLabel(title.map { "Image from " + $0 } ?? "Image card")
+        case .drawing(let value):
+            drawing = value; savedItem = item; updateDrawingHandles()
+            setAccessibilityLabel(value.kind.rawValue.capitalized + " drawing")
         }
         needsLayout = true; needsDisplay = true
     }
@@ -141,9 +147,29 @@ import BrowserCore
         if let noteView { noteView.setFrameSize(NSSize(width: max(1, textScroll.contentSize.width), height: max(noteView.frame.height, textScroll.contentSize.height))) }
     }
     override func draw(_ dirtyRect: NSRect) {
+        if let drawing {
+            if let context = NSGraphicsContext.current?.cgContext { EaselDrawingRenderer.draw(drawing, in: bounds, context: context) }
+            if isSelected {
+                accent.setStroke(); let outline = NSBezierPath(rect: bounds.insetBy(dx: 1, dy: 1))
+                outline.lineWidth = 1; outline.setLineDash([4, 4], count: 2, phase: 0); outline.stroke()
+            }
+            return
+        }
         NSColor.controlBackgroundColor.withAlphaComponent(0.96).setFill()
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.5, dy: 1.5), xRadius: 12, yRadius: 12); shape.fill()
         (isSelected ? accent : NSColor.separatorColor).setStroke(); shape.lineWidth = isSelected ? 2 : 1; shape.stroke()
+    }
+    private func updateDrawingHandles() {
+        guard drawing != nil else { return }
+        dragHandle.isHidden = !isSelected; resizeHandle.isHidden = !isSelected
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        guard let drawing else { return hit }
+        let local = convert(point, from: superview)
+        if isSelected && (dragHandle.frame.contains(local) || resizeHandle.frame.contains(local)) { return hit }
+        let tolerance = 6 / max(0.25, owner?.magnification ?? 1)
+        return EaselDrawingRenderer.contains(drawing, point: local, in: bounds, tolerance: tolerance) ? self : nil
     }
     override func mouseDown(with event: NSEvent) { owner?.activate(); owner?.select(itemID, extending: event.modifierFlags.contains(.shift)); window?.makeFirstResponder(owner?.canvas) }
     func textDidBeginEditing(_ notification: Notification) { if isCurrent { owner?.select(itemID) } }
