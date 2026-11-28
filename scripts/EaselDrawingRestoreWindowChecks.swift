@@ -235,6 +235,7 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
         let recoveredFullBoard = reopened.library.easels?.first { $0.id != fullBoard.id }
         check(escapedFull && reopened.easelContext(for: tab)?.easel == fullBoard && recoveredFullBoard?.items.count == 1 && recoveredFullBoard?.items.first?.frame == fullMark.frame && recoveredFullBoard?.items.first?.content == fullMark.content,
               "Posted recovery confirmation preserves all500 original cards and the complete mark in a new same-profile canvas")
+        check(reopened.message == nil, "Successful full-board recovery clears its obsolete unsaved warning")
         try await capture(secondWindow, "normal-drawing-full-board-recovered")
         print("Easel drawing restore window checks: \(checks) checked, \(failures) failed")
         return failures == 0 ? 0 : 1

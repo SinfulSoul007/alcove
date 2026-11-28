@@ -24,6 +24,7 @@ import WebKit
         let recoveredItem = canvas.context!.easel.items.first { $0.id == recovered }!
         check(recoveredItem.frame == pending.frame && recoveredItem.content == pending.content,
               "Recovering an annotation preserves its exact board placement and complete ink")
+        check(store.message == nil, "Successful drawing recovery clears its resolved failure message")
         canvas.undoManager?.undo()
         check(canvas.context!.easel.items == beforeRecovery.items && canvas.context!.easel.title == "Keep sibling title",
               "One Undo removes the recovered mark while preserving the sibling edit")
@@ -53,11 +54,14 @@ import WebKit
             let original = fullCanvas.context!.easel
             check(!fullCanvas.drawing.finish(), "A full \(pointBudget ? "sample" : "item") budget retains the complete failed mark")
             let retained = fullStore.easelDrafts.failures(in: fullStore).first!
+            if pointBudget { fullStore.message = "Keep this unrelated status" }
             do {
                 let id = try fullStore.easelDrafts.saveAsNewNote(retained, from: fullStore, recoveredTitle: "Recovered full canvas")
                 let newBoard = fullStore.library.easels!.first { $0.id != original.id }
                 check(newBoard?.title == "Recovered full canvas" && newBoard?.items.count == 1 && newBoard?.items.first?.id == id && newBoard?.items.first?.frame == expected.frame && newBoard?.items.first?.content == expected.content && fullStore.easelContext(for: fullTab)!.easel == original && fullStore.easelDrafts.failures(in: fullStore).isEmpty,
                       "Recovery escapes the \(pointBudget ? "sample" : "item") limit into a new same-profile canvas without changing the original")
+                check(fullStore.message == (pointBudget ? "Keep this unrelated status" : nil),
+                      "Recovery clears only its own obsolete warning and preserves unrelated status")
             } catch {
                 print("RECOVERY_LIMIT_ERROR", error.localizedDescription)
                 check(false, "Recovery escapes the \(pointBudget ? "sample" : "item") limit into a new same-profile canvas without changing the original")

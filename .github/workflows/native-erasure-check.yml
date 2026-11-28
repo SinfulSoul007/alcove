@@ -1,4 +1,4 @@
-name: Owned drawing fixes qualification
+name: Owned drawing recovery warning qualification
 on:
   workflow_dispatch:
 permissions:
@@ -21,8 +21,6 @@ jobs:
           set -o pipefail
           mkdir -p .build/fullscreen
           caffeinate -is python3 scripts/drawing/run-native.py --review 2>&1 | tee .build/fullscreen/native.log
-          caffeinate -is python3 scripts/drawing/run-native.py --interaction 2>&1 | tee -a .build/fullscreen/native.log
-          caffeinate -is python3 scripts/drawing/run-native.py --window 2>&1 | tee -a .build/fullscreen/native.log
           caffeinate -is python3 scripts/drawing/run-native.py --restore-window 2>&1 | tee -a .build/fullscreen/native.log
       - name: Preserve native evidence
         if: always()

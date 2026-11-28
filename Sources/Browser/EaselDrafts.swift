@@ -205,7 +205,16 @@ extension EaselDraftEditing {
         record.source?.message = "This canvas has unsaved changes. " + error.localizedDescription
     }
     func discard(_ key: EaselDraftKey) {
-        records.removeValue(forKey: key)?.timer?.cancel(); revision += 1
+        let record = records.removeValue(forKey: key)
+        record?.timer?.cancel(); revision += 1
+        guard let record, let failure = record.state.failure else { return }
+        let resolvedMessage = "This canvas has unsaved changes. " + failure
+        for source in [record.source, presenter(for: record)].compactMap({ $0 }) {
+            let hasOtherFailure = records.values.contains {
+                $0.state.failure != nil && (presenter(for: $0) ?? $0.source) === source
+            }
+            if !hasOtherFailure && source.message == resolvedMessage { source.message = nil }
+        }
     }
     private func recoveryItem(_ record: Record, context: EaselTabContext?) throws -> EaselItem {
         if let drawing = record.state.pendingDrawing {
