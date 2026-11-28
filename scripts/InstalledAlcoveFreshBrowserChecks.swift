@@ -308,8 +308,8 @@ private enum InstalledSmokeError: Error { case environment(String), launch, wron
             let remaining = attribute(AXUIElementCreateApplication(app.processIdentifier), kAXWindowsAttribute) as? [AXUIElement] ?? []
             if remaining.count == 1 { break }; await pause()
         }
-        let remaining = attribute(AXUIElementCreateApplication(app.processIdentifier), kAXWindowsAttribute) as? [AXUIElement] ?? []
-        try check(!app.isTerminated && remaining.count == 1 && !remaining.contains(where: { text($0, kAXTitleAttribute) == "Alcove — Private" }), "Command-W closes the private website window and keeps the normal browser running")
+        let windowsAfterPrivateClose = attribute(AXUIElementCreateApplication(app.processIdentifier), kAXWindowsAttribute) as? [AXUIElement] ?? []
+        try check(!app.isTerminated && windowsAfterPrivateClose.count == 1 && !windowsAfterPrivateClose.contains(where: { text($0, kAXTitleAttribute) == "Alcove — Private" }), "Command-W closes the private website window and keeps the normal browser running")
         let retainedNote = try await find("Canvas note", in: app)
         try check(text(retainedNote, kAXValueAttribute) == marker, "Private browsing and its window closure retain the original normal note")
         let finalClosed = await close(app)
