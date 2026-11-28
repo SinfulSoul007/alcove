@@ -3,8 +3,7 @@ import BrowserCore
 import WebKit
 
 @main struct EaselDrawingReviewChecks {
-    @MainActor static func main() async throws {
-        NSApplication.shared.setActivationPolicy(.regular); setbuf(stdout, nil)
+    @MainActor static func run() async throws -> Int32 {
         var checked = 0, failed = 0
         func check(_ value: Bool, _ name: String) {
             checked += 1; if !value { failed += 1 }
@@ -90,7 +89,7 @@ import WebKit
 
         let dot = try EaselDrawing(kind: .pen, viewBoxWidth: 40, viewBoxHeight: 40,
                                   points: [EaselDrawingPoint(x: 1, y: 1)], style: EaselDrawingStyle(color: "#FF0000", lineWidth: 2, opacity: 1))
-        let dotItem = try EaselItem(frame: EaselFrame(x: 100, y: 100, width: 160, height: 160), content: .drawing(dot))
+        let dotItem = try EaselItem(frame: EaselFrame(x: 500, y: 100, width: 40, height: 40), content: .drawing(dot))
         let link = try EaselItem(frame: EaselFrame(x: 100, y: 100, width: 320, height: 180), content: .link(title: "Open saved source", url: "https://example.com/source"))
         let outline = try EaselDrawing(kind: .rectangle, viewBoxWidth: 320, viewBoxHeight: 180,
                                       points: [EaselDrawingPoint(x: 4, y: 4), EaselDrawingPoint(x: 316, y: 176)], style: dot.style)
@@ -115,6 +114,14 @@ import WebKit
         check(corner.redComponent > 0.9 && corner.greenComponent < 0.15 && corner.blueComponent < 0.15,
               "Real WebKit keeps visible ink at a valid drawing's near-corner point")
         print("Easel drawing review checks: \(checked) checked, \(failed) failed")
-        if failed != 0 { exit(1) }
+        return failed == 0 ? 0 : 1
+    }
+    @MainActor static func main() {
+        NSApplication.shared.setActivationPolicy(.regular); setbuf(stdout, nil)
+        Task { @MainActor in
+            do { exit(try await run()) }
+            catch { print("FAIL: native drawing review fixture: \(error)"); exit(1) }
+        }
+        NSApplication.shared.run()
     }
 }
