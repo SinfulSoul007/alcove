@@ -3,6 +3,7 @@ import SwiftUI
 import BrowserCore
 import CryptoKit
 import ScreenCaptureKit
+import Vision
 
 private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
     let description: String
@@ -129,18 +130,6 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
         try await capture(window, "normal-drawing-save-failed")
         try FileManager.default.removeItem(at: store.sessionURL); try FileManager.default.moveItem(at: backup, to: store.sessionURL)
 
-        func button(_ title: String) -> (any NSAccessibilityProtocol)? {
-            var seen = Set<ObjectIdentifier>(), visited = 0
-            func search(_ value: Any, depth: Int) -> (any NSAccessibilityProtocol)? {
-                guard depth < 35, visited < 5000, let element = value as? any NSAccessibilityProtocol else { return nil }
-                guard seen.insert(ObjectIdentifier(element as AnyObject)).inserted else { return nil }
-                visited += 1
-                if element.accessibilityRole() == .button && (element.accessibilityLabel() == title || element.accessibilityTitle() == title) { return element }
-                for child in element.accessibilityChildren() ?? [] { if let found = search(child, depth: depth + 1) { return found } }
-                return nil
-            }
-            return search(host, depth: 0)
-        }
         func scrollRecoveryToBottom() {
             for scroll in all(host, NSScrollView.self) where !(scroll is EaselCanvasView) {
                 guard let document = scroll.documentView, scroll.bounds.width > 450, scroll.bounds.height < 350 else { continue }
@@ -150,12 +139,23 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
         }
         func clickRecovery(_ title: String) async throws -> Bool {
             scrollRecoveryToBottom(); try await Task.sleep(for: .milliseconds(150))
-            guard let element = button(title), element.isAccessibilityEnabled() else {
-                print("RESTORE_BUTTON_UNAVAILABLE", title); return false
+            // SwiftUI's local NSHostingView AX tree is empty when no system AX
+            // client is active in this fixture. Locate the actually visible text
+            // in our exact owned-window compositor capture, then post real input.
+            let caseName = title == "Retry Saving" ? "normal-locate-saving" : "normal-locate-retry"
+            try await capture(window, caseName)
+            let imageURL = URL(fileURLWithPath: directory).appendingPathComponent(caseName + "-window.png")
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate; request.usesLanguageCorrection = false; request.recognitionLanguages = ["en-US"]
+            try VNImageRequestHandler(data: Data(contentsOf: imageURL), options: [:]).perform([request])
+            let matches = (request.results ?? []).filter { $0.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines) == title }
+            guard let match = matches.max(by: { $0.boundingBox.midY < $1.boundingBox.midY }) else {
+                print("RESTORE_VISIBLE_LABEL_UNAVAILABLE", title, (request.results ?? []).compactMap { $0.topCandidates(1).first?.string })
+                return false
             }
-            let frame = element.accessibilityFrame()
-            guard frame.width > 1, frame.height > 1, window.frame.contains(NSPoint(x: frame.midX, y: frame.midY)) else { return false }
-            let point = window.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY))
+            let rect = match.boundingBox
+            let point = NSPoint(x: rect.midX * window.frame.width, y: rect.midY * window.frame.height)
+            print("RESTORE_VISIBLE_LABEL", title, point)
             for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                 let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                                windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
