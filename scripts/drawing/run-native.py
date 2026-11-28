@@ -11,7 +11,9 @@ import subprocess
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--compile-only', action='store_true')
-    parser.add_argument('--regressions', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--regressions', action='store_true')
+    mode.add_argument('--window', action='store_true', help='Run the owned browser-window input and OS capture witness')
     args = parser.parse_args()
     if not args.compile_only and os.environ.get('GITHUB_ACTIONS') != 'true':
         model = subprocess.check_output(['sysctl', '-n', 'hw.model'], text=True).strip()
@@ -44,6 +46,9 @@ def main():
         ('interaction', [*browser, root / 'scripts/EaselDrawingInteractionChecks.swift']),
         ('toolbar', [*browser, root / 'scripts/EaselDrawingToolbarChecks.swift']),
     ]
+    if args.window:
+        groups = [('window', [*browser, root / 'scripts/EaselDrawingWindowChecks.swift'])]
+        os.environ['ALCOVE_DRAWING_SCREENSHOT_DIR'] = str(evidence / 'drawing-snapshots')
     if args.regressions:
         for label, fixture, helpers in [
             ('old-canvas', 'EaselCanvasChecks', []),
