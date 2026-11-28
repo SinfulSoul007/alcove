@@ -151,7 +151,27 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
         func clickRecovery(_ title: String) async throws -> Bool {
             scrollRecoveryToBottom(); try await Task.sleep(for: .milliseconds(150))
             guard let element = button(title), element.isAccessibilityEnabled() else {
-                print("RESTORE_BUTTON_UNAVAILABLE", title); return false
+                print("RESTORE_BUTTON_UNAVAILABLE", title)
+                for control in all(host, NSButton.self) {
+                    print("RESTORE_NATIVE_BUTTON", control.title, control.accessibilityLabel() ?? "nil", control.isEnabled, control.convert(control.bounds, to: nil))
+                }
+                var observed = Set<ObjectIdentifier>(), count = 0
+                func dump(_ value: Any, depth: Int) {
+                    guard depth < 30, count < 150, let object = value as? NSObject,
+                          observed.insert(ObjectIdentifier(object)).inserted else { return }
+                    count += 1
+                    func get(_ name: String) -> AnyObject? {
+                        let selector = NSSelectorFromString(name)
+                        return object.responds(to: selector) ? object.perform(selector)?.takeUnretainedValue() : nil
+                    }
+                    let children = (get("accessibilityChildren") as? [Any]) ?? []
+                    print("RESTORE_AX_NODE", depth, String(reflecting: type(of: object)), "full=", object is any NSAccessibilityProtocol,
+                          "button=", object is any NSAccessibilityButton, "role=", String(describing: get("accessibilityRole")),
+                          "label=", String(describing: get("accessibilityLabel")), "title=", String(describing: get("accessibilityTitle")), "children=", children.count)
+                    for child in children { dump(child, depth: depth + 1) }
+                }
+                dump(host, depth: 0); dump(window, depth: 0)
+                return false
             }
             let frame = element.accessibilityFrame()
             guard frame.width > 1, frame.height > 1, window.frame.contains(NSPoint(x: frame.midX, y: frame.midY)) else { return false }
