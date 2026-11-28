@@ -48,6 +48,7 @@ def main():
         ('stores', [*browser, root / 'scripts/EaselDrawingStoreChecks.swift']),
         ('interaction', [*browser, root / 'scripts/EaselDrawingInteractionChecks.swift']),
         ('toolbar', [*browser, root / 'scripts/EaselDrawingToolbarChecks.swift']),
+        ('review', [*browser, root / 'scripts/EaselDrawingReviewChecks.swift']),
     ]
     if args.interaction:
         groups = [group for group in groups if group[0] in ('interaction', 'toolbar')]

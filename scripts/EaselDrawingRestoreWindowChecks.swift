@@ -130,20 +130,20 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
         try await capture(window, "normal-drawing-save-failed")
         try FileManager.default.removeItem(at: store.sessionURL); try FileManager.default.moveItem(at: backup, to: store.sessionURL)
 
-        func scrollRecoveryToBottom() {
-            for scroll in all(host, NSScrollView.self) where !(scroll is EaselCanvasView) {
+        func scrollRecoveryToBottom(_ targetHost: NSView) {
+            for scroll in all(targetHost, NSScrollView.self) where !(scroll is EaselCanvasView) {
                 guard let document = scroll.documentView, scroll.bounds.width > 450, scroll.bounds.height < 350 else { continue }
                 let y = document.isFlipped ? max(document.bounds.minY, document.bounds.maxY - scroll.contentView.bounds.height) : document.bounds.minY
                 scroll.contentView.scroll(to: NSPoint(x: 0, y: y)); scroll.reflectScrolledClipView(scroll.contentView)
             }
         }
-        func clickRecovery(_ title: String) async throws -> Bool {
-            scrollRecoveryToBottom(); try await Task.sleep(for: .milliseconds(150))
+        func clickRecovery(_ title: String, in target: NSWindow, host targetHost: NSView) async throws -> Bool {
+            scrollRecoveryToBottom(targetHost); try await Task.sleep(for: .milliseconds(150))
             // SwiftUI's local NSHostingView AX tree is empty when no system AX
             // client is active in this fixture. Locate the actually visible text
             // in our exact owned-window compositor capture, then post real input.
-            let caseName = title == "Retry Saving" ? "normal-locate-saving" : "normal-locate-retry"
-            try await capture(window, caseName)
+            let caseName = "normal-locate-" + title.lowercased().replacingOccurrences(of: " ", with: "-")
+            try await capture(target, caseName)
             let imageURL = URL(fileURLWithPath: directory).appendingPathComponent(caseName + "-window.png")
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate; request.usesLanguageCorrection = false; request.recognitionLanguages = ["en-US"]
@@ -154,16 +154,16 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
                 return false
             }
             let rect = match.boundingBox
-            let point = NSPoint(x: rect.midX * window.frame.width, y: rect.midY * window.frame.height)
+            let point = NSPoint(x: rect.midX * target.frame.width, y: rect.midY * target.frame.height)
             print("RESTORE_VISIBLE_LABEL", title, point)
             for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                 let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                               windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
+                                               windowNumber: target.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)!
                 NSApplication.shared.postEvent(event, atStart: false); try await Task.sleep(for: .milliseconds(50))
             }
             return true
         }
-        let clickedSaving = try await clickRecovery("Retry Saving")
+        let clickedSaving = try await clickRecovery("Retry Saving", in: window, host: host)
         let unlocked = await until { store.savingEnabled && !store.unlocking }
         check(clickedSaving && unlocked && keyRequests == 1, "The visible Retry Saving button restores writes using the existing authorized key")
         try await capture(window, "normal-drawing-retry-ready")
@@ -171,7 +171,7 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
             print("Easel drawing restore window checks: \(checks) checked, \(failures) failed; saving retry did not complete")
             return 1
         }
-        let clickedRetry = try await clickRecovery("Retry")
+        let clickedRetry = try await clickRecovery("Retry", in: window, host: host)
         let recovered = await until { store.easelDrafts.failures(in: store).isEmpty && store.easelContext(for: tab)?.easel.items.count == 3 }
         check(clickedRetry && recovered && store.easelContext(for: tab)?.easel.items.last == pendingMark, "The visible Retry button saves the same retained drawing exactly once")
         guard clickedRetry && recovered else {
@@ -205,6 +205,37 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
         check(privateKeyRequests == 0 && freshPrivate.library.easels?.isEmpty != false && !FileManager.default.fileExists(atPath: privateRoot.path),
               "A fresh private session restores no private drawings, requests no key and creates no files")
         check(reopened.easelContext(for: tab)?.easel == restoredBoard, "Private retirement leaves the normal saved canvas unchanged")
+
+        // The full-board escape must be discoverable and usable in BrowserUI,
+        // rather than only through a coordinator call in a model fixture.
+        let filler = try (0..<497).map { _ in
+            try EaselItem(frame: EaselFrame(x: 80, y: 80, width: 80, height: 80), content: .note(text: "Keep this full-board card"))
+        }
+        _ = try reopened.editEasel(in: tab, expectedRevision: restoredBoard.revision, edits: filler.map(EaselEdit.insert))
+        let fullBoard = reopened.easelContext(for: tab)!.easel
+        guard let fullCanvas = all(secondHost, EaselCanvasView.self).first,
+              let fullTools = all(secondHost, EaselDrawingControls.self).first else { throw CocoaError(.fileReadUnknown) }
+        fullTools.toolButtons[EaselCanvasTool.allCases.firstIndex(of: .pen)!].performClick(nil)
+        try await mouse(.leftMouseDown, NSPoint(x: 410, y: 340), in: fullCanvas.drawingOverlay, window: secondWindow)
+        try await mouse(.leftMouseDragged, NSPoint(x: 570, y: 380), in: fullCanvas.drawingOverlay, window: secondWindow)
+        guard let fullMark = fullCanvas.drawing.preview else { throw CocoaError(.fileWriteUnknown) }
+        try await mouse(.leftMouseUp, NSPoint(x: 570, y: 380), in: fullCanvas.drawingOverlay, window: secondWindow)
+        let retainedFull = await until { reopened.easelDrafts.failures(in: reopened).count == 1 }
+        check(retainedFull && reopened.easelContext(for: tab)?.easel == fullBoard,
+              "Actual drawing input on a full board retains its mark without replacing saved cards")
+        let clickedNew = try await clickRecovery("Save in New Easel", in: secondWindow, host: secondHost)
+        let presented = await until { !secondWindow.sheets.isEmpty }
+        check(clickedNew && presented, "The visible Save in New Easel action opens its native recovery confirmation")
+        guard let sheet = secondWindow.sheets.first, let content = sheet.contentView,
+              let save = all(content, NSButton.self).first(where: { $0.title == "Save Draft" }) else { return 1 }
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            try await mouse(type, NSPoint(x: save.bounds.midX, y: save.bounds.midY), in: save, window: sheet)
+        }
+        let escapedFull = await until { reopened.easelDrafts.failures(in: reopened).isEmpty && reopened.library.easels?.count == 2 }
+        let recoveredFullBoard = reopened.library.easels?.first { $0.id != fullBoard.id }
+        check(escapedFull && reopened.easelContext(for: tab)?.easel == fullBoard && recoveredFullBoard?.items.count == 1 && recoveredFullBoard?.items.first?.frame == fullMark.frame && recoveredFullBoard?.items.first?.content == fullMark.content,
+              "Posted recovery confirmation preserves all500 original cards and the complete mark in a new same-profile canvas")
+        try await capture(secondWindow, "normal-drawing-full-board-recovered")
         print("Easel drawing restore window checks: \(checks) checked, \(failures) failed")
         return failures == 0 ? 0 : 1
     }

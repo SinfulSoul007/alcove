@@ -42,11 +42,28 @@ enum EaselCanvasTool: String, CaseIterable, Identifiable {
     private weak var owner: EaselCanvasView?
     private var gesture: EaselDrawingGesture?
     private var captured: EaselTabContext?
+    private var focusObservers: [NSObjectProtocol] = []
     var isDrawing: Bool { gesture != nil }
     var preview: EaselItem? { guard available else { return nil }; return try? gesture?.makeItem() }
-    init(owner: EaselCanvasView) { self.owner = owner }
+    init(owner: EaselCanvasView) {
+        self.owner = owner
+        focusObservers.append(NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main) { [weak self] notification in
+            MainActor.assumeIsolated {
+                guard let self, let window = notification.object as? NSWindow, self.owner?.window === window else { return }
+                self.cancel()
+            }
+        })
+        focusObservers.append(NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.cancel() }
+        })
+    }
+    deinit { focusObservers.forEach(NotificationCenter.default.removeObserver) }
+    private var hasInputFocus: Bool {
+        guard let window = owner?.window else { return true }
+        return window.isKeyWindow && NSApplication.shared.isActive
+    }
     private var available: Bool {
-        guard let owner, owner.isCurrentPresentation, let current = owner.context, let captured,
+        guard hasInputFocus, let owner, owner.isCurrentPresentation, let current = owner.context, let captured,
               let store = owner.store, !store.isShuttingDown, store.activeProfileID == captured.profileID,
               store.visiblePaneIDs.contains(owner.tabID) else { return false }
         return current.profileID == captured.profileID && current.easel.id == captured.easel.id
@@ -57,7 +74,7 @@ enum EaselCanvasTool: String, CaseIterable, Identifiable {
     }
     @discardableResult func begin(at point: NSPoint) -> Bool {
         cancel()
-        guard let owner, let kind = owner.drawingTool.kind, owner.activate(), let store = owner.store,
+        guard hasInputFocus, let owner, let kind = owner.drawingTool.kind, owner.activate(), let store = owner.store,
               store.canModifyLocalMetadata, store.flushEaselBoardDraftsIfPossible(in: owner.tabID), let context = owner.context,
               store.activeProfileID == context.profileID, store.visiblePaneIDs.contains(owner.tabID) else { return false }
         do {

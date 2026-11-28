@@ -38,8 +38,8 @@ struct EaselDraftRecovery: View {
                                             NSPasteboard.general.setString(current.text, forType: .string)
                                         }
                                     }
-                                    Button(store.easelContext(for: draft.key.tabID) == nil ? "Save in New Easel" : (draft.pendingDrawing == nil ? "Save as New Note" : "Save as New Drawing")) {
-                                        if store.easelContext(for: draft.key.tabID) == nil { recoveryTitle = "Recovered Easel"; pendingRecovery = draft }
+                                    Button(drafts.recoveryNeedsNewEasel(draft, from: store) ? "Save in New Easel" : (draft.pendingDrawing == nil ? "Save as New Note" : "Save as New Drawing")) {
+                                        if drafts.recoveryNeedsNewEasel(draft, from: store) { recoveryTitle = "Recovered Easel"; pendingRecovery = draft }
                                         else { do { _ = try drafts.saveAsNewNote(draft, from: store) } catch { store.message = error.localizedDescription } }
                                     }.disabled(!store.canModifyLocalMetadata)
                                     Button("Retry") { drafts.retry(draft, from: store) }.disabled(!store.canModifyLocalMetadata)
@@ -68,13 +68,13 @@ struct EaselDraftRecovery: View {
                 TextField("Easel name", text: $recoveryTitle)
                 Button("Save Draft") {
                     if let pendingRecovery {
-                        do { _ = try drafts.saveAsNewNote(pendingRecovery, from: store, recoveredTitle: recoveryTitle) }
+                        do { _ = try drafts.saveAsNewNote(pendingRecovery, from: store, recoveredTitle: recoveryTitle, inNewEasel: true) }
                         catch { store.message = error.localizedDescription }
                     }
                     pendingRecovery = nil
                 }
                 Button("Cancel", role: .cancel) { pendingRecovery = nil }
-            } message: { Text("Your original canvas is unavailable. This creates a new canvas in the same profile and keeps the complete draft.") }
+            } message: { Text("This creates a new canvas in the same profile and keeps your complete draft. Saved items in the original canvas stay in place.") }
     }
 }
 

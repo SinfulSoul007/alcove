@@ -62,6 +62,8 @@ run_easel_drawing_native_checks() {
     "$MANUAL/easel-drawing-interaction-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/EaselDrawingToolbarChecks.swift -o "$MANUAL/easel-drawing-toolbar-checks"
     "$MANUAL/easel-drawing-toolbar-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/EaselDrawingReviewChecks.swift -o "$MANUAL/easel-drawing-review-checks"
+    "$MANUAL/easel-drawing-review-checks"
 }
 if [[ "${1:-}" == "easel-drawing-test" ]]; then run_easel_core_checks; run_easel_drawing_core_checks; run_easel_drawing_native_checks; exit; fi
 run_easel_tab_checks() {

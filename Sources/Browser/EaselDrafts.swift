@@ -90,9 +90,20 @@ extension EaselDraftEditing {
         record?.editor?.discardEaselDraft(restoring: item)
         return true
     }
-    @discardableResult func saveAsNewNote(_ state: EaselDraftState, from source: BrowserStore? = nil, recoveredTitle: String = "Recovered Easel") throws -> UUID {
+    @discardableResult func saveAsNewNote(_ state: EaselDraftState, from source: BrowserStore? = nil, recoveredTitle: String = "Recovered Easel", inNewEasel: Bool = false) throws -> UUID {
         guard recoveryState(state, from: source) != nil else { throw EaselDraftError.conflict }
-        return try saveAsNewNote(state.key, recoveredTitle: recoveredTitle)
+        return try saveAsNewNote(state.key, recoveredTitle: recoveredTitle, inNewEasel: inNewEasel)
+    }
+    func recoveryNeedsNewEasel(_ state: EaselDraftState, from source: BrowserStore) -> Bool {
+        guard recoveryState(state, from: source) != nil, let record = records[state.key] else { return false }
+        guard let context = source.easelContext(for: state.key.tabID),
+              context.profileID == state.key.profileID, context.easel.id == state.key.easelID else { return true }
+        do {
+            var candidate = context.easel
+            let item = try recoveryItem(record, context: context)
+            try candidate.apply(.insert(item), expectedRevision: candidate.revision)
+            return false
+        } catch { return true }
     }
     @discardableResult func commitDrawing(_ item: EaselItem, context: EaselTabContext, from source: BrowserStore,
                                          history: any EaselDrawingHistoryRecording) -> Bool {
@@ -196,16 +207,34 @@ extension EaselDraftEditing {
     func discard(_ key: EaselDraftKey) {
         records.removeValue(forKey: key)?.timer?.cancel(); revision += 1
     }
-    @discardableResult func saveAsNewNote(_ key: EaselDraftKey, recoveredTitle: String = "Recovered Easel") throws -> UUID {
+    private func recoveryItem(_ record: Record, context: EaselTabContext?) throws -> EaselItem {
+        if let drawing = record.state.pendingDrawing {
+            // An annotation must stay aligned with what it describes. Only its
+            // identity changes when explicitly resolving a conflicting insert.
+            return try EaselItem(frame: drawing.frame, content: drawing.content)
+        }
+        let old = context?.easel.items.first(where: { $0.id == record.state.key.itemID })?.frame ?? record.original.frame
+        let frame = try EaselFrame(x: min(old.x + 24, EaselFrame.canvasSize - old.width), y: min(old.y + 24, EaselFrame.canvasSize - old.height), width: old.width, height: old.height)
+        return try EaselItem(frame: frame, content: .note(text: record.state.text))
+    }
+    @discardableResult func saveAsNewNote(_ key: EaselDraftKey, recoveredTitle: String = "Recovered Easel", inNewEasel: Bool = false) throws -> UUID {
         guard !invalidated, let record = records[key], let source = presenter(for: record) ?? record.source,
               recoveryState(record.state, from: source) != nil else { throw EaselDraftError.unavailable }
         try source.requireSpaceProfile(key.profileID)
         let context = source.easelContext(for: key.tabID)
-        let old = context?.easel.items.first(where: { $0.id == key.itemID })?.frame ?? record.original.frame
-        let frame = try EaselFrame(x: min(old.x + 24, EaselFrame.canvasSize - old.width), y: min(old.y + 24, EaselFrame.canvasSize - old.height), width: old.width, height: old.height)
-        let note = try EaselItem(frame: frame, content: record.state.pendingDrawing?.content ?? .note(text: record.state.text))
-        if let context, context.profileID == key.profileID, context.easel.id == key.easelID {
-            _ = try source.commitEaselEdits(in: key.tabID, expectedRevision: context.easel.revision, edits: [.insert(note)])
+        let note = try recoveryItem(record, context: context)
+        let newEasel = inNewEasel || recoveryNeedsNewEasel(record.state, from: source)
+        if !newEasel, let context, context.profileID == key.profileID, context.easel.id == key.easelID {
+            let after = try source.commitEaselEdits(in: key.tabID, expectedRevision: context.easel.revision, edits: [.insert(note)])
+            if record.state.pendingDrawing != nil {
+                // Prefer the current presentation after a view handoff; the
+                // original gesture's view may already have been destroyed.
+                let canvas = (source.isPrivate ? source : source.metadataWriter).easelCanvasViews.allObjects.first {
+                    $0.store === source && $0.tabID == key.tabID && $0.isCurrentPresentation
+                }
+                let history: (any EaselDrawingHistoryRecording)? = canvas ?? record.drawingHistory
+                history?.easelDrawingCommitted(note, before: context.easel, after: after, profileID: key.profileID)
+            }
         } else {
             var candidate = source.makeDocument(), library = candidate.library(for: key.profileID)
             var board = try Easel(title: recoveredTitle)
