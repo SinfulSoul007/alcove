@@ -1,0 +1,48 @@
+name: Noninteractive Keychain startup checks
+on:
+  push:
+    paths:
+      - Sources/Browser/MetadataKey.swift
+      - scripts/OwnedKeychainInteractionProbe.swift
+      - scripts/owned-keychain-interaction-probe.py
+      - .github/workflows/keychain-startup.yml
+  pull_request:
+    paths:
+      - Sources/Browser/MetadataKey.swift
+      - scripts/OwnedKeychainInteractionProbe.swift
+      - scripts/owned-keychain-interaction-probe.py
+      - .github/workflows/keychain-startup.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-26, macos-26-intel, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Select pinned SDK
+        run: |
+          set -euo pipefail
+          if test -d /Applications/Xcode_26.5.app/Contents/Developer; then
+            echo DEVELOPER_DIR=/Applications/Xcode_26.5.app/Contents/Developer >> "$GITHUB_ENV"
+          fi
+          xcrun --show-sdk-path
+          xcodebuild -version
+      - name: Verify automatic denial, explicit access and original test key
+        run: |
+          set -euo pipefail
+          mkdir -p .build/fullscreen/keychain-interaction
+          python3 scripts/owned-keychain-interaction-probe.py 2>&1 | tee .build/fullscreen/keychain-interaction/diagnostic.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: owned-keychain-interaction-${{ matrix.runner }}-${{ github.run_id }}
+          retention-days: 14
+          path: .build/fullscreen/keychain-interaction/

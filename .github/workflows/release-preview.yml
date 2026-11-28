@@ -175,6 +175,8 @@ jobs:
           cat > release-notes.txt <<'NOTE'
           Universal macOS 14+ preview for Apple Silicon and Intel.
 
+          Automatic startup no longer opens a Keychain authorization dialog when an unsigned update cannot access the existing saved-data key. Choose Unlock Local Data to start macOS authorization explicitly. The existing key and saved data are preserved; private browsing remains available.
+
           Easels keep notes, links, images and editable drawings in the selected profile. Select, Pen, Line, Arrow, Rectangle and Ellipse share color, thickness and opacity controls, with compact menus for narrow panes. Draw above existing cards, then select, move, resize, layer or undo the complete mark. PNG and standalone HTML exports retain drawing paths and the visible canvas paper color.
 
           A completed mark that cannot save remains available for Retry, explicit recovery or discard. Conflicting annotations keep their original placement; recovery into the current canvas supports Undo. Full canvases offer Save in New Easel. Interrupted strokes cancel when the window or application loses focus. Normal Easels use encrypted metadata; private Easels remain in memory. This release writes metadata format 10; older versions must not be used to edit the upgraded document.

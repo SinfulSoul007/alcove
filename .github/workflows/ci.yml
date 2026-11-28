@@ -24,6 +24,8 @@ jobs:
           persist-credentials: false
       - name: Verify release package selection
         run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/ReleasePackageChecks.py
+      - name: Verify noninteractive Keychain startup
+        run: python3 scripts/owned-keychain-interaction-probe.py
       - name: Verify native review checks
         run: ./scripts/build.sh easel-review-test
       - name: Run checks and build both architectures
