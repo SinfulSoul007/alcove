@@ -146,8 +146,12 @@ import Combine
         let bounded = min(2, max(0.25, value))
         setMagnification(bounded, centeredAt: NSPoint(x: documentVisibleRect.midX, y: documentVisibleRect.midY))
         zoom = magnification
+        canvas.needsDisplay = true
     }
-    override func magnify(with event: NSEvent) { super.magnify(with: event); zoom = magnification }
+    override func magnify(with event: NSEvent) {
+        super.magnify(with: event); zoom = magnification
+        canvas.needsDisplay = true
+    }
     func fitContent() {
         guard let items = context?.easel.items, let first = items.first else { setZoom(1); contentView.scroll(to: .zero); reflectScrolledClipView(contentView); return }
         let union = items.dropFirst().reduce(first.frame.rect) { $0.union($1.frame.rect) }.insetBy(dx: -48, dy: -48)

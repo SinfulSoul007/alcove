@@ -149,9 +149,25 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
         try await mouse(.leftMouseUp, at: NSPoint(x: 350, y: 450))
         check(store.easelContext(for: tab)!.easel.items.count == 5, "The actual dark-theme canvas accepts a white ellipse from native input")
         try await capture("drawing-dark")
+        let priorViewport = canvas.documentVisibleRect
         canvas.setZoom(0.5)
         check(canvas.cards[note.id]?.noteView === editor && canvas.magnification == 0.5, "Zooming the real window preserves editable note identity")
         try await capture("drawing-half-zoom")
+        let zoomImage = NSBitmapImageRep(data: try Data(contentsOf: root.appendingPathComponent("drawing-half-zoom-window.png")))!
+        let probe = canvas.canvas.convert(NSPoint(x: priorViewport.maxX, y: 400), to: nil)
+        let probeX = Int(probe.x.rounded(.down)), probeY = Int((CGFloat(zoomImage.pixelsHigh) - 1 - probe.y).rounded(.down))
+        func rgb(_ x: Int, _ y: Int) -> [CGFloat]? {
+            guard x >= 0, x < zoomImage.pixelsWide, y >= 0, y < zoomImage.pixelsHigh,
+                  let color = zoomImage.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return nil }
+            return [color.redComponent, color.greenComponent, color.blueComponent]
+        }
+        let reference = rgb(probeX + 48, probeY)
+        let deltas = (probeX - 3...probeX + 3).compactMap { x -> CGFloat? in
+            guard let reference, let value = rgb(x, probeY) else { return nil }
+            return zip(reference, value).map { abs($0 - $1) }.max()
+        }
+        print("DRAWING_ZOOM_EDGE_PROBE x=\(probeX) y=\(probeY) deltas=\(deltas)")
+        check(deltas.count == 7 && deltas.allSatisfy { $0 < 0.01 }, "Zooming repaints the old viewport boundary without a stale native edge")
         // Preserve the original compositor result, then observe whether an
         // explicit document repaint changes the apparent zoom-tile boundary.
         canvas.canvas.needsDisplay = true
