@@ -235,7 +235,8 @@ private enum InstalledSmokeError: Error { case environment(String), launch, wron
         try await key(13, flags: .maskCommand, app: app)
         _ = try await find("Alcove owned page one", in: app)
         let browserWindows = attribute(AXUIElementCreateApplication(app.processIdentifier), kAXWindowsAttribute) as? [AXUIElement] ?? []
-        try check(!app.isTerminated && browserWindows.count == 1 && !(try nodes(app)).contains(where: { labels($0).contains("Alcove owned page two") }), "Command-W closes the current website tab while the other tab keeps its window open")
+        let todayAfterClose = descendantLabels(try await find("Today tabs", in: app), ownedPID: app.processIdentifier)
+        try check(!app.isTerminated && browserWindows.count == 1 && !todayAfterClose.contains(where: { $0 == "Alcove owned page two" || $0.hasSuffix(", Alcove owned page two") }) && !(try nodes(app)).contains(where: { labels($0).contains("Alcove owned page two") }), "Command-W closes the current website tab while the other tab keeps its window open")
         try await key(35, flags: [.maskCommand, .maskShift], app: app)
         try await capture(app, "installed-browser-after-pin-shortcut")
         let pinnedArea = try await find("Pinned tabs", in: app)
