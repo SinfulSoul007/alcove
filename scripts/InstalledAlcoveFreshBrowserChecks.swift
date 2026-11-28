@@ -33,12 +33,13 @@ private enum InstalledSmokeError: Error { case environment(String), launch, wron
         guard app.bundleURL?.standardizedFileURL == url.standardizedFileURL else { throw InstalledSmokeError.wrongApp }
         owned.append(app); return app
     }
-    @MainActor static func nodes(_ app: NSRunningApplication, menus: Bool = false) throws -> [AXUIElement] {
+    @MainActor static func nodes(_ app: NSRunningApplication, menus: Bool = false, window: AXUIElement? = nil) throws -> [AXUIElement] {
         let application = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(application, 3)
         var queue: [(AXUIElement, Int)] = []
         if menus, let menu = attribute(application, kAXMenuBarAttribute) { queue.append((unsafeBitCast(menu, to: AXUIElement.self), 0)) }
-        if let windows = attribute(application, kAXWindowsAttribute) as? [AXUIElement] { queue.append(contentsOf: windows.map { ($0, 0) }) }
+        if let window { queue.append((window, 0)) }
+        else if let windows = attribute(application, kAXWindowsAttribute) as? [AXUIElement] { queue.append(contentsOf: windows.map { ($0, 0) }) }
         var result: [AXUIElement] = []
         while !queue.isEmpty && result.count < 600 {
             let (element, depth) = queue.removeFirst(); var pid: pid_t = 0
@@ -59,9 +60,9 @@ private enum InstalledSmokeError: Error { case environment(String), launch, wron
         }
         return result
     }
-    @MainActor static func find(_ label: String, in app: NSRunningApplication, menus: Bool = false) async throws -> AXUIElement {
+    @MainActor static func find(_ label: String, in app: NSRunningApplication, menus: Bool = false, window: AXUIElement? = nil) async throws -> AXUIElement {
         for _ in 0..<100 {
-            let all = try nodes(app, menus: menus)
+            let all = try nodes(app, menus: menus, window: window)
             if all.contains(where: { labels($0).contains("Skip opening animation") }) {
                 openingObserved = true
                 if !openingCaptured {
@@ -75,7 +76,7 @@ private enum InstalledSmokeError: Error { case environment(String), launch, wron
             if app.isTerminated { throw InstalledSmokeError.launch }
             await pause()
         }
-        for element in try nodes(app, menus: menus) { print("OWNED_INSTALLED_AX", text(element, kAXRoleAttribute), labels(element).map { String($0.prefix(110)) }) }
+        for element in try nodes(app, menus: menus, window: window) { print("OWNED_INSTALLED_AX", text(element, kAXRoleAttribute), labels(element).map { String($0.prefix(110)) }) }
         throw InstalledSmokeError.missing(label)
     }
     static func press(_ element: AXUIElement, _ name: String) throws {
@@ -145,9 +146,9 @@ private enum InstalledSmokeError: Error { case environment(String), launch, wron
         }
         await pause(250)
     }
-    @MainActor static func navigate(_ path: String, in app: NSRunningApplication) async throws {
+    @MainActor static func navigate(_ path: String, in app: NSRunningApplication, window: AXUIElement? = nil) async throws {
         try await key(37, flags: .maskCommand, app: app)
-        let address = try await find("Search or Enter URL…", in: app)
+        let address = try await find("Search or Enter URL…", in: app, window: window)
         guard AXUIElementSetAttributeValue(address, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success else { throw InstalledSmokeError.missing("focused browser address") }
         try await typeName(path, in: app)
         try await key(36, app: app)
@@ -296,9 +297,18 @@ private enum InstalledSmokeError: Error { case environment(String), launch, wron
         _ = try await find("PRIVATE WINDOW · History is not saved. Downloads stay on disk.", in: app)
         let windows = attribute(AXUIElementCreateApplication(app.processIdentifier), kAXWindowsAttribute) as? [AXUIElement] ?? []
         guard let privateWindow = windows.first(where: { text($0, kAXTitleAttribute) == "Alcove — Private" }) else { throw InstalledSmokeError.missing("actual private window") }
-        _ = AXUIElementPerformAction(privateWindow, kAXRaiseAction as CFString)
-        try await navigate(site + "/two", in: app)
-        _ = try await find("Alcove owned page two", in: app)
+        let raised = AXUIElementPerformAction(privateWindow, kAXRaiseAction as CFString)
+        guard raised == .success else { throw InstalledSmokeError.ax("raise actual private window", raised.rawValue) }
+        var privateFocused = false
+        for _ in 0..<100 {
+            if let focused = attribute(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedWindowAttribute), CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, privateWindow) { privateFocused = true; break }
+            await pause()
+        }
+        try check(privateFocused, "The actual private window owns focus before private keyboard navigation")
+        try await capture(app, "installed-private-before-navigation", windowTitle: "Alcove — Private")
+        try await navigate(site + "/two", in: app, window: privateWindow)
+        try await capture(app, "installed-private-navigation-submitted", windowTitle: "Alcove — Private")
+        _ = try await find("Alcove owned page two", in: app, window: privateWindow)
         let privateLabels = descendantLabels(privateWindow, ownedPID: app.processIdentifier)
         try check(privateLabels.contains(where: { $0 == "Alcove owned page two" || $0.hasSuffix(", Alcove owned page two") }), "The actual fresh0.22.1 private window loads its own real HTTP website")
         try check(!privateLabels.contains(where: { $0.contains(marker) || $0 == "Installed QA Folder" || $0 == "Canvas note" }), "The actual private window excludes normal saved note and folder content")
