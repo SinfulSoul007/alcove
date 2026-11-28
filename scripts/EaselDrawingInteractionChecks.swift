@@ -87,22 +87,26 @@ import CryptoKit
         let normal = BrowserStore(dataRoot: root, keyProvider: { _ in key }); defer { normal.shutdown() }
         let normalTab = try normal.createEasel(title: "Failed drawing recovery")
         normal.update(normalTab) { $0.pinned = false; $0.homeURL = nil; $0.pinnedTitle = nil }
-        var normalCanvas: EaselCanvasView? = EaselCanvasView(store: normal, tabID: normalTab)
-        _ = normalCanvas!.setDrawingTool(.pen)
-        _ = normalCanvas!.drawing.begin(at: NSPoint(x: 200, y: 200))
-        normalCanvas!.drawing.append(NSPoint(x: 250, y: 220))
-        let expectedMark = normalCanvas!.drawing.preview!
-        let old = normal.easelContext(for: normalTab)!.easel
         let backup = root.appendingPathComponent("prior-ciphertext")
-        try FileManager.default.moveItem(at: normal.sessionURL, to: backup)
-        try FileManager.default.createDirectory(at: normal.sessionURL, withIntermediateDirectories: false)
-        check(!normalCanvas!.drawing.finish(), "A real metadata write failure is reported to the drawing editor")
-        check(normal.easelContext(for: normalTab)!.easel == old && normal.easelDrafts.failures(in: normal).first?.pendingDrawing == expectedMark, "A failed save preserves previous data and the entire pending mark")
-        normal.close(normalTab)
-        check(normal.tab(normalTab) != nil, "Cmd-W cannot discard a completed mark whose save failed")
         let weakCanvases = NSHashTable<EaselCanvasView>.weakObjects()
-        weakCanvases.add(normalCanvas!)
-        normalCanvas = nil
+        // AppKit temporarily autoreleases new scroll views. End that lifetime
+        // before asserting that the draft survives actual view destruction.
+        let expectedMark = try autoreleasepool { () throws -> EaselItem in
+            let normalCanvas = EaselCanvasView(store: normal, tabID: normalTab)
+            _ = normalCanvas.setDrawingTool(.pen)
+            _ = normalCanvas.drawing.begin(at: NSPoint(x: 200, y: 200))
+            normalCanvas.drawing.append(NSPoint(x: 250, y: 220))
+            let expectedMark = normalCanvas.drawing.preview!
+            let old = normal.easelContext(for: normalTab)!.easel
+            try FileManager.default.moveItem(at: normal.sessionURL, to: backup)
+            try FileManager.default.createDirectory(at: normal.sessionURL, withIntermediateDirectories: false)
+            check(!normalCanvas.drawing.finish(), "A real metadata write failure is reported to the drawing editor")
+            check(normal.easelContext(for: normalTab)!.easel == old && normal.easelDrafts.failures(in: normal).first?.pendingDrawing == expectedMark, "A failed save preserves previous data and the entire pending mark")
+            normal.close(normalTab)
+            check(normal.tab(normalTab) != nil, "Cmd-W cannot discard a completed mark whose save failed")
+            weakCanvases.add(normalCanvas)
+            return expectedMark
+        }
         check(weakCanvases.allObjects.isEmpty && normal.easelDrafts.failures(in: normal).first?.pendingDrawing == expectedMark, "A failed completed mark survives destruction of its canvas view")
         try FileManager.default.removeItem(at: normal.sessionURL); try FileManager.default.moveItem(at: backup, to: normal.sessionURL)
         _ = normal.unlockLocalData()
@@ -129,6 +133,31 @@ import CryptoKit
         let removedBoard = removedStore.easelContext(for: removedTab)!.easel
         try removedStore.deleteLibraryEasel(removedBoard.id, profileID: BrowserProfile.defaultID)
         check(!removedCanvas.drawing.finish() && removedStore.easelDrafts.failures(in: removedStore).isEmpty, "Deleting the source board cancels incomplete ink without a recoverable stale record")
+        let siblingWriter = BrowserStore(dataRoot: root.appendingPathComponent("sibling-windows"), keyProvider: { _ in key })
+        let siblingOwner = BrowserWindowOwner(store: siblingWriter); defer { siblingOwner.shutdown() }
+        let firstWindow = try siblingOwner.acquirePrimaryStore()
+        let firstTab = try firstWindow.store.createEasel(title: "One board in two windows")
+        let sharedBoard = firstWindow.store.easelContext(for: firstTab)!.easel
+        var sharedDocument = firstWindow.store.makeDocument()
+        let secondTab = try firstWindow.store.insertEaselTab(sharedBoard, in: firstWindow.store.space.id, document: &sharedDocument)
+        try firstWindow.store.commitQuickDocument(sharedDocument)
+        let secondWindow = try siblingOwner.acquirePrimaryStore(copying: firstWindow.store)
+        firstWindow.store.select(firstTab); secondWindow.store.select(secondTab)
+        let firstCanvas = EaselCanvasView(store: firstWindow.store, tabID: firstTab)
+        check(firstWindow.store.easelContext(for: firstTab) != nil && secondWindow.store.easelContext(for: secondTab) != nil,
+              "Two actual window owners can present separate tabs for one shared canvas")
+        let began = firstCanvas.setDrawingTool(.pen) && firstCanvas.drawing.begin(at: NSPoint(x: 300, y: 300))
+        firstCanvas.drawing.append(NSPoint(x: 350, y: 320))
+        if let siblingContext = secondWindow.store.easelContext(for: secondTab) {
+            _ = try secondWindow.store.editEasel(in: secondTab, expectedRevision: siblingContext.easel.revision, edits: [.rename("Actual sibling edit")])
+        }
+        check(began && !firstCanvas.drawing.finish() && firstWindow.store.easelContext(for: firstTab)?.easel.title == "Actual sibling edit",
+              "A real sibling-window edit prevents stale gesture publication")
+        if let pending = firstWindow.store.easelDrafts.failures(in: firstWindow.store).first {
+            let recoveredID = try firstWindow.store.easelDrafts.saveAsNewNote(pending, from: firstWindow.store)
+            check(secondWindow.store.easelContext(for: secondTab)?.easel.items.map(\.id) == [recoveredID],
+                  "Explicit drawing recovery publishes one shared mark to both actual window owners")
+        } else { check(false, "The shared-writer conflict preserves a complete recoverable drawing") }
         print("Easel drawing interaction checks: \(checked) checked, \(failed) failed")
         if failed != 0 { exit(1) }
     }

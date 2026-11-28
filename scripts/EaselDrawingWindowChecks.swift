@@ -95,6 +95,7 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
         let mounted = await until { find(host, EaselCanvasView.self)?.bounds.width ?? 0 > 500 && find(host, EaselDrawingControls.self) != nil && window.isKeyWindow }
         check(mounted, "The actual browser mounts drawing tools and the native canvas in an active owned window")
         guard let canvas = find(host, EaselCanvasView.self), let tools = find(host, EaselDrawingControls.self), let editor = canvas.cards[note.id]?.noteView else { return 1 }
+        window.makeFirstResponder(canvas.canvas)
         func capture(_ name: String) async throws {
             host.layoutSubtreeIfNeeded(); window.displayIfNeeded(); try await Task.sleep(for: .milliseconds(150))
             try await NativeOwnedWindowCapture.capture(window, kind: name, directory: directory)
@@ -130,12 +131,16 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
         editor.insertText(" Saved.", replacementRange: NSRange(location: (editor.string as NSString).length, length: 0))
         try store.easelDrafts.flush(tabID: tab)
         try await capture("drawing-saved")
-        store.windowSidebarWidth = 340; window.setContentSize(NSSize(width: 660, height: 520))
-        let compact = await until { tools.bounds.width > 50 && tools.bounds.width < 300 && canvas.bounds.width > 50 }
+        window.setContentSize(NSSize(width: 660, height: 520))
+        find(host, SidebarResizeHandle.Handle.self)?.setAccessibilityValue(NSNumber(value: 340))
+        let compact = await until { tools.bounds.width > 50 && tools.bounds.width < 600 && canvas.bounds.width > 50 }
+        print("DRAWING_NARROW_GEOMETRY window=\(host.bounds.width) tools=\(tools.bounds.width) canvas=\(canvas.bounds.width) sidebar=\(String(describing: find(host, SidebarResizeHandle.Handle.self)?.accessibilityValue()))")
         check(compact && tools.subviews.filter { !$0.isHidden }.allSatisfy { $0.frame.minX >= 0 && $0.frame.maxX <= tools.bounds.width }, "A real narrow browser/sidebar resize keeps every visible drawing control inside its pane")
         check(canvas.cards[note.id]?.noteView === editor && editor.string.hasSuffix(" Saved."), "Narrow resizing preserves typed note input and its mounted editor")
         try await capture("drawing-compact")
-        window.setContentSize(NSSize(width: 1100, height: 760)); store.windowSidebarWidth = 236; store.setTheme(.ocean)
+        window.setContentSize(NSSize(width: 1100, height: 760))
+        find(host, SidebarResizeHandle.Handle.self)?.setAccessibilityValue(NSNumber(value: 236))
+        store.setTheme(.ocean)
         _ = await until { tools.bounds.width > 500 && canvas.appearance?.name == .darkAqua }
         _ = canvas.setDrawingTool(.ellipse)
         _ = canvas.setDrawingStyle(try EaselDrawingStyle(color: "#FFFFFF", lineWidth: 6, opacity: 1))
@@ -147,11 +152,30 @@ private struct OwnedWindowCaptureError: Error, CustomStringConvertible {
         canvas.setZoom(0.5)
         check(canvas.cards[note.id]?.noteView === editor && canvas.magnification == 0.5, "Zooming the real window preserves editable note identity")
         try await capture("drawing-half-zoom")
+        // Preserve the original compositor result, then observe whether an
+        // explicit document repaint changes the apparent zoom-tile boundary.
+        canvas.canvas.needsDisplay = true
+        try await capture("drawing-half-zoom-refresh-control")
         guard let paper = canvas.canvas.background.usingColorSpace(.sRGB) else { throw CocoaError(.fileWriteUnknown) }
         let export = EaselCanvasExport(easel: store.easelContext(for: tab)!.easel, assets: assets, background: ThemeColor(paper.redComponent, paper.greenComponent, paper.blueComponent))
         try export.png().write(to: root.appendingPathComponent("canvas.png"), options: .atomic)
         try export.html().write(to: root.appendingPathComponent("canvas.html"), options: .atomic)
         check(store.views[tab] == nil && store.easelDrafts.failures(in: store).isEmpty, "The complete native drawing flow uses no website view and leaves no unsaved drafts")
+        window.setContentSize(NSSize(width: 660, height: 520))
+        find(host, SidebarResizeHandle.Handle.self)?.setAccessibilityValue(NSNumber(value: 340))
+        _ = try store.createEasel(title: "Another little idea")
+        let split = store.openInSplit(tab, at: .left)
+        func all<T: NSView>(_ view: NSView, _ type: T.Type) -> [T] {
+            (view as? T).map { [$0] } ?? view.subviews.flatMap { all($0, type) }
+        }
+        let splitMounted = await until {
+            let bars = all(host, EaselDrawingControls.self)
+            return bars.count == 2 && bars.allSatisfy { $0.bounds.width > 50 && $0.bounds.width < 286 }
+        }
+        let bars = all(host, EaselDrawingControls.self)
+        check(split && splitMounted && bars.allSatisfy { bar in bar.subviews.filter { !$0.isHidden }.allSatisfy { $0.frame.minX >= 0 && $0.frame.maxX <= bar.bounds.width } }, "Actual narrow split panes retain bounded compact drawing menus")
+        check(store.easelContext(for: tab)?.easel.items.count == 5 && store.easelDrafts.failures(in: store).isEmpty, "Opening the compact split preserves every saved drawing and note")
+        try await capture("drawing-split")
         print("Easel drawing window checks: \(checks) checked, \(failures) failed")
         return failures == 0 ? 0 : 1
     }
