@@ -22,19 +22,15 @@ struct EaselPane: View {
                 ViewThatFits(in: .horizontal) {
                     toolbar(title: context.easel.title, compact: false)
                     toolbar(title: context.easel.title, compact: true)
-                }.padding(.horizontal, 14).padding(.vertical, 10).background(.thinMaterial)
+                    HStack(spacing: 0) { canvasActionMenu; Spacer(minLength: 0) }.controlSize(.small)
+                }.padding(.horizontal, 8).padding(.vertical, 10).background(.thinMaterial)
                 Divider()
                 EaselDrawingToolbar(canvas: canvas).frame(height: 36).background(.thinMaterial)
                 Divider()
                 EaselCanvasRepresentable(canvas: canvas, theme: store.activeTheme)
                     .overlay {
                         if context.easel.items.isEmpty && canvas.drawingTool == .select {
-                            VStack(spacing: 12) {
-                                Image(systemName: "square.stack.3d.up").font(.system(size: 34, weight: .light)).opacity(0.5)
-                                Text("A place to think.").font(.system(size: 26, weight: .medium, design: .rounded))
-                                Text("Draw, collect notes and keep your ideas together.").font(.callout).opacity(0.6)
-                                Button("Add your first note") { canvas.addNote() }.buttonStyle(.borderedProminent).tint(store.activeTheme.accent)
-                            }.padding(24).disabled(!store.canModifyLocalMetadata)
+                            emptyCanvasMessage.disabled(!store.canModifyLocalMetadata)
                         }
                     }
             }
@@ -47,10 +43,26 @@ struct EaselPane: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
-    @ViewBuilder private func toolbar(title: String, compact: Bool) -> some View {
-        if compact {
-            HStack(spacing: 8) {
-                Menu {
+    private var emptyCanvasMessage: some View {
+        ViewThatFits(in: .horizontal) {
+            VStack(spacing: 12) {
+                Image(systemName: "square.stack.3d.up").font(.system(size: 34, weight: .light)).opacity(0.5)
+                Text("A place to think.").font(.system(size: 26, weight: .medium, design: .rounded))
+                Text("Draw, collect notes and keep your ideas together.").font(.callout).opacity(0.6)
+                Button("Add your first note") { canvas.addNote() }.buttonStyle(.borderedProminent).tint(store.activeTheme.accent)
+            }.padding(24).fixedSize(horizontal: true, vertical: false)
+            VStack(spacing: 10) {
+                Image(systemName: "square.stack.3d.up").font(.title2).opacity(0.5)
+                Text("Start something.").font(.headline)
+                Button("Add Note") { canvas.addNote() }.buttonStyle(.borderedProminent).tint(store.activeTheme.accent).controlSize(.small)
+            }.padding(12).fixedSize()
+            Button { canvas.addNote() } label: { Image(systemName: "note.text.badge.plus") }
+                .buttonStyle(.borderedProminent).tint(store.activeTheme.accent)
+                .accessibilityLabel("Add a note").padding(4).fixedSize()
+        }
+    }
+    private var canvasActionMenu: some View {
+        Menu {
                     Button("Add Note") { canvas.addNote() }
                     Button("Add Link…") { canvas.requestLink() }
                     Button("Add Image…") { canvas.requestImageImport() }
@@ -72,9 +84,16 @@ struct EaselPane: View {
                         Button("Delete Selected Cards", role: .destructive) { canvas.deleteSelected() }
                     }.disabled(canvas.selection.isEmpty)
                     Divider()
+                    Button("Zoom In") { canvas.setZoom(canvas.magnification * 1.2) }
+                    Button("Zoom Out") { canvas.setZoom(canvas.magnification / 1.2) }
                     Button("Actual Size") { canvas.setZoom(1) }
                     Button("Fit Content") { canvas.fitContent() }
-                } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("Canvas actions")
+        } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("Canvas actions")
+    }
+    @ViewBuilder private func toolbar(title: String, compact: Bool) -> some View {
+        if compact {
+            HStack(spacing: 8) {
+                canvasActionMenu
                 Spacer(minLength: 0)
                 Button { canvas.setZoom(canvas.magnification / 1.2) } label: { Image(systemName: "minus.magnifyingglass") }.accessibilityLabel("Zoom out")
                 Text("\(Int(canvas.zoom * 100))%").font(.caption).monospacedDigit().frame(width: 36)
