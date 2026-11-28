@@ -65,6 +65,88 @@ import BrowserCore
         let arrowItem = try arrow.makeItem()
         check(arrowItem.frame.x >= 0 && arrowItem.frame.y >= 0 && arrowItem.frame.x + arrowItem.frame.width <= 16384, "A thick near-edge arrow keeps its complete head and stroke inside the board")
         check(try JSONDecoder().decode(EaselItem.self, from: JSONEncoder().encode(arrowItem)) == arrowItem, "Normalized gesture output satisfies the saved document decoder")
+        // Review R1: hand-selected 120% viewport coordinates previously failed
+        // strict path validation after local-coordinate subtraction rounded.
+        for (kind, start, end) in [
+            (EaselDrawingKind.line, try sample(4.0 / 1.2, 160), try sample(78.0 / 1.2, 160)),
+            (.line, try sample(78.0 / 1.2, 160), try sample(4.0 / 1.2, 160)),
+            (.rectangle, try sample(4.0 / 1.2, 160), try sample(78.0 / 1.2, 220.0 / 1.2)),
+            (.ellipse, try sample(4.0 / 1.2, 160), try sample(78.0 / 1.2, 220.0 / 1.2)),
+            (.ellipse, try sample(78.0 / 1.2, 220.0 / 1.2), try sample(4.0 / 1.2, 160))
+        ] {
+            do {
+                var input = try EaselDrawingGesture(kind: kind, style: style, start: start)
+                try input.append(end)
+                let item = try input.makeItem()
+                if case .drawing(let drawing) = item.content {
+                    let actualFirst = drawing.points.first!, actualLast = drawing.points.last!
+                    check(abs(item.frame.x + actualFirst.x - start.x) < 0.000001 && abs(item.frame.y + actualFirst.y - start.y) < 0.000001 &&
+                          abs(item.frame.x + actualLast.x - end.x) < 0.000001 && abs(item.frame.y + actualLast.y - end.y) < 0.000001,
+                          "Fractional-zoom \(kind) preserves valid endpoints and produces a saved drawing")
+                } else { check(false, "Fractional-zoom input remains a drawing") }
+            } catch { check(false, "Fractional-zoom \(kind) remains representable: \(error)") }
+        }
+        // Review R2: a large early landmark must survive repeated compaction,
+        // including its actually rendered quadratic apex, not only its bounds.
+        do {
+            var landmark = try EaselDrawingGesture(kind: .pen, style: style, start: sample(100, 100))
+            for i in 1...512 { try landmark.append(sample(100 + Double(i), 100 + Double(i))) }
+            for i in 1...512 { try landmark.append(sample(612 + Double(i), 612 - Double(i))) }
+            for i in 0..<32_680 { try landmark.append(sample(1124 + Double(i % 2), 100)) }
+            let item = try landmark.makeItem()
+            if case .drawing(let drawing) = item.content {
+                check(drawing.points.contains { abs(item.frame.x + $0.x - 612) < 0.000001 && abs(item.frame.y + $0.y - 612) < 0.000001 },
+                      "Repeated compaction keeps the large early triangle landmark")
+                var current = try EaselDrawingPoint(x: 0, y: 0), maximumY = 0.0
+                for command in drawing.path.commands {
+                    switch command {
+                    case .move(let point), .line(let point): current = point; maximumY = max(maximumY, point.y)
+                    case .quadratic(let control, let end):
+                        for step in 0...100 {
+                            let t = Double(step) / 100, u = 1 - t
+                            maximumY = max(maximumY, u * u * current.y + 2 * u * t * control.y + t * t * end.y)
+                        }
+                        current = end
+                    default: break
+                    }
+                }
+                check(item.frame.y + maximumY >= 611.5, "The simplified rendered curve retains the hand-derived 611.75-point triangle apex")
+            } else { check(false, "The compacted landmark remains drawing content") }
+        } catch { check(false, "A triangle followed by a simple tail remains representable: \(error)") }
+        var fractionalSweepFailures = 0
+        for zoom in [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.1, 1.2, 1.25, 1.5, 1.75, 2] {
+            for base in [0.0, 10_000, 15_000] {
+                for width in [1.0, 4, 32] {
+                    for kind in [EaselDrawingKind.pen, .line, .arrow, .rectangle, .ellipse] {
+                        do {
+                            let ink = try EaselDrawingStyle(color: "#3466CC", lineWidth: width, opacity: 1)
+                            var input = try EaselDrawingGesture(kind: kind, style: ink, start: sample(base + 100 + 100.1 / zoom, 100 + 120.2 / zoom))
+                            try input.append(sample(base + 100 + 200.3 / zoom, 100 + 220.4 / zoom))
+                            _ = try input.makeItem()
+                        } catch {
+                            fractionalSweepFailures += 1
+                            if fractionalSweepFailures <= 5 { print("FRACTIONAL_SWEEP_FAILURE", kind, zoom, base, width, error) }
+                        }
+                    }
+                }
+            }
+        }
+        check(fractionalSweepFailures == 0, "Fractional input stays representable across twelve zooms, three board positions and all pen widths/kinds")
+        var complex = try EaselDrawingGesture(kind: .pen, style: style, start: sample(200, 200))
+        var seed: UInt64 = 93, reportedComplexity = false, unchangedOnRefusal = false
+        for _ in 0..<8192 {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            let x = 100 + Double((seed >> 32) % 500)
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            let y = 100 + Double((seed >> 32) % 500)
+            let previous = complex.samples
+            do { try complex.append(sample(x, y)) }
+            catch EaselDrawingGestureError.tooComplex {
+                reportedComplexity = true; unchangedOnRefusal = complex.samples == previous; break
+            }
+        }
+        check(reportedComplexity && unchangedOnRefusal && complex.samples.count <= 4096,
+              "An unsimplifiable stroke reports its limit without truncating or mutating its last valid preview")
         print("Easel drawing gesture checks: \(checked) checked, \(failed) failed")
         if failed != 0 { exit(1) }
     }

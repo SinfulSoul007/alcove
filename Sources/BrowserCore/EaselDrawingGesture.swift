@@ -18,6 +18,7 @@ public struct EaselDrawingGesture: Sendable {
     public private(set) var samples: [EaselCanvasSample]
     public private(set) var didCompactSamples = false
     private var minX: Double, minY: Double, maxX: Double, maxY: Double
+    private var preservedSampleCount = 0
     private var margin: Double {
         style.lineWidth / 2 + (kind == .arrow ? max(12, 3 * style.lineWidth) / 2 : 0)
     }
@@ -36,9 +37,8 @@ public struct EaselDrawingGesture: Sendable {
         guard point != samples.last else { return }
         if kind == .pen {
             if samples.count == 4096 {
-                // Retain the initial sample and every other interior sample;
-                // the newest endpoint is appended below, never dropped.
-                samples = stride(from: 0, to: samples.count, by: 2).map { samples[$0] }
+                let compacted = try EaselDrawingSimplifier.compact(samples, preservedCount: preservedSampleCount)
+                samples = compacted; preservedSampleCount = compacted.count
                 didCompactSamples = true
             }
             samples.append(point)
@@ -57,7 +57,14 @@ public struct EaselDrawingGesture: Sendable {
         guard width <= 4096, height <= 4096 else { throw EaselError.invalidFrame }
         let x = min(EaselFrame.canvasSize - width, max(0, minX - margin - (width - inkWidth) / 2))
         let y = min(EaselFrame.canvasSize - height, max(0, minY - margin - (height - inkHeight) / 2))
-        let points = try samples.map { try EaselDrawingPoint(x: $0.x - x, y: $0.y - y) }
+        // The frame already encloses these samples plus the complete ink margin.
+        // Subtraction at fractional zoom can put a mathematically-on-edge point
+        // one ULP outside that interior. Normalize it here; saved-data validation
+        // remains exact and still rejects externally supplied clipped geometry.
+        let points = try samples.map {
+            try EaselDrawingPoint(x: min(width - margin, max(margin, $0.x - x)),
+                                  y: min(height - margin, max(margin, $0.y - y)))
+        }
         let drawing = try EaselDrawing(kind: kind, viewBoxWidth: width, viewBoxHeight: height, points: points, style: style)
         return try EaselItem(id: id, frame: EaselFrame(x: x, y: y, width: width, height: height), content: .drawing(drawing))
     }
