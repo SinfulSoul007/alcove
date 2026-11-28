@@ -8,6 +8,8 @@ A native, open-source WebKit browser for Mac, inspired by Arc’s sidebar, Space
 
 Download **0.21.0 preview**: [DMG](https://github.com/SinfulSoul007/alcove/releases/download/v0.21.0-preview.1/Alcove-0.21.0-universal-unsigned-preview.dmg) · [ZIP](https://github.com/SinfulSoul007/alcove/releases/download/v0.21.0-preview.1/Alcove-0.21.0-universal-unsigned-preview.zip) · [Release notes and verification](docs/releases/0.21.0-preview-verification.md).
 
+The development branch is preparing 0.22 with native Easels: notes, links, images, editable pen and shape drawings, undo and PNG/HTML export. See [drawing verification and remaining release checks](docs/goal/easel-drawing-verification.md). These features are not included in the public 0.21 download.
+
 Open the DMG and drag **Alcove.app** to Applications, or unzip it and move the app there. Quit an existing Alcove before replacing it. Both downloads contain the same universal app. [GitHub Releases](https://github.com/SinfulSoul007/alcove/releases) retains earlier previews.
 
 **The preview is ad hoc signed, not Developer ID signed or notarized by Apple.** Gatekeeper may warn or block it. Do not disable Gatekeeper or other system protections to run it. If macOS blocks this preview, build from source or wait for a notarized release. Published SHA-256 checksums identify the release files; they are not an independent security certification.

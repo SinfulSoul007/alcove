@@ -3,8 +3,7 @@ import BrowserCore
 import CryptoKit
 
 @main struct EaselDrawingInteractionChecks {
-    @MainActor static func main() async throws {
-        NSApplication.shared.setActivationPolicy(.prohibited); setbuf(stdout, nil)
+    @MainActor static func run() async throws -> Int32 {
         var checked = 0, failed = 0
         func check(_ ok: Bool, _ name: String) { checked += 1; if !ok { failed += 1 }; print("\(ok ? "PASS" : "FAIL"): \(name)") }
         let store = BrowserStore(isPrivate: true); defer { store.shutdown() }
@@ -15,6 +14,9 @@ import CryptoKit
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 650), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = canvas; canvas.layoutSubtreeIfNeeded()
         defer { window.contentView = nil; window.close() }
+        window.makeKeyAndOrderFront(nil); NSApplication.shared.activate(ignoringOtherApps: true)
+        for _ in 0..<100 { if window.isKeyWindow && NSApp.isActive { break }; try await Task.sleep(for: .milliseconds(20)) }
+        check(window.isKeyWindow && NSApp.isActive, "Mounted gesture checks own an actually active key window")
         let card = canvas.cards[note.id]!, text = card.noteView!
         window.makeFirstResponder(text)
         text.insertText(" input", replacementRange: NSRange(location: (text.string as NSString).length, length: 0))
@@ -159,6 +161,14 @@ import CryptoKit
                   "Explicit drawing recovery publishes one shared mark to both actual window owners")
         } else { check(false, "The shared-writer conflict preserves a complete recoverable drawing") }
         print("Easel drawing interaction checks: \(checked) checked, \(failed) failed")
-        if failed != 0 { exit(1) }
+        return failed == 0 ? 0 : 1
+    }
+    @MainActor static func main() {
+        NSApplication.shared.setActivationPolicy(.regular); setbuf(stdout, nil)
+        Task { @MainActor in
+            do { exit(try await run()) }
+            catch { print("FAIL: drawing interaction fixture: \(error)"); exit(1) }
+        }
+        NSApplication.shared.run()
     }
 }

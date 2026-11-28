@@ -55,7 +55,7 @@ Export background uses the existing Sendable `ThemeColor`: `EaselCanvasExport(ea
 
 **Interfaces:** Published canvas tool/style, begin/preview/commit/cancel drawing methods scoped to captured `EaselTabContext`. Bounded samples retain first/current points, native overlay intercepts only drawing gestures; commit calls existing history transaction once. Tool actions finalize notes through current board preflight.
 
-- [ ] Write RED real-input checks: dots/drags at magnification, continuous previews without persistence/editor remount, single-step undo/redo, cancel/Escape, missing/stale/replaced board/profile, failed save, sibling conflict, long gesture/sample compaction, note/IME shortcut guards, toolbar widths and accessible labels.
+- [x] Write RED real-input checks: dots/drags at magnification, continuous previews without persistence/editor remount, single-step undo/redo, cancel/Escape, missing/stale/replaced board/profile, failed save, sibling conflict, long gesture/sample compaction, note/IME shortcut guards, toolbar widths and accessible labels.
 - [ ] Implement tools, palette/thickness/opacity, native preview/path interaction and compact controls. Preserve pending mark/error for retry where safe; explicit cancellation after scope retirement. Run all new and relevant current native/window/export regressions; observe actual typed/dragged UI and owned captures. Commit and task-done.
 
 ### Task 4: Whole-feature qualification

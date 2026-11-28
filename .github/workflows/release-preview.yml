@@ -175,6 +175,10 @@ jobs:
           cat > release-notes.txt <<'NOTE'
           Universal macOS 14+ preview for Apple Silicon and Intel.
 
+          Easels keep notes, links, images and editable drawings in the selected profile. Select, Pen, Line, Arrow, Rectangle and Ellipse share color, thickness and opacity controls, with compact menus for narrow panes. Draw above existing cards, then select, move, resize, layer or undo the complete mark. PNG and standalone HTML exports retain drawing paths and the visible canvas paper color.
+
+          A completed mark that cannot save remains available for Retry, explicit recovery or discard. Conflicting annotations keep their original placement; recovery into the current canvas supports Undo. Full canvases offer Save in New Easel. Interrupted strokes cancel when the window or application loses focus. Normal Easels use encrypted metadata; private Easels remain in memory. This release writes metadata format 10; older versions must not be used to edit the upgraded document.
+
           Reader mode prepares HTML articles locally with Mozilla Readability. Use View → Show Reader for the focused page. The article has light, sepia and dark themes, serif/sans type, size/width controls and its own Find/zoom. Typography changes preserve the visible passage. The original page, unsaved form and scroll remain available when Reader closes. Article scripts, remote images and extension injection do not run in the separate Reader view. Print/save actions explicitly use the original page.
 
           File → Export Bookmarks HTML… saves the selected normal profile's Favorites, pinned pages, folders and library bookmarks in browser-compatible HTML. Other profiles, Today, history, cookies and private browsing are excluded. The export uses saved pin addresses and custom names. The file contains readable titles and URLs outside Alcove's encrypted library; the native save sheet explains this before saving.
