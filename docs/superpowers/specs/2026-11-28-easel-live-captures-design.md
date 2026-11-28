@@ -29,7 +29,7 @@ Add immutable Codable/Equatable/Sendable `EaselLiveCapture` content containing:
 - The existing preview asset UUID and pixel width/height, with the same image bounds:1...16384 per side and40,000,000 pixels maximum.
 - HTTP(S) source URL, at most8192 UTF-8 bytes, without user/password, controls or invalid port; nonempty source title at most256 UTF-8 bytes. Reuse the existing URL/title validation policy.
 - Captured viewport width/height in native WKWebView bounds points, each finite and1...8192; captured page zoom finite and0.5...3; document scroll x/y in CSS points, finite and0...16,777,216.
-- A normalized crop rectangle with finite x/y in0...1, width/height greater than zero, and right/bottom no greater than1. Decode through the same validating initializer.
+- A normalized crop rectangle with finite x/y in0...1, width/height greater than zero, and right/bottom no greater than1. Decode through the same validating initializer. A complete live definition requires its cropped width and height to be at least1 native viewport point, preventing unusably small regions and unbounded inverse scaling.
 
 Use a dedicated typed content case and metadata format11. Existing format10 documents remain readable; older readers must refuse editing a newer format. Retain the500-item and16384 canvas bounds. Live preview assets participate in the same reference accounting, recovery, profile erasure, offline export and quotas as image assets.
 

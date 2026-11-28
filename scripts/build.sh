@@ -32,6 +32,11 @@ run_easel_drawing_core_checks() {
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselDrawingGestureChecks.swift -o "$MANUAL/easel-drawing-gesture-checks"
     "$MANUAL/easel-drawing-gesture-checks"
 }
+run_easel_live_core_checks() {
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselLiveCaptureCoreChecks.swift -o "$MANUAL/easel-live-core-checks"
+    "$MANUAL/easel-live-core-checks"
+}
+if [[ "${ALCOVE_EASEL_LIVE_CORE_ONLY:-0}" == 1 ]]; then run_easel_core_checks; run_easel_drawing_core_checks; run_easel_live_core_checks; exit; fi
 if [[ "${ALCOVE_EASEL_DRAWING_CORE_ONLY:-0}" == 1 ]]; then run_easel_core_checks; run_easel_drawing_core_checks; exit; fi
 if [[ "${ALCOVE_EASEL_CORE_ONLY:-0}" == 1 ]]; then run_easel_core_checks; exit; fi
 run_easel_route_checks() {
@@ -577,6 +582,7 @@ if [[ "${1:-}" == "test" ]]; then
     run_easel_route_checks
     run_easel_core_checks
     run_easel_drawing_core_checks
+    run_easel_live_core_checks
     run_easel_drawing_native_checks
     run_bookmark_export_core_checks
     run_bookmark_export_store_checks

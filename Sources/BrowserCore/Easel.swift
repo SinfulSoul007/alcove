@@ -50,7 +50,7 @@ public enum EaselItemContent: Codable, Equatable, Sendable {
               c.port.map({ (1...65535).contains($0) }) ?? true, c.url != nil else { return false }
         return true
     }
-    fileprivate func validate() throws {
+    func validate() throws {
         switch self {
         case .note(let text): guard text.utf8.count <= 16384 else { throw EaselError.invalidContent }
         case .link(let title, let url):

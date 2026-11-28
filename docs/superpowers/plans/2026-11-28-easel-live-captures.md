@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Native captured viewport width/height1...8192 points; CSS document scroll x/y0...16,777,216; pageZoom0.5...3; all finite. Normalized crop x/y0...1, width/height>0 and right/bottom<=1.
+- Native captured viewport width/height1...8192 points; CSS document scroll x/y0...16,777,216; pageZoom0.5...3; all finite. Normalized crop x/y0...1, width/height>0 and right/bottom<=1. Complete definitions require at least1 native cropped point per side.
 - Preview dimensions1...16384, at most40,000,000 pixels; source HTTP(S) URL<=8192 UTF-8/no credentials/controls/invalid port; title nonempty<=256 UTF-8. Reuse existing image/link validation.
 - Metadata format11 at content integration; preserve format10 readers/migration and refuse editing unsupported newer documents. Keep500 items/16384 canvas,128MiB HTML and16MP/8192px PNG bounds.
 - Opening a saved board never starts live network pages. Play is explicit; normal definitions/assets stay encrypted, private stays memory-only/no normal key. Capture deadline20seconds.
@@ -34,9 +34,9 @@
 
 **Interfaces:** Public immutable Codable/Equatable/Sendable `EaselCaptureViewport(width:height:scrollX:scrollY:pageZoom:)`, `EaselCaptureCrop(x:y:width:height:)`, `EaselLiveCapture(previewAssetID:pixelWidth:pixelHeight:sourceURL:sourceTitle:viewport:crop:)`. Fields use the spec's exact names/units/bounds. Reuse current image-content validation internally, without widening public validation API or adding the new content case yet.
 
-- [ ] Write independent pure checks for roundtrip, all endpoints/nonfinite/negative/out-of-bounds geometry, overflowing normalized sums, image area bounds, source credentials/control/port/title limits and corrupt decoded fields. Run before implementation; expect missing types.
-- [ ] Implement validating initializers and decoding. Run focused checks plus the existing complete core/asset/drawing/document tests; expect no failures without opening an app. Add `ALCOVE_EASEL_LIVE_CORE_ONLY=1` to select that command and integrate these checks into the default suite.
-- [ ] Strict whole-app typecheck using the pinned compatible SDK; commit and task-done with `env ALCOVE_EASEL_LIVE_CORE_ONLY=1 ./scripts/build.sh`.
+- [x] Write independent pure checks for roundtrip, all endpoints/nonfinite/negative/out-of-bounds geometry, overflowing normalized sums, image area bounds, source credentials/control/port/title limits and corrupt decoded fields. Run before implementation; expect missing types.
+- [x] Implement validating initializers and decoding. Run focused checks plus the existing complete core/asset/drawing/document tests; expect no failures without opening an app. Add `ALCOVE_EASEL_LIVE_CORE_ONLY=1` to select that command and integrate these checks into the default suite.
+- [x] Strict whole-app typecheck using the pinned compatible SDK; commit and task-done with `env ALCOVE_EASEL_LIVE_CORE_ONLY=1 ./scripts/build.sh`.
 
 ### Task 2: Content, atomic capture, fallback rendering and inert export
 
