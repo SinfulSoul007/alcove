@@ -103,6 +103,17 @@ import CryptoKit
         let weakCanvases = NSHashTable<EaselCanvasView>.weakObjects()
         weakCanvases.add(normalCanvas!)
         normalCanvas = nil
+        let stockWeak = NSHashTable<NSScrollView>.weakObjects()
+        var stockView: NSScrollView? = NSScrollView(frame: .zero)
+        stockWeak.add(stockView!); stockView = nil
+        let pooledStock = NSHashTable<NSScrollView>.weakObjects()
+        autoreleasepool { let view = NSScrollView(frame: .zero); pooledStock.add(view) }
+        let pooledCanvas = NSHashTable<EaselCanvasView>.weakObjects()
+        autoreleasepool {
+            let view = EaselCanvasView(store: normal, tabID: normalTab)
+            view.drawing.cancel(); pooledCanvas.add(view)
+        }
+        print("DRAWING_LIFETIME_OBSERVATION canvas=\(weakCanvases.allObjects.count) stock=\(stockWeak.allObjects.count) pooledStock=\(pooledStock.allObjects.count) pooledCanvas=\(pooledCanvas.allObjects.count) pendingMatches=\(normal.easelDrafts.failures(in: normal).first?.pendingDrawing == expectedMark)")
         check(weakCanvases.allObjects.isEmpty && normal.easelDrafts.failures(in: normal).first?.pendingDrawing == expectedMark, "A failed completed mark survives destruction of its canvas view")
         try FileManager.default.removeItem(at: normal.sessionURL); try FileManager.default.moveItem(at: backup, to: normal.sessionURL)
         _ = normal.unlockLocalData()

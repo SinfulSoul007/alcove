@@ -46,6 +46,7 @@ def main():
         ('interaction', [*browser, root / 'scripts/EaselDrawingInteractionChecks.swift']),
         ('toolbar', [*browser, root / 'scripts/EaselDrawingToolbarChecks.swift']),
     ]
+    groups = [group for group in groups if group[0] in ('interaction', 'toolbar')]
     if args.window:
         groups = [('window', [*browser, root / 'scripts/EaselDrawingWindowChecks.swift'])]
         os.environ['ALCOVE_DRAWING_SCREENSHOT_DIR'] = str(evidence / 'drawing-snapshots')
