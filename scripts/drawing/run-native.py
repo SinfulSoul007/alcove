@@ -15,6 +15,7 @@ def main():
     mode.add_argument('--regressions', action='store_true')
     mode.add_argument('--interaction', action='store_true', help='Run the native interaction and toolbar checks only')
     mode.add_argument('--window', action='store_true', help='Run the owned browser-window input and OS capture witness')
+    mode.add_argument('--restore-window', action='store_true', help='Verify normal UI recovery/cold restore and private retirement')
     args = parser.parse_args()
     if not args.compile_only and os.environ.get('GITHUB_ACTIONS') != 'true':
         model = subprocess.check_output(['sysctl', '-n', 'hw.model'], text=True).strip()
@@ -51,6 +52,9 @@ def main():
         groups = [group for group in groups if group[0] in ('interaction', 'toolbar')]
     if args.window:
         groups = [('window', [*browser, root / 'scripts/EaselDrawingWindowChecks.swift'])]
+        os.environ['ALCOVE_DRAWING_SCREENSHOT_DIR'] = str(evidence / 'drawing-snapshots')
+    if args.restore_window:
+        groups = [('restore-window', [*browser, root / 'scripts/EaselDrawingRestoreWindowChecks.swift'])]
         os.environ['ALCOVE_DRAWING_SCREENSHOT_DIR'] = str(evidence / 'drawing-snapshots')
     if args.regressions:
         for label, fixture, helpers in [
