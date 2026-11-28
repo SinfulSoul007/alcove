@@ -48,7 +48,7 @@ def main():
         ('stores', [*browser, root / 'scripts/EaselDrawingStoreChecks.swift']),
         ('interaction', [*browser, root / 'scripts/EaselDrawingInteractionChecks.swift']),
         ('toolbar', [*browser, root / 'scripts/EaselDrawingToolbarChecks.swift']),
-        ('review', [*browser, root / 'scripts/EaselDrawingReviewChecks.swift']),
+        ('review', [*browser, root / 'scripts/OwnedBrowserAXChecks.swift']),
     ]
     if args.interaction:
         groups = [group for group in groups if group[0] in ('interaction', 'toolbar')]
@@ -59,7 +59,7 @@ def main():
         groups = [('restore-window', [*browser, root / 'scripts/EaselDrawingRestoreWindowChecks.swift'])]
         os.environ['ALCOVE_DRAWING_SCREENSHOT_DIR'] = str(evidence / 'drawing-snapshots')
     if args.review:
-        groups = [('review', [*browser, root / 'scripts/EaselDrawingReviewChecks.swift'])]
+        groups = [('review', [*browser, root / 'scripts/OwnedBrowserAXChecks.swift'])]
     if args.regressions:
         for label, fixture, helpers in [
             ('old-canvas', 'EaselCanvasChecks', []),
