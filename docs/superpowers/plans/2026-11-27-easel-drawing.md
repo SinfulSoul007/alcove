@@ -56,16 +56,22 @@ Export background uses the existing Sendable `ThemeColor`: `EaselCanvasExport(ea
 **Interfaces:** Published canvas tool/style, begin/preview/commit/cancel drawing methods scoped to captured `EaselTabContext`. Bounded samples retain first/current points, native overlay intercepts only drawing gestures; commit calls existing history transaction once. Tool actions finalize notes through current board preflight.
 
 - [x] Write RED real-input checks: dots/drags at magnification, continuous previews without persistence/editor remount, single-step undo/redo, cancel/Escape, missing/stale/replaced board/profile, failed save, sibling conflict, long gesture/sample compaction, note/IME shortcut guards, toolbar widths and accessible labels.
-- [ ] Implement tools, palette/thickness/opacity, native preview/path interaction and compact controls. Preserve pending mark/error for retry where safe; explicit cancellation after scope retirement. Run all new and relevant current native/window/export regressions; observe actual typed/dragged UI and owned captures. Commit and task-done.
+- [x] Implement tools, palette/thickness/opacity, native preview/path interaction and compact controls. Preserve pending mark/error for retry where safe; explicit cancellation after scope retirement. Run all new and relevant current native/window/export regressions; observe actual typed/dragged UI and owned captures. Commit and task-done.
 
 ### Task 4: Whole-feature qualification
 
 **Files:** Update acceptance/release verification docs and required checks; actual fixes follow one final whole-feature review.
 
-- [ ] Run complete suite, both optimized architectures and universal package verification against the exact feature source. Download/authenticate/mount the produced package. Observe normal/private save/reopen, undo, drawing over images, toolbar resizing and PNG/HTML outputs with native UI.
-- [ ] Obtain one fresh whole-feature review from1136915 through final implementation. Re-grade, fix consequential findings once with RED→GREEN cases and green suite; retain manual AX/hardware/installed/public gates honestly.
-- [ ] Commit/push verified work; keep broader full-browser and older editor acceptance requirements active. Publish only after applicable release gates; do not claim the entire browser finished.
+- [x] Run complete suite, both optimized architectures and universal package verification against the exact feature source. Download/authenticate/mount the produced package. Observe normal/private save/reopen, undo, drawing over images, toolbar resizing and PNG/HTML outputs with native UI.
+- [x] Obtain one fresh whole-feature review from1136915 through final implementation. Re-grade, fix consequential findings once with RED→GREEN cases and green suite; retain manual AX/hardware/installed/public gates honestly.
+- [x] Commit/push verified work; keep broader full-browser and older editor acceptance requirements active. Publish only after applicable release gates; do not claim the entire browser finished.
 
 ## Pre-flight
 
 Task2 consumes Task1 immutable validated paths; no web parser or duplicated path algorithm. Task3 consumes Task2 content/rendering and existing revision history; a preview must not enter persistence/export before commit. Task4 covers the combined drawing/editor/export behavior. Native/Apple signing prerequisites remain external and do not waive the drawing gates.
+
+## Completed drawing candidate evidence
+
+The drawing implementation and its single review fix pass are qualified at `d761d4928856cf186cb63d7d6ae414b0a6dcf828`. [Final exact-source CI](https://github.com/SinfulSoul007/alcove/actions/runs/46104385927) completed with 4,227 passing results and no failures, including both optimized architectures. Its authenticated universal ZIP and DMG passed an independent read-only mount, signature/resource comparison and eject. The 101-check native fix pass and 35-check resolved-banner followup cover genuine drawing input, normal/private persistence, conflict recovery and narrow/split controls; all final followup application sources match the release candidate. One whole-feature review was performed; all six consequential findings received observed RED-to-GREEN verification.
+
+This completion covers the drawing component. Actual IME composition while clicking its toolbar remains a deferred coverage minor. Broader VoiceOver, physical hardware, minimum OS, performance, installed/public distribution, older editor acceptance and full-browser/engine requirements remain active. The later `fb3b90b` / 0.22.1 Keychain change has its own full-CI and packaged-app gates. This does not declare a public 0.22 release or a finished browser.

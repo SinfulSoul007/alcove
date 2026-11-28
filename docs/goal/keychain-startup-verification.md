@@ -20,8 +20,16 @@ The candidate retains the existing LAContext policy and serializes our metadata 
 
 These durations only bound the observed Keychain operation; they are not browser performance measurements. The permanent owned-item regression runs in the source/package CI and its native platform matrix. It never accesses the real Alcove, user or publisher namespaces.
 
+## Actual browser update behavior
+
+[Real-app update checks](https://github.com/SinfulSoul007/alcove/actions/runs/46114204213) passed30 checks with zero failures on native Apple Silicon and Intel. The original authenticated internal installer creates and cold-restores a note using the real default Keychain. The unchanged-source0.22.1 candidate is then built normally and copied to the exact same Applications path. Its changed binary exposes explicit local-data recovery without opening an automatic authorization dialog, and its private window opens independently. The original encrypted session remains byte-identical. Restoring the original app bytes still decrypts the original note. Both runs authenticate194 exact candidate input hashes and11 actual compositor capture receipts. No test key provider, application arguments or runtime transport are injected.
+
+This verifies the normal source-built candidate and denied-access behavior. It does not qualify the final universal artifact, successful changed-app explicit authorization or private HTTP navigation. The internal original app is a drawing development build labelled0.21; it is not the public0.21 release. Its restoration is an identity/key-preservation test, not a supported document downgrade.
+
+The dedicated VM's `Programming/browser` source and build now match0.22.1/build34. The obsolete0.22 process was quit normally and its waiting authorization request is no longer active. The previous app bundle is backed up. Live testing of the new app awaits an unlocked VM desktop; no password or lock/security setting is changed by this fix.
+
 ## Remaining gates
 
-The actual followup packaged app still needs startup/recovery/private-window and protected cold-restore checks, including changed-binary explicit authorization. The original0.22 source full-suite job remains independent; its artifact cannot qualify a later source change. Current-source full checks, both optimized architectures and independently verified ZIP/DMG remain required before publication. No followup release is public yet.
+The actual final universal app still needs fresh startup, real normal/private website browsing, pinned-folder restoration, protected cold restore and independent ZIP/DMG checks. [Full current-source CI](https://github.com/SinfulSoul007/alcove/actions/runs/46112023009) is running. The earlier0.22 drawing-source fullCI passed4,227 results and independent package verification, but cannot qualify this later Keychain change. No followup release is public yet.
 
-The existing VM0.22 build reproduced a real macOS Keychain prompt after a binary change. That older running process is waiting for user authorization and is not modified in place. Same-binary installed restarts passed on ARM and Intel but do not prove signing continuity. Stable signing identity, seamless unsigned updates, actual macOS14, consumer hardware, quarantine/Gatekeeper, broad accessibility, Chrome/uBlock compatibility and broader security review remain open.
+Successful changed-binary explicit authorization remains open. Same-binary restarts and restoring the original binary do not prove signing continuity. Stable signing identity, seamless unsigned updates, actual macOS14, consumer hardware, quarantine/Gatekeeper, broad accessibility, Chrome/uBlock compatibility and broader security review remain open.
