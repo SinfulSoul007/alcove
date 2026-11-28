@@ -67,7 +67,9 @@ public struct EaselHTMLExport: Sendable {
             case .note(let text): try append(escaped(text))
             case .link(let title, let url): try append(link(title, url))
             case .drawing(let drawing): try append(EaselDrawingSVG.markup(for: drawing))
-            case .image(let id, _, _, let url, let title):
+            case .image, .liveCapture:
+                guard let preview = item.content.imagePreview else { throw EaselExportError.invalidImage }
+                let id = preview.assetID, url = preview.sourceURL, title = preview.sourceTitle
                 let encoded: String
                 if let existing = images[id] { encoded = existing }
                 else {

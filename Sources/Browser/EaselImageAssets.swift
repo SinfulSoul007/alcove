@@ -66,7 +66,7 @@ extension BrowserStore {
         let writer = isPrivate ? self : metadataWriter
         let assets = try easelAssets(for: profile)
         var retained = Set((library(for: profile).easels ?? []).flatMap(\.items).compactMap { item -> UUID? in
-            if case .image(let id, _, _, _, _) = item.content { return id }; return nil
+            item.content.previewAssetID
         })
         for canvas in writer.easelCanvasViews.allObjects { retained.formUnion(canvas.retainedImageIDs(profile: profile)) }
         try assets.prune(retaining: retained)

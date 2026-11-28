@@ -39,6 +39,17 @@ public enum EaselItemContent: Codable, Equatable, Sendable {
     case link(title: String, url: String)
     case image(assetID: UUID, pixelWidth: Int, pixelHeight: Int, sourceURL: String?, sourceTitle: String?)
     case drawing(EaselDrawing)
+    case liveCapture(EaselLiveCapture)
+
+    public var previewAssetID: UUID? { imagePreview?.assetID }
+    public var imagePreview: (assetID: UUID, pixelWidth: Int, pixelHeight: Int, sourceURL: String?, sourceTitle: String?)? {
+        switch self {
+        case .image(let id, let width, let height, let url, let title): return (id, width, height, url, title)
+        case .liveCapture(let capture):
+            return (capture.previewAssetID, capture.pixelWidth, capture.pixelHeight, capture.sourceURL, capture.sourceTitle)
+        case .note, .link, .drawing: return nil
+        }
+    }
 
     private static func validTitle(_ title: String) -> Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && title.utf8.count <= 256
@@ -58,7 +69,7 @@ public enum EaselItemContent: Codable, Equatable, Sendable {
         case .image(_, let width, let height, let url, let title):
             guard (1...16384).contains(width), (1...16384).contains(height), width * height <= 40_000_000,
                   url.map(Self.validURL) ?? true, title.map(Self.validTitle) ?? true else { throw EaselError.invalidContent }
-        case .drawing: break // Immutable drawing values validate at construction and decode.
+        case .drawing, .liveCapture: break // Immutable values validate at construction and decode.
         }
     }
 }

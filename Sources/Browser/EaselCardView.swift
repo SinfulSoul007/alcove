@@ -75,7 +75,7 @@ import BrowserCore
             let button = NSButton(title: "", target: self, action: #selector(openLink))
             button.bezelStyle = .inline; button.isBordered = false; button.alignment = .left; button.lineBreakMode = .byTruncatingTail
             button.font = .systemFont(ofSize: 15, weight: .medium); linkButton = button; addSubview(button)
-        case .image:
+        case .image, .liveCapture:
             let content = EaselImageCardContent(frame: .zero); imageContent = content; addSubview(content)
             let source = NSButton(title: "", target: self, action: #selector(openImageSource))
             source.isBordered = false; source.alignment = .left; source.lineBreakMode = .byTruncatingTail
@@ -89,7 +89,7 @@ import BrowserCore
         switch item.content {
         case .note: return noteView != nil
         case .link: return linkButton != nil
-        case .image: return imageContent != nil
+        case .image, .liveCapture: return imageContent != nil
         case .drawing: return drawing != nil
         }
     }
@@ -119,12 +119,13 @@ import BrowserCore
             if let draftKey { store.easelDrafts.attach(self, for: draftKey) }
             setAccessibilityLabel("Note card")
         case .link(let title, let url): linkButton?.title = "↗  " + title; linkURL = url; linkButton?.toolTip = url; setAccessibilityLabel(title)
-        case .image(let asset, _, _, let url, let title):
+        case .image, .liveCapture:
+            guard let preview = item.content.imagePreview else { return }
+            let asset = preview.assetID, url = preview.sourceURL, title = preview.sourceTitle
             savedItem = item
             imageContent?.configure(store: store, profile: context.profileID, asset: asset, isCurrent: { [weak self] in
-                guard let self, self.isCurrent, let actual = self.owner?.context?.easel.items.first(where: { $0.id == self.itemID }),
-                      case .image(let currentAsset, _, _, _, _) = actual.content else { return false }
-                return currentAsset == asset
+                guard let self, self.isCurrent, let actual = self.owner?.context?.easel.items.first(where: { $0.id == self.itemID }) else { return false }
+                return actual.content.previewAssetID == asset
             })
             imageSource?.title = "↗  " + (title ?? url ?? "")
             imageSource?.toolTip = url; imageSource?.isHidden = url == nil
@@ -207,8 +208,8 @@ import BrowserCore
     }
     @objc private func openLink() { if isCurrent, owner?.activate() == true, let linkURL, let url = URL(string: linkURL) { _ = owner?.store?.newTab(url: url) } }
     @objc private func openImageSource() {
-        guard isCurrent, owner?.activate() == true, case .image(_, _, _, let source, _) = savedItem.content,
-              let source, let url = URL(string: source) else { return }
+        guard isCurrent, owner?.activate() == true, let source = savedItem.content.imagePreview?.sourceURL,
+              let url = URL(string: source) else { return }
         _ = owner?.store?.newTab(url: url)
     }
     func beginDrag(resizing: Bool) -> Bool { isCurrent && (owner?.beginGesture(itemID: itemID, resizing: resizing) ?? false) }

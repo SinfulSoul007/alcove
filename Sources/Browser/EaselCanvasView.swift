@@ -201,7 +201,7 @@ import Combine
         }
         historyRevision = expected
         historyImageIDs.formUnion(snapshot.items.compactMap { item -> UUID? in
-            if case .image(let id, _, _, _, _) = item.content { return id }; return nil
+            item.content.previewAssetID
         })
         let grouped = !history.isUndoing && !history.isRedoing
         if grouped { history.beginUndoGrouping() }

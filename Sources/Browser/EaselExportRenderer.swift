@@ -59,7 +59,9 @@ struct EaselCanvasExport: Sendable {
                 case .note(let text): Self.draw(text, in: textRect, size: 14, context: context)
                 case .link(let title, let url): Self.draw("↗ " + title + "\n" + url, in: textRect, size: 14, context: context, link: true)
                 case .drawing: break // Drawing layers are handled before any card fill or clipping.
-                case .image(let id, _, _, let source, let title):
+                case .image, .liveCapture:
+                    guard let preview = item.content.imagePreview else { throw EaselExportError.invalidImage }
+                    let id = preview.assetID, source = preview.sourceURL, title = preview.sourceTitle
                     guard let bytes = try assets.read(id) else { throw EaselExportError.invalidImage }
                     let raster = try EaselRaster(data: bytes)
                     let box = CGRect(x: rect.minX + 12, y: rect.minY + 30, width: max(1, rect.width - 24), height: max(1, rect.height - (source == nil ? 42 : 60)))
