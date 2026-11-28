@@ -1,6 +1,6 @@
 # Keychain startup authorization verification
 
-The 0.22.1 development candidate prevents automatic startup from waiting on classic login-Keychain authorization. The public0.21 download does not include this change. Explicit **Unlock Local Data** still asks macOS to authorize a protected key; the change does not make a replacement unsigned binary silently inherit access.
+The 0.22.1 preview prevents automatic startup from waiting on classic login-Keychain authorization. The public0.21 download does not include this change. Explicit **Unlock Local Data** still asks macOS to authorize a protected key; the change does not make a replacement unsigned binary silently inherit access.
 
 ## Reproduction and fix
 
@@ -30,8 +30,12 @@ This verifies the normal source-built candidate and denied-access behavior. It d
 
 The dedicated VM's `Programming/browser` source and build now match0.22.1/build34. The obsolete0.22 process was quit normally and its waiting authorization request is no longer active. The previous app bundle is backed up. Live testing of the new app awaits an unlocked VM desktop; no password or lock/security setting is changed by this fix.
 
+## Final installer and publication
+
+The [exact current-source full CI](https://github.com/SinfulSoul007/alcove/actions/runs/46112023009) passed4,227/0, both optimized architectures and package checks. Authenticated final artifact15253304731 passed independent read-only mounted ZIP/DMG/signature/resource verification. [Ordinary installed final-artifact checks](https://github.com/SinfulSoul007/alcove/actions/runs/46123010276) passed33/0 per native CPU, including the real normal/private browser flow and protected cold restore, with16 authenticated compositor captures each and the same universal executable.
+
+[0.22.1-preview.1](../releases/0.22.1-preview-verification.md) is now public at exact sourcefb3b90b. Its five assets match the checked installer bytes and unchanged publisher key; the production0.21→0.22.1 update transition accepts the real installer and rejects a modified copy. This publishes the qualified automatic-startup improvement as an unsigned preview, while retaining the explicit-authorization limitation below.
+
 ## Remaining gates
 
-The same normal/private browser flow must still pass on the actual final universal artifact, together with independent ZIP/DMG checks. [Full current-source CI](https://github.com/SinfulSoul007/alcove/actions/runs/46112023009) is running. The earlier0.22 drawing-source fullCI passed4,227 results and independent package verification, but cannot qualify this later Keychain change. No followup release is public yet.
-
-Successful changed-binary explicit authorization remains open. Same-binary restarts and restoring the original binary do not prove signing continuity. Stable signing identity, seamless unsigned updates, actual macOS14, consumer hardware, quarantine/Gatekeeper, broad accessibility, Chrome/uBlock compatibility and broader security review remain open.
+Successful changed-binary explicit authorization remains unverified. Same-binary restarts and restoring the original binary do not prove signing continuity. Stable signing identity, seamless unsigned updates, actual macOS14, consumer hardware, quarantine/Gatekeeper, broad accessibility, Chrome/uBlock compatibility and broader security review remain open. These are continuing acceptance requirements, not claims made by this preview.
