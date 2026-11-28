@@ -1,230 +1,87 @@
-name: Owned website fullscreen qualification
-
+name: Source-built current browser normal and private UI qualification
 on:
   workflow_dispatch:
     inputs:
-      regressions:
-        description: Run Reader and sidebar regression groups
+      normal_motion:
+        description: Observe actual normal-motion first-run animation in disposable CI
+        required: false
         type: boolean
         default: true
-      visuals:
-        description: Capture owned sidebar layouts for visual review
-        type: boolean
-        default: false
-      optimized:
-        description: Compile the native witness with the app's -O optimization
-        type: boolean
-        default: false
-      normal_motion:
-        description: Enable normal motion in this disposable runner for animation checks
-        type: boolean
-        default: false
-      command_case:
-        description: Optional command-only diagnostic case; empty runs all native checks
-        type: string
-        default: ''
-      website_prompts:
-        description: Run the existing website prompt lifetime and file-input regression group
-        type: boolean
-        default: false
-      website_protection:
-        description: Run existing warning ticket and actual navigation/surface regressions
-        type: boolean
-        default: false
-      window_lifecycle:
-        description: Run existing shared-window and live handoff regressions
-        type: boolean
-        default: false
-      navigation_regressions:
-        description: Run existing site-search and link-routing store regressions
-        type: boolean
-        default: false
-      quick_regressions:
-        description: Run existing Quick Browse persistence, lifecycle and window regressions
-        type: boolean
-        default: false
-      profile_regressions:
-        description: Run existing profile persistence, lifecycle and real website-data regressions
-        type: boolean
-        default: false
-      extension_regressions:
-        description: Run existing extension window, command and private-association regressions
-        type: boolean
-        default: false
-
 permissions:
   contents: read
-
+  actions: read
 jobs:
-  macos:
-    runs-on: macos-26
-    timeout-minutes: 35
+  installed:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            arch: arm64
+          - runner: macos-26-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
-      - name: Check out source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check out owned test helpers
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Select the Apple SDK used for native qualification
+          fetch-depth: 0
+      - name: Verify actual runtime architecture and select SDK
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
+          mkdir -p .build/fullscreen/installed
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          translated=$(sysctl -n sysctl.proc_translated 2>/dev/null || true)
+          test "$translated" != 1
           test -d /Applications/Xcode_26.5.app/Contents/Developer
-          export DEVELOPER_DIR=/Applications/Xcode_26.5.app/Contents/Developer
-          test "$(xcrun --sdk macosx --show-sdk-version)" = 26.5
-          echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
+          echo DEVELOPER_DIR=/Applications/Xcode_26.5.app/Contents/Developer >> "$GITHUB_ENV"
+          { uname -m; sw_vers; sysctl -n hw.cputype; sysctl -n machdep.cpu.brand_string 2>/dev/null || true; } > .build/fullscreen/installed/runtime.log
       - name: Configure normal motion in the disposable runner
         if: ${{ inputs.normal_motion }}
         run: |
           set -euo pipefail
-          mkdir -p .build/fullscreen
-          {
-            defaults write com.apple.universalaccess reduceMotion -bool false || exit "$?"
-            defaults read com.apple.universalaccess reduceMotion
-          } 2>&1 | tee .build/fullscreen/motion-environment.log
-      - name: Verify genuine website fullscreen and view restoration
+          defaults write com.apple.universalaccess reduceMotion -bool false
+          defaults read com.apple.universalaccess reduceMotion
+      - name: Compile owned UI helper before building the app
+        run: |
+          xcrun swiftc -sdk "$(xcrun --show-sdk-path)" -target "$(uname -m)-apple-macosx14.0" -module-cache-path .build/installed-cache -parse-as-library -warnings-as-errors scripts/InstalledAlcoveFreshBrowserChecks.swift -o .build/installed-smoke
+      - name: Build unchanged candidate application sources
         env:
-          ALCOVE_FULLSCREEN_COMMAND_CASES: ${{ inputs.command_case }}
-          ALCOVE_FULLSCREEN_OPTIMIZED: ${{ inputs.optimized }}
+          CANDIDATE_SOURCE: fb3b90b2fc6be86fb4366979204a48e7eb9362e3
         run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is python3 scripts/fullscreen/run-native.py 2>&1 | tee .build/fullscreen/native.log
-      - name: Preserve the native command result before regression groups
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: fullscreen-native-${{ github.run_id }}
-          path: .build/fullscreen/native.log
-          if-no-files-found: warn
-          retention-days: 14
-      - name: Verify existing Reader lifecycle on the changed website hosts
-        if: ${{ always() && inputs.regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh reader-mode-test 2>&1 | tee .build/fullscreen/reader.log
-      - name: Verify existing chrome geometry and sidebar controls
-        if: ${{ always() && inputs.regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh chrome-test 2>&1 | tee .build/fullscreen/chrome.log
-      - name: Verify and capture sidebar layouts
-        if: ${{ always() && inputs.visuals }}
+          set -euo pipefail
+          git diff --exit-code "$CANDIDATE_SOURCE" HEAD -- Sources Resources scripts/Info.plist scripts/build.sh
+          BROWSER_OUTPUT=.build/update-candidate/Alcove.app ./scripts/build.sh
+          codesign --verify --deep --strict .build/update-candidate/Alcove.app
+          lipo .build/update-candidate/Alcove.app/Contents/MacOS/Alcove -verify_arch "$(uname -m)"
+          python3 scripts/record-update-candidate.py
+      - name: Copy unchanged source-built app into fresh Applications
+        run: python3 scripts/stage-source-built-app.py
+      - name: Test actual fresh normal browsing, pinned folders, note restore and private HTTP
         env:
-          ALCOVE_SIDEBAR_SCREENSHOT_DIR: ${{ github.workspace }}/.build/fullscreen/sidebar-snapshots
+          ALCOVE_REQUIRE_OPENING_ANIMATION: ${{ inputs.normal_motion }}
         run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen/sidebar-snapshots
-          caffeinate -is scripts/build.sh sidebar-organization-layout-test 2>&1 | tee .build/fullscreen/sidebar-layout.log
-      - name: Verify website prompt lifetime and native file input
-        if: ${{ always() && inputs.website_prompts }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh website-prompt-test 2>&1 | tee .build/fullscreen/website-prompts.log
-      - name: Verify website warning ticket lifetime
-        if: ${{ always() && inputs.website_protection }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh website-protection-ticket-test 2>&1 | tee .build/fullscreen/website-protection-ticket.log
-      - name: Verify actual held website navigation
-        if: ${{ always() && inputs.website_protection }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh website-protection-navigation-test 2>&1 | tee .build/fullscreen/website-protection-navigation.log
-      - name: Verify existing shared-window ownership
-        if: ${{ always() && inputs.window_lifecycle }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh window-group-test 2>&1 | tee .build/fullscreen/window-group.log
-      - name: Verify existing site-search navigation
-        if: ${{ always() && inputs.navigation_regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh site-search-store-test 2>&1 | tee .build/fullscreen/site-search-store.log
-      - name: Verify existing link-routing navigation
-        if: ${{ always() && inputs.navigation_regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh link-routing-store-test 2>&1 | tee .build/fullscreen/link-routing-store.log
-      - name: Verify existing live window handoff
-        if: ${{ always() && inputs.window_lifecycle }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh window-handoff-test 2>&1 | tee .build/fullscreen/window-handoff.log
-      - name: Verify existing Quick Browse persistence
-        if: ${{ always() && inputs.quick_regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh quick-store-test 2>&1 | tee .build/fullscreen/quick-store.log
-      - name: Verify existing Quick Browse lifecycle
-        if: ${{ always() && inputs.quick_regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh quick-lifecycle-test 2>&1 | tee .build/fullscreen/quick-lifecycle.log
-      - name: Verify existing Quick Browse window controls
-        if: ${{ always() && inputs.quick_regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh quick-window-test 2>&1 | tee .build/fullscreen/quick-window.log
-      - name: Verify source-bound website warning surfaces
-        if: ${{ always() && inputs.website_protection }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh website-protection-surface-test 2>&1 | tee .build/fullscreen/website-protection-surface.log
-      - name: Verify existing profile persistence
-        if: ${{ always() && inputs.profile_regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh profile-store-test 2>&1 | tee .build/fullscreen/profile-store.log
-      - name: Verify existing profile lifecycle and retry behavior
-        if: ${{ always() && inputs.profile_regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh lifecycle-test 2>&1 | tee .build/fullscreen/profile-lifecycle.log
-      - name: Verify existing real profile and Quick website-data isolation
-        if: ${{ always() && inputs.profile_regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh website-test 2>&1 | tee .build/fullscreen/profile-website.log
-      - name: Verify existing extension window ownership
-        if: ${{ always() && inputs.extension_regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh extension-multi-window-test 2>&1 | tee .build/fullscreen/extension-windows.log
-      - name: Verify existing extension commands and editing precedence
-        if: ${{ always() && inputs.extension_regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh extension-command-test 2>&1 | tee .build/fullscreen/extension-commands.log
-      - name: Verify existing private extension association
-        if: ${{ always() && inputs.extension_regressions }}
-        run: |
-          set -o pipefail
-          mkdir -p .build/fullscreen
-          caffeinate -is scripts/build.sh extension-private-test 2>&1 | tee .build/fullscreen/extension-private.log
-      - name: Preserve the bounded native result
+          set -euo pipefail
+          python3 -u scripts/owned-browser-site.py --ready-file .build/fullscreen/installed/owned-site.json > .build/fullscreen/installed/owned-site.log 2>&1 &
+          owned_site_pid=$!
+          trap 'kill "$owned_site_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 600); do
+            test -s .build/fullscreen/installed/owned-site.json && break
+            kill -0 "$owned_site_pid" 2>/dev/null || { cat .build/fullscreen/installed/owned-site.log; exit 61; }
+            sleep 0.1
+          done
+          test -s .build/fullscreen/installed/owned-site.json || { cat .build/fullscreen/installed/owned-site.log; exit 62; }
+          ALCOVE_INSTALLED_TEST_SITE="$(python3 -c 'import json;print(json.load(open(".build/fullscreen/installed/owned-site.json"))["url"])')"
+          export ALCOVE_INSTALLED_TEST_SITE
+          caffeinate -dis .build/installed-smoke 2>&1 | tee .build/fullscreen/installed/native.log
+      - name: Preserve owned observations
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: website-fullscreen-${{ github.run_id }}
-          path: |
-            .build/fullscreen/*.log
-            .build/fullscreen/sidebar-snapshots/*.png
-          if-no-files-found: warn
+          name: installed-alcove-${{ matrix.arch }}-${{ github.run_id }}
           retention-days: 14
+          path: .build/fullscreen/installed/
