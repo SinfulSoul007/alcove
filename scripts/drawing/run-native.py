@@ -37,13 +37,20 @@ def main():
     groups = [
         ('values', [root / 'scripts/EaselDrawingCoreChecks.swift']),
         ('documents', [root / 'scripts/EaselDrawingDocumentChecks.swift']),
+        ('gestures', [root / 'scripts/EaselDrawingGestureChecks.swift']),
         ('renderer', [root / 'Sources/Browser/EaselDrawingRenderer.swift', root / 'scripts/EaselDrawingRendererChecks.swift']),
         ('native', [*browser, root / 'scripts/EaselDrawingNativeChecks.swift']),
         ('stores', [*browser, root / 'scripts/EaselDrawingStoreChecks.swift']),
+        ('interaction', [*browser, root / 'scripts/EaselDrawingInteractionChecks.swift']),
+        ('toolbar', [*browser, root / 'scripts/EaselDrawingToolbarChecks.swift']),
     ]
     if args.regressions:
         for label, fixture, helpers in [
             ('old-canvas', 'EaselCanvasChecks', []),
+            ('old-library', 'EaselLibraryChecks', []),
+            ('old-pane', 'EaselPaneChecks', []),
+            ('old-drafts', 'EaselDraftChecks', []),
+            ('old-recovery', 'EaselDraftRecoveryChecks', []),
             ('old-tabs', 'EaselTabChecks', []),
             ('old-export-core', 'EaselExportCoreChecks', None),
             ('old-export-png', 'EaselExportRenderChecks', []),

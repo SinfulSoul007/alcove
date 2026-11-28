@@ -24,13 +24,15 @@ struct EaselPane: View {
                     toolbar(title: context.easel.title, compact: true)
                 }.padding(.horizontal, 14).padding(.vertical, 10).background(.thinMaterial)
                 Divider()
+                EaselDrawingToolbar(canvas: canvas).frame(height: 36).background(.thinMaterial)
+                Divider()
                 EaselCanvasRepresentable(canvas: canvas, theme: store.activeTheme)
                     .overlay {
-                        if context.easel.items.isEmpty {
+                        if context.easel.items.isEmpty && canvas.drawingTool == .select {
                             VStack(spacing: 12) {
                                 Image(systemName: "square.stack.3d.up").font(.system(size: 34, weight: .light)).opacity(0.5)
                                 Text("A place to think.").font(.system(size: 26, weight: .medium, design: .rounded))
-                                Text("Collect notes, links and ideas on your canvas.").font(.callout).opacity(0.6)
+                                Text("Draw, collect notes and keep your ideas together.").font(.callout).opacity(0.6)
                                 Button("Add your first note") { canvas.addNote() }.buttonStyle(.borderedProminent).tint(store.activeTheme.accent)
                             }.padding(24).disabled(!store.canModifyLocalMetadata)
                         }
@@ -129,6 +131,7 @@ private struct EaselCanvasRepresentable: NSViewRepresentable {
         view.reconcile()
     }
     static func dismantleNSView(_ view: EaselCanvasView, coordinator: ()) {
+        view.drawing.cancel()
         for card in view.cards.values { card.finishEaselDraftEditing() }
     }
 }

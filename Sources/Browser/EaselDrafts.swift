@@ -10,13 +10,15 @@ struct EaselDraftState: Equatable {
     var text: String
     var revision = UUID()
     var failure: String?
+    var pendingDrawing: EaselItem? = nil
 }
 enum EaselDraftError: LocalizedError {
-    case unavailable, conflict
+    case unavailable, conflict, drawingConflict
     var errorDescription: String? {
         switch self {
         case .unavailable: return "This note could not be saved in its original canvas. Its draft was kept."
         case .conflict: return "This note changed in another editor. Copy your draft or save it as a new note to keep both versions."
+        case .drawingConflict: return "This canvas changed while you were drawing. Save your retained drawing as a new item to keep both versions."
         }
     }
 }
@@ -30,7 +32,11 @@ extension EaselDraftEditing {
     var hasMarkedEaselText: Bool { false }
 }
 
-/// Dirty strings outlive their NSViews. Only a successful transaction or an
+@MainActor protocol EaselDrawingHistoryRecording: AnyObject {
+    func easelDrawingCommitted(_ item: EaselItem, before: Easel, after: Easel, profileID: UUID)
+}
+
+/// Dirty strings and completed drawings outlive their NSViews. Only a successful transaction or an
 /// explicit discard removes one; normal tab/window/quit paths flush first.
 @MainActor final class EaselDraftCoordinator: ObservableObject {
     private final class Record {
@@ -39,6 +45,8 @@ extension EaselDraftEditing {
         weak var source: BrowserStore?
         weak var editor: (any EaselDraftEditing)?
         var timer: Task<Void, Never>?
+        var drawingRevision: UUID?
+        weak var drawingHistory: (any EaselDrawingHistoryRecording)?
         init(state: EaselDraftState, original: EaselItem, source: BrowserStore) {
             self.state = state; self.original = original; self.source = source
         }
@@ -85,6 +93,22 @@ extension EaselDraftEditing {
     @discardableResult func saveAsNewNote(_ state: EaselDraftState, from source: BrowserStore? = nil, recoveredTitle: String = "Recovered Easel") throws -> UUID {
         guard recoveryState(state, from: source) != nil else { throw EaselDraftError.conflict }
         return try saveAsNewNote(state.key, recoveredTitle: recoveredTitle)
+    }
+    @discardableResult func commitDrawing(_ item: EaselItem, context: EaselTabContext, from source: BrowserStore,
+                                         history: any EaselDrawingHistoryRecording) -> Bool {
+        guard !invalidated, let owner, !owner.isShuttingDown, case .drawing = item.content,
+              (source.isPrivate ? source : source.metadataWriter) === owner,
+              let current = source.easelContext(for: context.tabID),
+              current.profileID == context.profileID, current.easel.id == context.easel.id else { return false }
+        let key = EaselDraftKey(profileID: context.profileID, easelID: context.easel.id, tabID: context.tabID, itemID: item.id)
+        guard records[key] == nil else { return false }
+        var state = EaselDraftState(key: key, text: "")
+        state.pendingDrawing = item
+        let record = Record(state: state, original: item, source: source)
+        record.drawingRevision = context.easel.revision; record.drawingHistory = history
+        records[key] = record; revision += 1
+        do { try flush(key); return records[key] == nil }
+        catch { report(error, for: key); return false }
     }
     func update(_ text: String, tabID: UUID, itemID: UUID, from source: BrowserStore, original: EaselItem? = nil) throws {
         guard !invalidated, let owner, !owner.isShuttingDown,
@@ -144,8 +168,19 @@ extension EaselDraftEditing {
         guard let record = records[key] else { return }
         record.timer?.cancel(); record.timer = nil
         guard let source = presenter(for: record), let context = source.easelContext(for: key.tabID),
-              context.profileID == key.profileID, context.easel.id == key.easelID,
-              let item = context.easel.items.first(where: { $0.id == key.itemID }), case .note = item.content else { throw EaselDraftError.unavailable }
+              context.profileID == key.profileID, context.easel.id == key.easelID else { throw EaselDraftError.unavailable }
+        if let mark = record.state.pendingDrawing {
+            if let saved = context.easel.items.first(where: { $0.id == mark.id }) {
+                guard saved == mark else { throw EaselDraftError.drawingConflict }
+                discard(key); return
+            }
+            guard context.easel.revision == record.drawingRevision else { throw EaselDraftError.drawingConflict }
+            let after = try source.commitEaselEdits(in: key.tabID, expectedRevision: context.easel.revision, edits: [.insert(mark)])
+            discard(key)
+            record.drawingHistory?.easelDrawingCommitted(mark, before: context.easel, after: after, profileID: key.profileID)
+            return
+        }
+        guard let item = context.easel.items.first(where: { $0.id == key.itemID }), case .note = item.content else { throw EaselDraftError.unavailable }
         if item.content == .note(text: record.state.text) { discard(key); return }
         record.source = source
         guard item.content == record.original.content else { throw EaselDraftError.conflict }
@@ -156,7 +191,7 @@ extension EaselDraftEditing {
     private func report(_ error: Error, for key: EaselDraftKey) {
         guard let record = records[key] else { return }
         record.state.failure = error.localizedDescription; revision += 1
-        record.source?.message = "A canvas note has unsaved changes. " + error.localizedDescription
+        record.source?.message = "This canvas has unsaved changes. " + error.localizedDescription
     }
     func discard(_ key: EaselDraftKey) {
         records.removeValue(forKey: key)?.timer?.cancel(); revision += 1
@@ -168,7 +203,7 @@ extension EaselDraftEditing {
         let context = source.easelContext(for: key.tabID)
         let old = context?.easel.items.first(where: { $0.id == key.itemID })?.frame ?? record.original.frame
         let frame = try EaselFrame(x: min(old.x + 24, EaselFrame.canvasSize - old.width), y: min(old.y + 24, EaselFrame.canvasSize - old.height), width: old.width, height: old.height)
-        let note = try EaselItem(frame: frame, content: .note(text: record.state.text))
+        let note = try EaselItem(frame: frame, content: record.state.pendingDrawing?.content ?? .note(text: record.state.text))
         if let context, context.profileID == key.profileID, context.easel.id == key.easelID {
             _ = try source.commitEaselEdits(in: key.tabID, expectedRevision: context.easel.revision, edits: [.insert(note)])
         } else {
@@ -205,7 +240,7 @@ extension BrowserStore {
     }
     @discardableResult func flushEaselBoardDraftsIfPossible(in tabID: UUID) -> Bool {
         do { try flushEaselBoardDrafts(in: tabID); return true }
-        catch { message = "A canvas note has unsaved changes. " + error.localizedDescription; return false }
+        catch { message = "This canvas has unsaved changes. " + error.localizedDescription; return false }
     }
     var existingEaselDrafts: EaselDraftCoordinator? { (isPrivate ? self : metadataWriter).retainedEaselDrafts }
     var easelDrafts: EaselDraftCoordinator {
@@ -219,6 +254,6 @@ extension BrowserStore {
         do {
             if let tabID { try drafts.flush(tabID: tabID) } else { try drafts.flush(from: self) }
             return true
-        } catch { message = "A canvas note has unsaved changes. " + error.localizedDescription; return false }
+        } catch { message = "This canvas has unsaved changes. " + error.localizedDescription; return false }
     }
 }

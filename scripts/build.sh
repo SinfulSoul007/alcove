@@ -29,6 +29,8 @@ run_easel_drawing_core_checks() {
     "$MANUAL/easel-drawing-core-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselDrawingDocumentChecks.swift -o "$MANUAL/easel-drawing-document-checks"
     "$MANUAL/easel-drawing-document-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" scripts/EaselDrawingGestureChecks.swift -o "$MANUAL/easel-drawing-gesture-checks"
+    "$MANUAL/easel-drawing-gesture-checks"
 }
 if [[ "${ALCOVE_EASEL_DRAWING_CORE_ONLY:-0}" == 1 ]]; then run_easel_core_checks; run_easel_drawing_core_checks; exit; fi
 if [[ "${ALCOVE_EASEL_CORE_ONLY:-0}" == 1 ]]; then run_easel_core_checks; exit; fi
@@ -56,6 +58,10 @@ run_easel_drawing_native_checks() {
     "$MANUAL/easel-drawing-native-checks"
     xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/EaselDrawingStoreChecks.swift -o "$MANUAL/easel-drawing-store-checks"
     "$MANUAL/easel-drawing-store-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/EaselDrawingInteractionChecks.swift -o "$MANUAL/easel-drawing-interaction-checks"
+    "$MANUAL/easel-drawing-interaction-checks"
+    xcrun swiftc "${FLAGS[@]}" -parse-as-library -warnings-as-errors -I "$MANUAL" -L "$MANUAL" -lBrowserCore -Xlinker -rpath -Xlinker "$MANUAL" "${STORE_SOURCES[@]}" scripts/EaselDrawingToolbarChecks.swift -o "$MANUAL/easel-drawing-toolbar-checks"
+    "$MANUAL/easel-drawing-toolbar-checks"
 }
 if [[ "${1:-}" == "easel-drawing-test" ]]; then run_easel_core_checks; run_easel_drawing_core_checks; run_easel_drawing_native_checks; exit; fi
 run_easel_tab_checks() {

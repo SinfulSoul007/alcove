@@ -14,6 +14,35 @@ import Combine
     private(set) var cards: [UUID: EaselCardView] = [:]
     @Published private(set) var selection: Set<UUID> = []
     @Published private(set) var zoom: CGFloat = 1
+    @Published private(set) var drawingTool: EaselCanvasTool = .select
+    @Published private(set) var drawingStyle = try! EaselDrawingStyle(color: "#3466CC", lineWidth: 4, opacity: 1)
+    lazy var drawing = EaselDrawingInteraction(owner: self)
+    let drawingOverlay = EaselDrawingOverlay()
+    var canUseDrawingControls: Bool {
+        guard isCurrentPresentation, let store, let context else { return false }
+        return !store.isShuttingDown && store.activeProfileID == context.profileID && store.visiblePaneIDs.contains(tabID)
+    }
+    @discardableResult func setDrawingTool(_ tool: EaselCanvasTool) -> Bool {
+        guard canUseDrawingControls, activate(), let store else { return false }
+        if tool != .select {
+            guard store.canModifyLocalMetadata, store.flushEaselBoardDraftsIfPossible(in: tabID) else { return false }
+        }
+        drawing.cancel(); drawingTool = tool
+        window?.makeFirstResponder(canvas); window?.invalidateCursorRects(for: drawingOverlay)
+        drawingOverlay.needsDisplay = true
+        return true
+    }
+    @discardableResult func setDrawingStyle(_ style: EaselDrawingStyle) -> Bool {
+        guard canUseDrawingControls, activate(), let store, store.canModifyLocalMetadata,
+              store.flushEaselBoardDraftsIfPossible(in: tabID) else { return false }
+        drawing.cancel(); drawingStyle = style
+        return true
+    }
+    func recordDrawingCommit(_ item: EaselItem, before: Easel, after: Easel, profileID: UUID) {
+        guard let current = context, current.profileID == profileID, current.easel.id == after.id else { return }
+        registerUndo(before, profileID: profileID, expected: after.revision, name: "Draw")
+        reconcile(); select(item.id)
+    }
     private let history = UndoManager()
     private var historyRevision: UUID?
     private var historyImageIDs: Set<UUID> = []
@@ -50,8 +79,12 @@ import Combine
         automaticallyAdjustsContentInsets = false
         history.groupsByEvent = false
         canvas.owner = self; canvas.frame = NSRect(x: 0, y: 0, width: EaselFrame.canvasSize, height: EaselFrame.canvasSize)
+        drawingOverlay.owner = self; drawingOverlay.frame = canvas.bounds
+        drawingOverlay.autoresizingMask = [.width, .height]; canvas.addSubview(drawingOverlay)
         documentView = canvas
         setAccessibilityLabel("Easel canvas viewport")
+        if let color = NSColor(store.activeTheme.accent).usingColorSpace(.sRGB),
+           let style = try? EaselDrawingStyle(color: String(format: "#%02X%02X%02X", Int((color.redComponent * 255).rounded()), Int((color.greenComponent * 255).rounded()), Int((color.blueComponent * 255).rounded())), lineWidth: 4, opacity: 1) { drawingStyle = style }
         applyTheme(store.activeTheme, reduceMotion: true)
         reconcile()
     }
@@ -66,12 +99,14 @@ import Combine
     }
     func reconcile() {
         guard let context else {
+            drawing.cancel()
             for card in cards.values { card.removeFromSuperview() }
             cards.removeAll(); selection.removeAll(); renderedProfileID = nil; renderedEaselID = nil; historyRevision = nil
             if !history.isUndoing && !history.isRedoing { history.removeAllActions() }; historyImageIDs.removeAll(); return
         }
         let board = context.easel
         if renderedProfileID != context.profileID || renderedEaselID != board.id {
+            drawing.cancel()
             selection.removeAll(); historyRevision = nil
             if !history.isUndoing && !history.isRedoing { history.removeAllActions() }; historyImageIDs.removeAll()
             for card in cards.values { card.removeFromSuperview() }
@@ -96,6 +131,8 @@ import Combine
                 return a.layerIndex < b.layerIndex ? .orderedAscending : a.layerIndex == b.layerIndex ? .orderedSame : .orderedDescending
             }
         }, context: nil)
+        canvas.addSubview(drawingOverlay, positioned: .above, relativeTo: nil)
+        drawing.cancelIfUnavailable()
     }
     func select(_ id: UUID?, extending: Bool = false) {
         var next = extending ? selection : []
@@ -265,10 +302,21 @@ extension EaselFrame { var rect: NSRect { NSRect(x: x, y: y, width: width, heigh
         if accepted { owner?.activate() }
         return accepted
     }
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        if accepted { owner?.drawing.cancel() }
+        return accepted
+    }
     override func mouseDown(with event: NSEvent) { owner?.activate(); owner?.select(nil); window?.makeFirstResponder(self) }
     override func keyDown(with event: NSEvent) {
         guard window?.firstResponder === self, let owner else { return }
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { super.keyDown(with: event); return }
+        if event.keyCode == 53, owner.drawingTool != .select {
+            owner.drawing.cancel(); _ = owner.setDrawingTool(.select); return
+        }
+        if let tool = EaselCanvasTool.shortcut(event.charactersIgnoringModifiers) {
+            _ = owner.setDrawingTool(tool); return
+        }
         let amount = event.modifierFlags.contains(.shift) ? 10.0 : 1.0
         switch event.keyCode {
         case 51, 117: _ = owner.deleteSelected()

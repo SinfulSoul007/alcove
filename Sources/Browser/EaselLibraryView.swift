@@ -52,7 +52,7 @@ extension BrowserStore {
     func requestLibraryEaselDeletion(_ id: UUID, profileID: UUID) {
         guard activeProfileID == profileID, let board = library.easels?.first(where: { $0.id == id }) else { return }
         let alert = NSAlert(); alert.alertStyle = .warning; alert.messageText = "Delete “\(board.title)”?"
-        alert.informativeText = "Remove this canvas, its cards and any unsaved note drafts from this profile. This cannot be undone."
+        alert.informativeText = "Remove this canvas, its cards and any unsaved canvas drafts from this profile. This cannot be undone."
         alert.addButton(withTitle: "Cancel"); alert.addButton(withTitle: "Delete Easel")
         guard alert.runModal() == .alertSecondButtonReturn else { return }
         do { try deleteLibraryEasel(id, profileID: profileID) } catch { message = error.localizedDescription }

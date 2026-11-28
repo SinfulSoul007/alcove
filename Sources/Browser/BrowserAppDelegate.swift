@@ -539,7 +539,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         for store in windows.values {
             guard let drafts = store.existingEaselDrafts, seenDrafts.insert(ObjectIdentifier(drafts)).inserted else { continue }
             do { try drafts.flushAll() }
-            catch { store.message = "A canvas note has unsaved changes. " + error.localizedDescription; return .terminateCancel }
+            catch { store.message = "This canvas has unsaved changes. " + error.localizedDescription; return .terminateCancel }
         }
         let decision = terminationDecision { [weak self] allowed in
             if allowed { self?.terminating = true }
